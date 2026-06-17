@@ -20,7 +20,7 @@
       <sparkle:version>1</sparkle:version>
       <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/momoraul/Lupen/releases/download/v0.3.0/Lupen-0.3.0.dmg" type="application/octet-stream" length="8519607" sparkle:edSignature="uquuMvK9HzO0cPq7ESMudb7s3vuIRI8zfAQLbctqSheUi48lSQj3dLBTgV14aH9fUeOnydK6cDiz3MvS4wfYAw==" />
+      <enclosure url="https://github.com/momoraul/Lupen/releases/download/v0.3.0/Lupen-0.3.0.dmg" type="application/octet-stream" length="8517549" sparkle:edSignature="AgbuqMN+UnEohme4VbPNrf8NJkTQG6KYaUTnxXxUwDoj+KvxND4tyQwCPBIAVFMvO3az6j7KVNz0gH2si3VfAA==" />
     </item>
   </channel>
 </rss>
