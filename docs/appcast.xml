@@ -13,16 +13,14 @@
     <description>Updates for Lupen — itemized cost receipts for Claude Code and Codex.</description>
     <language>en</language>
 
-    <!-- Release items go here, newest first. Example shape:
+    <!-- Newest release first. `Tools/release.sh` emits each <item>. -->
     <item>
       <title>0.3.0</title>
-      <pubDate>Wed, 18 Jun 2026 00:00:00 +0000</pubDate>
+      <pubDate>Wed, 17 Jun 2026 19:59:06 +0000</pubDate>
       <sparkle:version>1</sparkle:version>
       <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/momoraul/Lupen/releases/download/v0.3.0/Lupen-0.3.0.dmg"
-                 type="application/octet-stream" length="..." sparkle:edSignature="..." />
+      <enclosure url="https://github.com/momoraul/Lupen/releases/download/v0.3.0/Lupen-0.3.0.dmg" type="application/octet-stream" length="8519607" sparkle:edSignature="uquuMvK9HzO0cPq7ESMudb7s3vuIRI8zfAQLbctqSheUi48lSQj3dLBTgV14aH9fUeOnydK6cDiz3MvS4wfYAw==" />
     </item>
-    -->
   </channel>
 </rss>

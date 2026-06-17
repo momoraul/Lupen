@@ -120,8 +120,8 @@ xcrun stapler validate "$DMG" || die "staple validation failed"
 
 # ── 5. Sparkle signature + appcast item ──────────────────────────────────
 log "Signing for Sparkle + updating appcast…"
-SIG_LINE="$("$SPARKLE_BIN/sign_update" "$DMG")"   # → sparkle:edSignature="…" length="…"
-SIZE="$(stat -f%z "$DMG")"
+# sign_update already emits BOTH sparkle:edSignature="…" AND length="…".
+SIG_LINE="$("$SPARKLE_BIN/sign_update" "$DMG")"
 PUBDATE="$(LC_ALL=en_US.UTF-8 date -u '+%a, %d %b %Y %H:%M:%S +0000')"
 ITEM="    <item>
       <title>$VERSION</title>
@@ -129,7 +129,7 @@ ITEM="    <item>
       <sparkle:version>$BUILD_NUM</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-      <enclosure url=\"$APPCAST_BASE_URL/$(basename "$DMG")\" type=\"application/octet-stream\" length=\"$SIZE\" $SIG_LINE />
+      <enclosure url=\"$APPCAST_BASE_URL/$(basename "$DMG")\" type=\"application/octet-stream\" $SIG_LINE />
     </item>"
 echo "$ITEM" > "$APPCAST_DIR/item-$VERSION.xml"
 
