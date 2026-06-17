@@ -18,10 +18,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/00-hero.png" alt="Lupen drilling from a session total down through its turns, a skill group, and three sub-agents — every row priced" width="860">
+  <img src="docs/demo.gif" alt="Lupen drilling from a session total down through its turns, steps, and sub-agents — every row priced" width="860">
 </p>
 
-<!-- Hero is an information-complete still; a ≤5 MB Gifski GIF (drill-down → verify badge) can swap in at the same width later. -->
+<!-- Hero is a ≤5 MB looping GIF (drill-down through priced rows), recorded on synthetic demo data. Swap docs/demo.gif to update. -->
 
 > **Pre-release** — builds and runs end-to-end today; a signed DMG and Homebrew cask are landing next. [Build from source ↓](#install)
 
