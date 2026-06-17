@@ -12,9 +12,11 @@
 #   2. Notary credentials saved as a keychain profile:
 #        xcrun notarytool store-credentials "<NOTARY_PROFILE>" \
 #          --apple-id you@example.com --team-id <TEAMID> --password <app-pw>
-#   3. Sparkle EdDSA keypair (private key in keychain, public in xcconfig):
+#   3. Sparkle EdDSA keypair (private key stays in keychain):
 #        <sparkle>/bin/generate_keys            # prints the public key
-#      Put the public key in Config/Shared.xcconfig (INFOPLIST_KEY_SUPublicEDKey).
+#      Pass the PUBLIC key as SPARKLE_PUBLIC_KEY — this script injects it (and
+#      SUFeedURL) into the built app's Info.plist (custom keys aren't emitted
+#      by GENERATE_INFOPLIST_FILE, so xcconfig INFOPLIST_KEY_* won't work).
 #   4. Fill the CONFIG block below (or export the vars before running).
 #
 # Usage:
@@ -80,7 +82,6 @@ xcodebuild archive \
   CODE_SIGN_IDENTITY="$DEVELOPER_ID" \
   CODE_SIGN_STYLE=Manual \
   OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
-  INFOPLIST_KEY_SUPublicEDKey="$SPARKLE_PUBLIC_KEY" \
   >/dev/null
 
 # ── 2. Export the signed .app ────────────────────────────────────────────
@@ -100,6 +101,25 @@ xcodebuild -exportArchive \
 APP="$BUILD_DIR/export/$APP_NAME.app"
 [ -d "$APP" ] || die "export produced no $APP_NAME.app"
 codesign --verify --deep --strict "$APP" || die "codesign verify failed"
+
+# ── 2b. Inject Sparkle Info.plist keys + re-sign ─────────────────────────
+# GENERATE_INFOPLIST_FILE only emits Apple-known keys, so the custom Sparkle
+# keys (SUFeedURL / SUPublicEDKey / SUEnableAutomaticChecks) never make it
+# into the built app. Add them with PlistBuddy, then re-seal the bundle (a
+# top-level Info.plist edit invalidates only the outer signature; nested code
+# keeps its export-time signatures).
+log "Injecting Sparkle keys + re-signing…"
+PLIST="$APP/Contents/Info.plist"
+SUFEED_URL="https://momoraul.github.io/Lupen/appcast.xml"
+pb() { /usr/libexec/PlistBuddy -c "$1" "$PLIST" >/dev/null 2>&1; }
+pb "Add :SUFeedURL string $SUFEED_URL"            || pb "Set :SUFeedURL $SUFEED_URL"
+pb "Add :SUPublicEDKey string $SPARKLE_PUBLIC_KEY" || pb "Set :SUPublicEDKey $SPARKLE_PUBLIC_KEY"
+pb "Add :SUEnableAutomaticChecks bool true"        || pb "Set :SUEnableAutomaticChecks true"
+pb "Add :SUEnableInstallerLauncherService bool false" || pb "Set :SUEnableInstallerLauncherService false"
+codesign --force --sign "$DEVELOPER_ID" --options runtime --timestamp "$APP"
+codesign --verify --strict "$APP" || die "re-sign verify failed"
+/usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$PLIST" >/dev/null 2>&1 \
+  || die "SUFeedURL injection failed"
 
 # ── 3. DMG (with /Applications drop target) ──────────────────────────────
 log "Building DMG…"
