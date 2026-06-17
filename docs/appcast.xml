@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sparkle appcast for Lupen. Served at https://momoraul.github.io/Lupen/appcast.xml
+  (GitHub Pages → docs/). `Tools/release.sh` emits a ready-to-paste <item>
+  per release; add the newest at the top of <channel>. See docs/RELEASING.md.
+-->
+<rss version="2.0"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Lupen</title>
+    <link>https://momoraul.github.io/Lupen/appcast.xml</link>
+    <description>Updates for Lupen — itemized cost receipts for Claude Code and Codex.</description>
+    <language>en</language>
+
+    <!-- Release items go here, newest first. Example shape:
+    <item>
+      <title>0.3.0</title>
+      <pubDate>Wed, 18 Jun 2026 00:00:00 +0000</pubDate>
+      <sparkle:version>1</sparkle:version>
+      <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/momoraul/Lupen/releases/download/v0.3.0/Lupen-0.3.0.dmg"
+                 type="application/octet-stream" length="..." sparkle:edSignature="..." />
+    </item>
+    -->
+  </channel>
+</rss>

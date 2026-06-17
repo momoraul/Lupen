@@ -1,0 +1,72 @@
+name: Bug report
+description: Something Lupen does that it shouldn't — wrong cost, missing turn, crash, hung overlay, visual glitch
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The fields below are the minimum that lets the maintainer reproduce the issue locally; everything else is a bonus.
+
+        > Lupen reads your local Claude Code transcripts, so JSONL snippets and screenshots can carry personal data. **Please redact prompt text, file paths, and project names before attaching anything.** A guide to safe redaction is in [CONTRIBUTING.md → Filing a bug](https://github.com/momoraul/Lupen/blob/main/CONTRIBUTING.md#filing-a-bug).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: One or two sentences. What did Lupen do, and what did you expect instead?
+      placeholder: |
+        Lupen showed $14.20 for session X, but Window → Verify Costs… reports $14.27. The 0.7-cent gap doesn't appear in any per-turn row.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: A numbered list works best. If a sanitised JSONL snippet is needed, drop it into the next field.
+      placeholder: |
+        1. Open Dashboard
+        2. Select the session listed first in the sidebar
+        3. Compare the sidebar cost cell with the value in Window → Verify Costs…
+    validations:
+      required: true
+
+  - type: textarea
+    id: jsonl
+    attributes:
+      label: Sanitised JSONL snippet (optional)
+      description: |
+        The smallest snippet that reproduces the issue. Strip prompt text, file paths, project names — the parser only needs the structural fields (`type`, `uuid`, `parentUuid`, `message.usage`, `message.stop_reason`, etc.).
+      render: jsonl
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      placeholder: The sidebar number and Verify Costs should agree to the cent.
+    validations:
+      required: true
+
+  - type: input
+    id: lupen-version
+    attributes:
+      label: Lupen version
+      description: Lupen menu bar → Lupen → About Lupen
+      placeholder: 0.3.0 (build 123)
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: "Run `sw_vers -productVersion` if unsure"
+      placeholder: 26.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or recordings (optional)
+      description: For visual or cost-mismatch issues, a screenshot of the affected window is usually faster than words. Redact prompt text first.

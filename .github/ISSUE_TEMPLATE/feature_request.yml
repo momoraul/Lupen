@@ -1,0 +1,42 @@
+name: Feature request
+description: A capability Lupen doesn't have yet that would change how you use Claude Code
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lupen's scope is **read-only observability of local Claude Code transcripts**. Features that touch other paths, talk to remote services, or modify Claude Code's own files are usually out of scope — but it's worth asking, and "out of scope" is a useful answer too.
+
+        If you'd rather discuss before filing, [GitHub Discussions](https://github.com/momoraul/Lupen/discussions) is the right venue.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the workflow or moment of friction first, before any specific solution. The maintainer can often suggest a different angle if the problem is well-stated.
+      placeholder: |
+        I run multiple Claude Code instances against the same repo and want to compare cost between branches. Today I have to switch project folders manually to see each tree.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: One concrete idea. Doesn't have to be the right one — it just gives the discussion a starting shape.
+      placeholder: |
+        A second sidebar tier that groups sessions by git branch when the project is a git repo.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other shapes the same feature could take, or workarounds you currently use.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Screenshots, mockups, references to similar features in other apps, links.

@@ -1,0 +1,75 @@
+// Shared build settings for the Lupen target.
+// Applied to both Debug and Release via Debug.xcconfig / Release.xcconfig.
+// Local overrides live in Config/Local.xcconfig (gitignored).
+
+// --- App identity -----------------------------------------------------------
+
+PRODUCT_BUNDLE_IDENTIFIER = com.momoraul.lupen
+INFOPLIST_KEY_CFBundleDisplayName = Lupen
+INFOPLIST_KEY_NSHumanReadableCopyright = Copyright © 2026 jaden (@momoraul). MIT License. Not affiliated with Anthropic.
+
+// --- Version ----------------------------------------------------------------
+// Bump MARKETING_VERSION for user-visible releases, CURRENT_PROJECT_VERSION
+// for every build that ships (TestFlight / Developer ID notarization).
+
+MARKETING_VERSION = 0.3.0
+CURRENT_PROJECT_VERSION = 1
+
+// --- Activation policy ------------------------------------------------------
+// We run as a regular app (Dock icon + global menu bar always visible)
+// even though Lupen primarily lives in the menu bar. The pure
+// .accessory / LSUIElement=YES path was tried and reverted: `.accessory`
+// on macOS also hides the app's menu bar, which breaks every keyboard
+// shortcut that lives there (⌘R, ⌘F, …), and the `.accessory ↔ .regular`
+// flip idiom introduced its own window-ordering and activation bugs.
+// Keeping LSUIElement=NO is boring but bulletproof.
+
+INFOPLIST_KEY_LSUIElement = NO
+
+// --- Observation tracking ---------------------------------------------------
+
+INFOPLIST_KEY_NSObservationTrackingEnabled = YES
+
+// --- Platform ---------------------------------------------------------------
+
+MACOSX_DEPLOYMENT_TARGET = 26.0
+SWIFT_VERSION = 6.2
+SDKROOT = macosx
+SWIFT_STRICT_CONCURRENCY = complete
+
+// --- Auto-update (Sparkle) --------------------------------------------------
+// Feed URL is the AppCast hosted on GitHub Pages. `SUPublicEDKey` is *not*
+// set here — CI derives it from the `SPARKLE_PRIVATE_KEY` secret at build
+// time and injects it into the built `.app`'s Info.plist via PlistBuddy
+// (idempotent Set:Add fallback). Local dev builds therefore have no
+// public key embedded — Sparkle's update check silently fails the
+// signature verification, but the UI surface (menu item + Preferences)
+// compiles and runs fine. `SUEnableInstallerLauncherService = NO` keeps
+// Sparkle out of the XPC installer path; we have App Sandbox off so the
+// in-process updater is correct and simpler.
+
+INFOPLIST_KEY_SUFeedURL = https://momoraul.github.io/Lupen/appcast.xml
+INFOPLIST_KEY_SUEnableAutomaticChecks = YES
+INFOPLIST_KEY_SUEnableInstallerLauncherService = NO
+
+// --- Signing ----------------------------------------------------------------
+// Leave empty here; each developer supplies their DEVELOPMENT_TEAM via
+// Config/Local.xcconfig (gitignored). CI supplies it via environment.
+
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+CODE_SIGN_ENTITLEMENTS = Lupen/App/Resources/Lupen.entitlements
+
+// --- Distribution posture ---------------------------------------------------
+// ~/.claude/projects/ lives outside any sandbox container, so App Sandbox
+// must stay off. Hardened Runtime is currently off too; enable once we
+// move to Developer ID notarized distribution.
+
+ENABLE_APP_SANDBOX = NO
+ENABLE_HARDENED_RUNTIME = NO
+
+// --- Local override ---------------------------------------------------------
+// Config/Local.xcconfig is gitignored; add `DEVELOPMENT_TEAM = ABC1234567`
+// there. `#include?` silently skips when the file is missing.
+
+#include? "Local.xcconfig"

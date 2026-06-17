@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    # Lupen targets macOS 26 + Xcode 26. GitHub-hosted runners lag new
+    # Xcode releases, so the build/test steps SKIP (not fail) until the
+    # hosted image ships the macOS 26 SDK — then they run automatically.
+    # No change needed when the runners catch up; meanwhile changes are
+    # verified locally on Xcode 26.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --show-sdk-version
+
+      - name: Check toolchain (needs the macOS 26 SDK)
+        id: toolchain
+        run: |
+          sdk="$(xcrun --sdk macosx --show-sdk-version)"
+          echo "macOS SDK: $sdk"
+          # `sort -V` returns the LOWER of {sdk, 26.0}; if that isn't 26.0 the
+          # runner predates the SDK Lupen needs — skip rather than fail.
+          if [ "$(printf '%s\n26.0\n' "$sdk" | sort -V | head -1)" != "26.0" ]; then
+            echo "::warning::Hosted runner SDK $sdk < 26.0 — skipping build/test until GitHub runners ship Xcode 26 (verified locally meanwhile)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        if: steps.toolchain.outputs.skip != 'true'
+        run: >
+          xcodebuild build
+          -project Lupen.xcodeproj
+          -scheme Lupen
+          -destination 'platform=macOS'
+          -configuration Debug
+          CODE_SIGNING_ALLOWED=NO
+
+      - name: Test
+        if: steps.toolchain.outputs.skip != 'true'
+        run: >
+          xcodebuild test
+          -project Lupen.xcodeproj
+          -scheme Lupen
+          -destination 'platform=macOS'
+          -configuration Debug
+          CODE_SIGNING_ALLOWED=NO

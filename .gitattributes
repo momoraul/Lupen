@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+# Binary assets — never diff or normalize line endings
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.icns binary
+*.pdf  binary
+*.xcassets/** binary
+
+# Keep docs out of language statistics
+docs/** linguist-documentation

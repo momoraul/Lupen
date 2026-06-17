@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/momoraul/Lupen/discussions
+    about: Open-ended questions, ideas, or workflow notes belong in Discussions rather than Issues.
+  - name: Security vulnerability
+    url: https://github.com/momoraul/Lupen/security/advisories/new
+    about: Please report security issues through a private advisory, not a public issue. See SECURITY.md for details.

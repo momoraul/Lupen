@@ -1,0 +1,11 @@
+// Personal overrides for your local build. Copy this file to
+// `Config/Local.xcconfig` (which is gitignored) and fill in your
+// Apple Developer Team ID — Xcode → Settings → Accounts → "Manage
+// Certificates" → the 10-char alphanumeric next to your name.
+//
+// Without this override the project still builds, but signing falls
+// back to "Sign to Run Locally" and the binary can only run on the
+// machine that built it. That's fine for `xcodebuild test` runs; for
+// `xcodebuild build` followed by `open Lupen.app`, set a real team.
+
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

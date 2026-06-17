@@ -1,0 +1,50 @@
+# Build artifacts
+.build/
+DerivedData/
+
+# SPM user state (obsolete but may linger)
+.swiftpm/
+# Top-level Package.resolved — there's no Package.swift here.
+# Xcode's project-scoped resolved file (under
+# `Lupen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/`) is
+# deliberately tracked: it pins exact dependency versions so CI and
+# contributors build against the same dependency hashes.
+/Package.resolved
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xcuserstatet
+
+# Local build settings overrides
+Config/Local.xcconfig
+
+# Claude Code — entire directory is personal
+.claude/
+
+# Agent worktrees (historical)
+.claire/
+
+# Personal failure archive — keep local only
+.failed/
+
+# macOS
+.DS_Store
+
+# Ad-hoc scratch output from manual skill / agent runs
+test-artifacts/
+
+# Private development notes — research / plans / handover docs. The
+# repository tracks only the user-facing markdown (README, CONTRIBUTING,
+# LICENSE, CHANGELOG when added, and anything under docs/). Notes
+# live outside the repo so they stay out of git history.
+/plan.md
+/plan-*.md
+/research-*.md
+
+# Internal research docs — not for the public repo
+docs/Research/
+
+# Coverage / profiling artifacts
+*.profraw
+*.profdata
