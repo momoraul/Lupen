@@ -126,7 +126,7 @@ Every reporting command takes `--provider`, a period (`--last 30d` / `--month
 2026-06` / `--since … --until …`), and `--json` / `--csv` — except `verify`,
 which audits the whole corpus and ignores the period.
 
-Once a release ships the CLI, Homebrew puts `lupen` on your PATH automatically;
+Homebrew installs put `lupen` on your PATH automatically;
 on a DMG or source build, run `lupen install-cli` once. Full reference — every
 flag and exit code: [docs/CLI.md](docs/CLI.md).
 
@@ -182,6 +182,22 @@ OpenAI**; it only reads local log files written to your machine.
 - [GRDB.swift](https://github.com/groue/GRDB.swift) — SQLite toolkit for the on-device index (MIT).
 
 ## Changelog
+
+### v0.4.0 — _2026-06-18_
+
+First release of the `lupen` command line — the app binary doubles as a
+scriptable CLI over the same local index the menu-bar app builds.
+
+- **`lupen` CLI** — `summary`, `daily` / `weekly` / `monthly`, `skills`,
+  `models`, `projects`, `top`, `search` / `resume`, `verify`, `budget`,
+  `statusline`, `refresh`, `config`, `install-cli`.
+- Every report as a table, `--json`, or `--csv`; `--provider` and the period
+  flags (`--last` / `--month` / `--since`+`--until`) throughout.
+- `verify` (exit 4 on cost drift) and `budget --over` (exit 4) make CI or
+  commit-hook cost gates.
+- Homebrew installs put `lupen` on your PATH automatically; DMG / source
+  builds run `lupen install-cli` once.
+- Log window is now a DEBUG-only diagnostic (hidden in release builds).
 
 ### v0.3.0 — _2026-06-17_
 

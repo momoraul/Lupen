@@ -14,7 +14,7 @@ lupen verify            # exit 4 if any cost drifts from the recomputed truth
 
 The CLI is the app's own executable exposed on your `PATH` as `lupen`.
 
-- **Homebrew** (once a release with the CLI ships): `brew install --cask momoraul/lupen/lupen` symlinks `lupen` automatically.
+- **Homebrew**: `brew install --cask momoraul/lupen/lupen` symlinks `lupen` automatically.
 - **DMG / build from source**: run `lupen install-cli` once — it symlinks
   `lupen` into the first writable PATH directory (`/opt/homebrew/bin`,
   `/usr/local/bin`, or `~/.local/bin`). Or symlink it yourself:
