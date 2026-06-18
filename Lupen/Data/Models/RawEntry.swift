@@ -132,8 +132,14 @@ struct RawEntry: Codable, Sendable, Equatable {
     }
 
     struct UsageData: Codable, Sendable, Equatable {
-        let inputTokens: Int
-        let outputTokens: Int
+        // Optional, coerced to 0 at the consumers: a `usage` block can omit or
+        // null these, and a non-optional `Int` would throw on decode — silently
+        // dropping the whole RawEntry line (a missing billable request in Verify
+        // Costs AND the live view). GroundTruthCalculator already tolerates this
+        // via `input_tokens ?? 0`, so matching keeps the view aligned with truth.
+        // Same reasoning as the cache_* fields below.
+        let inputTokens: Int?
+        let outputTokens: Int?
         let cacheCreationInputTokens: Int?
         let cacheReadInputTokens: Int?
         let cacheCreation: CacheCreationBreakdown?
