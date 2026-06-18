@@ -374,6 +374,17 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
         let usage: CodexTokenUsage?
         if let last = info.lastTokenUsage {
             usage = last
+            // Mirror CodexUsageAggregator.resolveUsage: a `last`-only event
+            // (no `total`) must still advance the running total, otherwise a
+            // later total-bearing event's delta is computed against a stale
+            // baseline and the verifier diverges from the importer.
+            if info.totalTokenUsage == nil {
+                if let totalBeforeLast = previousTotal {
+                    previousTotal = totalBeforeLast.adding(last)
+                } else {
+                    previousTotal = last
+                }
+            }
         } else if let total = info.totalTokenUsage {
             if let previousTotal {
                 usage = total.delta(from: previousTotal)
