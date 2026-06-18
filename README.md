@@ -23,7 +23,7 @@
 
 <!-- Hero is a ≤5 MB looping GIF (drill-down through priced rows), recorded on synthetic demo data. Swap docs/demo.gif to update. -->
 
-> **Pre-release** — builds and runs end-to-end today; a signed DMG and Homebrew cask are landing next. [Build from source ↓](#install)
+> **Install:** `brew install --cask momoraul/lupen/lupen` — or grab the [signed DMG](https://github.com/momoraul/Lupen/releases/latest). Requires macOS 26 (Tahoe) on Apple Silicon.
 
 ---
 
@@ -79,21 +79,20 @@ Lupen breaks the number down and recomputes each cost from the raw tokens.
 ## Install
 
 ```bash
-# Pre-release — build from source
+brew install --cask momoraul/lupen/lupen
+```
+
+…or grab the signed DMG from the [latest release](https://github.com/momoraul/Lupen/releases/latest). Both are notarized and keep themselves up to date via Sparkle.
+
+### Build from source
+
+```bash
 git clone https://github.com/momoraul/Lupen.git
 cd Lupen
 cp Config/Local.xcconfig.example Config/Local.xcconfig  # set DEVELOPMENT_TEAM
 xcodebuild build -project Lupen.xcodeproj -scheme Lupen -destination 'platform=macOS'
 open ~/Library/Developer/Xcode/DerivedData/Lupen-*/Build/Products/Debug/Lupen.app
 ```
-
-Once v0.3.0 ships:
-
-```bash
-brew install --cask momoraul/lupen/lupen
-```
-
-…or download the DMG directly from [Releases](https://github.com/momoraul/Lupen/releases/latest).
 
 ## Why I built this
 
@@ -148,7 +147,7 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
-### v0.3.0 — _unreleased_
+### v0.3.0 — _2026-06-17_
 
 First public release. Highlights:
 
@@ -159,5 +158,5 @@ First public release. Highlights:
 - 5-hour-limit tracking with Bayesian shrinkage (`$ per 1 % limit`) and severity-tinted menu-bar icon
 - Origin-tagged attachment classification with inline image preview
 - Snapshot cache for incremental launch (full reparse only when the schema bumps)
-- Sparkle 2 auto-update infrastructure ready (AppCast hosting pending)
+- Sparkle 2 auto-update, with a signed appcast hosted on GitHub Pages
 - Status-item rendered as a single attributed run — no icon-text gap on macOS 26
