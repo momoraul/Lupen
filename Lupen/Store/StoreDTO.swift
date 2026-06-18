@@ -416,6 +416,15 @@ struct StoreSkillAggregate: Sendable, Equatable {
     let costUSD: Double
 }
 
+/// One session's cost over a range, with a human label, for `lupen top`.
+struct StoreSessionCost: Sendable, Equatable {
+    let sessionId: String
+    let projectPath: String?
+    let title: String?
+    let requestCount: Int
+    let costUSD: Double
+}
+
 /// Flat (timestamp, cost) request points — the hourly-efficiency
 /// chart's input shape.
 struct StoreRequestCostPoint: Sendable, Equatable {

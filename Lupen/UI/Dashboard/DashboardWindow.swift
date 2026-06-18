@@ -24,10 +24,15 @@ final class DashboardWindow: NSWindow, NSToolbarDelegate {
         titlebarAppearsTransparent = false
         center()
 
+        // The log window is a maintainer-only diagnostic; its toolbar button
+        // (the toolbar's only item) ships in DEBUG builds only. In RELEASE the
+        // window keeps a plain title bar rather than an empty toolbar strip.
+        #if DEBUG
         let toolbar = NSToolbar(identifier: "DashboardToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         self.toolbar = toolbar
+        #endif
     }
 
     // MARK: - NSToolbarDelegate

@@ -73,6 +73,20 @@ asset** (large binaries don't belong in Pages) and point each appcast
 Existing users get the update via Sparkle; new users download the DMG or
 `brew install --cask`.
 
+### Exposing the `lupen` CLI (one-time, with the first CLI release)
+
+The app binary doubles as the `lupen` command line. To put it on a brew
+user's PATH automatically, add a `binary` stanza to the cask **once the
+shipped DMG actually contains the CLI** (do NOT add it before then — it
+would symlink a CLI-less binary and `lupen` would just open the GUI):
+
+```ruby
+binary "#{appdir}/Lupen.app/Contents/MacOS/Lupen", target: "lupen"
+```
+
+DMG-only users run `lupen install-cli` instead. The CLI updates with the app
+(same bundle), so there's nothing extra to ship per release after this.
+
 ## Packaging gotchas
 - **Hardened Runtime** + `--timestamp` are required for notarization (the
   script sets them).

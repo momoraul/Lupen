@@ -10,6 +10,8 @@
 		BF0000000000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = PD0000000000000000000001 /* Sparkle */; };
 		BF0000000000000000000002 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = PD0000000000000000000002 /* GRDB */; };
 		BF0000000000000000000003 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = PD0000000000000000000003 /* GRDB */; };
+		BF0000000000000000000004 /* ArgumentParser in Frameworks */ = {isa = PBXBuildFile; productRef = PD0000000000000000000004 /* ArgumentParser */; };
+		BF0000000000000000000005 /* ArgumentParser in Frameworks */ = {isa = PBXBuildFile; productRef = PD0000000000000000000005 /* ArgumentParser */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -50,6 +52,7 @@
 			files = (
 				BF0000000000000000000001 /* Sparkle in Frameworks */,
 				BF0000000000000000000002 /* GRDB in Frameworks */,
+				BF0000000000000000000004 /* ArgumentParser in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -58,6 +61,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BF0000000000000000000003 /* GRDB in Frameworks */,
+				BF0000000000000000000005 /* ArgumentParser in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -115,6 +119,7 @@
 			packageProductDependencies = (
 				PD0000000000000000000001 /* Sparkle */,
 				PD0000000000000000000002 /* GRDB */,
+				PD0000000000000000000004 /* ArgumentParser */,
 			);
 			productName = Lupen;
 			productReference = RF0000000000000000000001 /* Lupen.app */;
@@ -139,6 +144,7 @@
 			name = LupenTests;
 			packageProductDependencies = (
 				PD0000000000000000000003 /* GRDB */,
+				PD0000000000000000000005 /* ArgumentParser */,
 			);
 			productName = LupenTests;
 			productReference = RF0000000000000000000002 /* LupenTests.xctest */;
@@ -166,6 +172,7 @@
 			packageReferences = (
 				PR0000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				PR0000000000000000000002 /* XCRemoteSwiftPackageReference "GRDB" */,
+				PR0000000000000000000003 /* XCRemoteSwiftPackageReference "swift-argument-parser" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = GR0000000000000000000001 /* Products */;
@@ -458,6 +465,14 @@
 				version = 7.11.0;
 			};
 		};
+		PR0000000000000000000003 /* XCRemoteSwiftPackageReference "swift-argument-parser" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-argument-parser";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.3.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -475,6 +490,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = PR0000000000000000000002 /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
+		};
+		PD0000000000000000000004 /* ArgumentParser */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PR0000000000000000000003 /* XCRemoteSwiftPackageReference "swift-argument-parser" */;
+			productName = ArgumentParser;
+		};
+		PD0000000000000000000005 /* ArgumentParser */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PR0000000000000000000003 /* XCRemoteSwiftPackageReference "swift-argument-parser" */;
+			productName = ArgumentParser;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

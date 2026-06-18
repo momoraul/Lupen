@@ -74,6 +74,7 @@ Lupen breaks the number down and recomputes each cost from the raw tokens.
 - **Sub-agent cost rollup** — When a Turn spawns sub-agents, their cost rolls up into the parent in the outline but stays separately attributable in the detail pane. The aggregate and the per-agent figures come from the same source, so they stay consistent.
 - **Origin-tagged attachment tracking** — File paths, image bytes, and URLs are classified by where they entered the conversation (inline prompt, tool input, tool output, reply, …) so you can see what's filling the context window.
 - **5-hour limit tracking** — A Bayesian estimate of `$ per 1 % of limit consumed` across your last 7 days, surfaced in the menu-bar icon's ring tint (yellow at 70 %, orange at 90 %, red at 100 %).
+- **Scriptable `lupen` CLI** — The same app binary is a command line over the same local index: every report as a table, `--json`, or `--csv`, plus `verify` / `budget` exit-code gates for a CI step or commit hook. See [Command line](#command-line).
 - **Zero network** — Lupen only reads local Claude Code and Codex files on disk. No API keys, no telemetry, no cloud sync.
 
 ## Install
@@ -93,6 +94,41 @@ cp Config/Local.xcconfig.example Config/Local.xcconfig  # set DEVELOPMENT_TEAM
 xcodebuild build -project Lupen.xcodeproj -scheme Lupen -destination 'platform=macOS'
 open ~/Library/Developer/Xcode/DerivedData/Lupen-*/Build/Products/Debug/Lupen.app
 ```
+
+## Command line
+
+The app binary doubles as a `lupen` CLI — same local index the menu-bar app
+builds, every report scriptable and local:
+
+<p align="center">
+  <img src="docs/branding/lupen-cli.svg" alt="lupen skills --last 30d — a per-skill cost table with RUNS, COST, $/run, and top model columns" width="620">
+</p>
+
+```bash
+lupen skills --last 30d            # per-skill cost, $/run, top model
+lupen top --by sessions --limit 5  # the costliest sessions
+lupen budget --over 20 --last 7d   # exit 4 if this week ran over $20
+lupen verify                       # exit 4 if any cost drifts from the recomputed truth
+lupen daily --json | jq            # any report as JSON / CSV
+```
+
+The full command set, grouped:
+
+| | Commands |
+|---|---|
+| **Spend** | `summary` (default) · `daily` / `weekly` / `monthly` |
+| **Breakdowns** | `skills` · `models` · `projects` · `top` |
+| **Find & resume** | `search <text>` · `resume <session-id>` |
+| **Guards** (exit-code gates for CI) | `verify` · `budget --over <usd>` · `statusline` |
+| **Index & setup** | `refresh` · `config` · `install-cli` |
+
+Every reporting command takes `--provider`, a period (`--last 30d` / `--month
+2026-06` / `--since … --until …`), and `--json` / `--csv` — except `verify`,
+which audits the whole corpus and ignores the period.
+
+Once a release ships the CLI, Homebrew puts `lupen` on your PATH automatically;
+on a DMG or source build, run `lupen install-cli` once. Full reference — every
+flag and exit code: [docs/CLI.md](docs/CLI.md).
 
 ## Why I built this
 
