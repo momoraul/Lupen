@@ -285,7 +285,7 @@ final class SessionResumer {
     /// escaping *except* another single quote, which
     /// `shellEscapeSingleQuoted` handles with the canonical `'\''`
     /// close-literal-reopen trick.
-    static func buildShellCommand(provider: ProviderKind, cwd: String?, sessionId: String) -> String {
+    nonisolated static func buildShellCommand(provider: ProviderKind, cwd: String?, sessionId: String) -> String {
         let safeSid = shellEscapeSingleQuoted(sessionId)
         let resume = "\(provider.resumeCommandPrefix) '\(safeSid)'"
         guard let cwd, !cwd.isEmpty else { return resume }
@@ -317,7 +317,7 @@ final class SessionResumer {
     /// literal. Within `'…'`, the only character that can't appear is
     /// another `'`, and the idiomatic workaround is to close the quoted
     /// string, emit an escaped literal quote, and reopen it — `'\''`.
-    static func shellEscapeSingleQuoted(_ value: String) -> String {
+    nonisolated static func shellEscapeSingleQuoted(_ value: String) -> String {
         value.replacingOccurrences(of: "'", with: "'\\''")
     }
 
