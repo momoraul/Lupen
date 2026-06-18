@@ -1106,10 +1106,7 @@ enum CodexUsageSessionLoader {
                 rawSessionId: visibleRawSessionId,
                 requests: requests,
                 projectPath: primaryPiece.metadata.cwd ?? groupPieces.compactMap(\.metadata.cwd).first,
-                isVisibleInSessionList: isSessionListVisible(
-                    visibleRawSessionId: visibleRawSessionId,
-                    titleIndex: titleIndex
-                ),
+                isVisibleInSessionList: true,
                 cachedTitle: primaryPiece.metadata.titleHint ?? groupPieces.compactMap(\.metadata.titleHint).first
             )
             sessions.append(session)
@@ -1217,13 +1214,6 @@ enum CodexUsageSessionLoader {
     private static func nonEmpty(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
-    }
-
-    private static func isSessionListVisible(
-        visibleRawSessionId: String,
-        titleIndex: CodexSessionTitleIndex
-    ) -> Bool {
-        titleIndex.isEmpty || titleIndex.contains(sessionId: visibleRawSessionId)
     }
 
     private static func shortSessionId(_ id: String) -> String {
