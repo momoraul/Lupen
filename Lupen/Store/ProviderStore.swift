@@ -1188,7 +1188,7 @@ extension ProviderStore: ImportWriting {
         var imported = source
         imported.parseState = .imported
         imported.importedAt = Date()
-        try database.pool.write { db in
+        _ = try database.pool.write { db in
             try Self.upsertSourceFile(imported, db: db)
         }
         return true
