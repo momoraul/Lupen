@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 548 350" width="548" height="350" role="img" aria-label="Terminal showing: lupen skills --last 30d — a per-skill cost table with RUNS, COST, dollars per run, and TOP MODEL columns, totalling 91 runs and $291.07. Synthetic demo data.">
+  <!-- window -->
+  <rect x="0.5" y="0.5" width="547" height="349" rx="12" fill="#0b1020" stroke="#233059"/>
+  <!-- title bar -->
+  <path d="M0 12 A12 12 0 0 1 12 0 H536 A12 12 0 0 1 548 12 V40 H0 Z" fill="#141b33"/>
+  <line x1="0" y1="40.5" x2="548" y2="40.5" stroke="#233059"/>
+  <circle cx="22" cy="20" r="6" fill="#ff5f56"/>
+  <circle cx="42" cy="20" r="6" fill="#febc2e"/>
+  <circle cx="62" cy="20" r="6" fill="#28c840"/>
+  <text x="274" y="24.5" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" fill="#6b7aa8">lupen — zsh</text>
+  <!-- body: columns positioned by explicit x (numeric columns right-anchored) so
+       alignment never depends on whitespace collapsing -->
+  <g font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="14">
+    <!-- command -->
+    <text y="76"><tspan x="24" fill="#3ddc97">$</tspan><tspan fill="#e8ecff"> lupen skills --last 30d</tspan></text>
+    <!-- provider · period -->
+    <text x="24" y="116" fill="#8aa2ff">Claude Code · last 30d</text>
+    <!-- header -->
+    <text y="156" fill="#6f7cb0"><tspan x="24">SKILL</tspan><tspan x="185" text-anchor="end">RUNS</tspan><tspan x="278" text-anchor="end">COST</tspan><tspan x="356" text-anchor="end">$/RUN</tspan><tspan x="376">TOP MODEL</tspan></text>
+    <!-- rows -->
+    <text y="180" fill="#cdd6ff"><tspan x="24">refactor</tspan><tspan x="185" text-anchor="end">16</tspan><tspan x="278" text-anchor="end">$182.40</tspan><tspan x="356" text-anchor="end">$11.40</tspan><tspan x="376">claude-fable-5</tspan></text>
+    <text y="204" fill="#cdd6ff"><tspan x="24">code-review</tspan><tspan x="185" text-anchor="end">30</tspan><tspan x="278" text-anchor="end">$63.00</tspan><tspan x="356" text-anchor="end">$2.10</tspan><tspan x="376">claude-opus-4-8</tspan></text>
+    <text y="228" fill="#cdd6ff"><tspan x="24">write-tests</tspan><tspan x="185" text-anchor="end">24</tspan><tspan x="278" text-anchor="end">$32.40</tspan><tspan x="356" text-anchor="end">$1.35</tspan><tspan x="376">claude-sonnet-4-6</tspan></text>
+    <text y="252" fill="#cdd6ff"><tspan x="24">doc-sync</tspan><tspan x="185" text-anchor="end">13</tspan><tspan x="278" text-anchor="end">$9.75</tspan><tspan x="356" text-anchor="end">$0.75</tspan><tspan x="376">claude-sonnet-4-6</tspan></text>
+    <text y="276" fill="#cdd6ff"><tspan x="24">changelog</tspan><tspan x="185" text-anchor="end">8</tspan><tspan x="278" text-anchor="end">$3.52</tspan><tspan x="356" text-anchor="end">$0.44</tspan><tspan x="376">claude-haiku-4-5</tspan></text>
+    <!-- total -->
+    <text y="314" fill="#9bb0ff"><tspan x="24">TOTAL</tspan><tspan x="82">5 skill(s) · 91 run(s) · $291.07</tspan></text>
+  </g>
+</svg>
