@@ -430,13 +430,13 @@ struct TimelineOverviewView: View {
         }
     }
 
-    nonisolated(unsafe) private static let hoverDayFormatter: DateFormatter = {
+    private static let hoverDayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .none
         return f
     }()
-    nonisolated(unsafe) private static let hoverHourFormatter: DateFormatter = {
+    private static let hoverHourFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MMM d, HH:00"
         return f
