@@ -911,6 +911,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         verifyUsageMenuItem = verifyItem
         windowMenu.addItem(verifyItem)
 
+        // The log window is a maintainer-only diagnostic; its entry points
+        // (this menu item and the dashboard toolbar button) ship in DEBUG
+        // builds only.
+        #if DEBUG
         let logsItem = NSMenuItem(
             title: "Logs…",
             action: #selector(openLogs(_:)),
@@ -919,6 +923,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         logsItem.keyEquivalentModifierMask = [.command, .shift]
         logsItem.target = self
         windowMenu.addItem(logsItem)
+        #endif
 
         windowMenu.addItem(.separator())
 

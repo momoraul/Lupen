@@ -507,11 +507,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         // The legacy Codex load-summary panel died with the in-memory
         // loader (5.3) — the view stays in the layout chain as a
         // permanently hidden zero-height spacer.
-        let shouldShow = false
-        codexLoadSummaryView.isHidden = !shouldShow
-        codexLoadSummaryHeightConstraint?.constant = shouldShow
-            ? SidebarMetrics.statusStripHeight
-            : 0
+        codexLoadSummaryView.isHidden = true
+        codexLoadSummaryHeightConstraint?.constant = 0
     }
 
     /// Refresh the filter button's icon to reflect whether any

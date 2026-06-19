@@ -264,8 +264,8 @@ extension TokenBreakdown {
             eph5m = flat
         }
         return TokenBreakdown(
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
+            inputTokens: usage.inputTokens ?? 0,
+            outputTokens: usage.outputTokens ?? 0,
             cacheCreationInputTokens: flat,
             cacheReadInputTokens: read,
             cacheCreationEphemeral1h: eph1h,

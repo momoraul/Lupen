@@ -23,7 +23,7 @@
 
 <!-- Hero is a ≤5 MB looping GIF (drill-down through priced rows), recorded on synthetic demo data. Swap docs/demo.gif to update. -->
 
-> **Pre-release** — builds and runs end-to-end today; a signed DMG and Homebrew cask are landing next. [Build from source ↓](#install)
+> **Install:** `brew install --cask momoraul/lupen/lupen` — or grab the [signed DMG](https://github.com/momoraul/Lupen/releases/latest). Requires macOS 26 (Tahoe) on Apple Silicon.
 
 ---
 
@@ -74,12 +74,20 @@ Lupen breaks the number down and recomputes each cost from the raw tokens.
 - **Sub-agent cost rollup** — When a Turn spawns sub-agents, their cost rolls up into the parent in the outline but stays separately attributable in the detail pane. The aggregate and the per-agent figures come from the same source, so they stay consistent.
 - **Origin-tagged attachment tracking** — File paths, image bytes, and URLs are classified by where they entered the conversation (inline prompt, tool input, tool output, reply, …) so you can see what's filling the context window.
 - **5-hour limit tracking** — A Bayesian estimate of `$ per 1 % of limit consumed` across your last 7 days, surfaced in the menu-bar icon's ring tint (yellow at 70 %, orange at 90 %, red at 100 %).
+- **Scriptable `lupen` CLI** — The same app binary is a command line over the same local index: every report as a table, `--json`, or `--csv`, plus `verify` / `budget` exit-code gates for a CI step or commit hook. See [Command line](#command-line).
 - **Zero network** — Lupen only reads local Claude Code and Codex files on disk. No API keys, no telemetry, no cloud sync.
 
 ## Install
 
 ```bash
-# Pre-release — build from source
+brew install --cask momoraul/lupen/lupen
+```
+
+…or grab the signed DMG from the [latest release](https://github.com/momoraul/Lupen/releases/latest). Both are notarized and keep themselves up to date via Sparkle.
+
+### Build from source
+
+```bash
 git clone https://github.com/momoraul/Lupen.git
 cd Lupen
 cp Config/Local.xcconfig.example Config/Local.xcconfig  # set DEVELOPMENT_TEAM
@@ -87,13 +95,40 @@ xcodebuild build -project Lupen.xcodeproj -scheme Lupen -destination 'platform=m
 open ~/Library/Developer/Xcode/DerivedData/Lupen-*/Build/Products/Debug/Lupen.app
 ```
 
-Once v0.3.0 ships:
+## Command line
+
+The app binary doubles as a `lupen` CLI — same local index the menu-bar app
+builds, every report scriptable and local:
+
+<p align="center">
+  <img src="docs/branding/lupen-cli.svg" alt="lupen skills --last 30d — a per-skill cost table with RUNS, COST, $/run, and top model columns" width="620">
+</p>
 
 ```bash
-brew install --cask momoraul/lupen/lupen
+lupen skills --last 30d            # per-skill cost, $/run, top model
+lupen top --by sessions --limit 5  # the costliest sessions
+lupen budget --over 20 --last 7d   # exit 4 if this week ran over $20
+lupen verify                       # exit 4 if any cost drifts from the recomputed truth
+lupen daily --json | jq            # any report as JSON / CSV
 ```
 
-…or download the DMG directly from [Releases](https://github.com/momoraul/Lupen/releases/latest).
+The full command set, grouped:
+
+| | Commands |
+|---|---|
+| **Spend** | `summary` (default) · `daily` / `weekly` / `monthly` |
+| **Breakdowns** | `skills` · `models` · `projects` · `top` |
+| **Find & resume** | `search <text>` · `resume <session-id>` |
+| **Guards** (exit-code gates for CI) | `verify` · `budget --over <usd>` · `statusline` |
+| **Index & setup** | `refresh` · `config` · `install-cli` |
+
+Every reporting command takes `--provider`, a period (`--last 30d` / `--month
+2026-06` / `--since … --until …`), and `--json` / `--csv` — except `verify`,
+which audits the whole corpus and ignores the period.
+
+Homebrew installs put `lupen` on your PATH automatically;
+on a DMG or source build, run `lupen install-cli` once. Full reference — every
+flag and exit code: [docs/CLI.md](docs/CLI.md).
 
 ## Why I built this
 
@@ -148,7 +183,23 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
-### v0.3.0 — _unreleased_
+### v0.4.0 — _2026-06-18_
+
+First release of the `lupen` command line — the app binary doubles as a
+scriptable CLI over the same local index the menu-bar app builds.
+
+- **`lupen` CLI** — `summary`, `daily` / `weekly` / `monthly`, `skills`,
+  `models`, `projects`, `top`, `search` / `resume`, `verify`, `budget`,
+  `statusline`, `refresh`, `config`, `install-cli`.
+- Every report as a table, `--json`, or `--csv`; `--provider` and the period
+  flags (`--last` / `--month` / `--since`+`--until`) throughout.
+- `verify` (exit 4 on cost drift) and `budget --over` (exit 4) make CI or
+  commit-hook cost gates.
+- Homebrew installs put `lupen` on your PATH automatically; DMG / source
+  builds run `lupen install-cli` once.
+- Log window is now a DEBUG-only diagnostic (hidden in release builds).
+
+### v0.3.0 — _2026-06-17_
 
 First public release. Highlights:
 
@@ -159,5 +210,5 @@ First public release. Highlights:
 - 5-hour-limit tracking with Bayesian shrinkage (`$ per 1 % limit`) and severity-tinted menu-bar icon
 - Origin-tagged attachment classification with inline image preview
 - Snapshot cache for incremental launch (full reparse only when the schema bumps)
-- Sparkle 2 auto-update infrastructure ready (AppCast hosting pending)
+- Sparkle 2 auto-update, with a signed appcast hosted on GitHub Pages
 - Status-item rendered as a single attributed run — no icon-text gap on macOS 26

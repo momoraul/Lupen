@@ -73,4 +73,14 @@ enum LupenPaths {
         providerRoot(for: provider, appSupportRoot: appSupportRoot)
             .appendingPathComponent("index.sqlite3")
     }
+
+    /// Advisory lock file the CLI holds while refreshing this provider's
+    /// index, so two `lupen` runs don't index in parallel.
+    static func refreshLockURL(
+        for provider: ProviderKind,
+        appSupportRoot: URL = applicationSupportRoot()
+    ) -> URL {
+        providerRoot(for: provider, appSupportRoot: appSupportRoot)
+            .appendingPathComponent("refresh.lock")
+    }
 }

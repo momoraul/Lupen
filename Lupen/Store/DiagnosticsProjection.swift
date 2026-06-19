@@ -24,7 +24,7 @@ enum DiagnosticsProjection {
         // Ring-buffer semantics: newest LAST (the view reverses).
         let samples = rows.reversed().map { row in
             ParseDiagnostics.Sample(
-                at: row.createdAt ?? Date(),
+                at: row.createdAt,
                 fileURL: nil,
                 byteOffset: (row.byteOffset).map(Int.init),
                 rejection: rejection(category: row.category),

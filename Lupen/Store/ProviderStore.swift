@@ -770,6 +770,65 @@ extension ProviderStore: ReportsRepository {
         }
     }
 
+    /// Highest-cost sessions over the range (for `lupen top`). Matches the
+    /// sidebar's visibility rule (`visible = 1 AND superseded_by IS NULL`) so
+    /// compact-continuation replay shells don't appear — their cost is
+    /// re-homed to the canonical session anyway.
+    func topSessionCosts(from: Date?, to: Date?, limit: Int) throws -> [StoreSessionCost] {
+        try database.pool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT r.session_id AS session_id,
+                           s.project_path AS project_path,
+                           COALESCE(s.custom_title, s.cached_title, s.first_prompt) AS title,
+                           COUNT(*) AS request_count,
+                           COALESCE(SUM(COALESCE(r.final_cost_usd, r.provisional_cost_usd, 0)), 0) AS cost_usd
+                    FROM requests r
+                    JOIN sessions s ON s.id = r.session_id
+                    WHERE r.model IS NOT NULL AND r.model != '<synthetic>'
+                      AND s.visible = 1 AND s.superseded_by IS NULL
+                      AND (? IS NULL OR r.timestamp >= ?) AND (? IS NULL OR r.timestamp <= ?)
+                    GROUP BY r.session_id
+                    ORDER BY cost_usd DESC, r.session_id
+                    LIMIT ?
+                    """,
+                arguments: [from, from, to, to, limit]
+            ).map { row in
+                StoreSessionCost(
+                    sessionId: row["session_id"],
+                    projectPath: row["project_path"],
+                    title: row["title"],
+                    requestCount: row["request_count"],
+                    costUSD: row["cost_usd"]
+                )
+            }
+        }
+    }
+
+    /// Count of the distinct sessions `topSessionCosts` ranks from — visible,
+    /// non-superseded sessions with billable activity in the window. Shares
+    /// `topSessionCosts`'s predicate exactly so `top`'s "of N" footer matches
+    /// its rows (superseded replay shells, whose cost is re-homed onto their
+    /// canonical session, are excluded — counting them would inflate N above
+    /// the rankable population).
+    func visibleSessionCount(from: Date?, to: Date?) throws -> Int {
+        try database.pool.read { db in
+            try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(DISTINCT r.session_id)
+                    FROM requests r
+                    JOIN sessions s ON s.id = r.session_id
+                    WHERE r.model IS NOT NULL AND r.model != '<synthetic>'
+                      AND s.visible = 1 AND s.superseded_by IS NULL
+                      AND (? IS NULL OR r.timestamp >= ?) AND (? IS NULL OR r.timestamp <= ?)
+                    """,
+                arguments: [from, from, to, to]
+            ) ?? 0
+        }
+    }
+
     func requestCostPoints(from: Date?, to: Date?) throws -> [StoreRequestCostPoint] {
         try database.pool.read { db in
             try Row.fetchAll(
@@ -1129,7 +1188,7 @@ extension ProviderStore: ImportWriting {
         var imported = source
         imported.parseState = .imported
         imported.importedAt = Date()
-        try database.pool.write { db in
+        _ = try database.pool.write { db in
             try Self.upsertSourceFile(imported, db: db)
         }
         return true
