@@ -162,7 +162,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// until the user touched pagination. Keep this struct in lockstep with
     /// whatever `reloadData` actually reads — if you add a new cell input,
     /// add it here first.
-    private struct RenderSnapshot: Equatable {
+    struct RenderSnapshot: Equatable {
         /// Per-session (id, endTime, title). endTime catches "session got new
         /// requests" without us having to compare the full `requests` array;
         /// title catches "first Turn assembled / preview text changed" which
@@ -216,6 +216,10 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             /// only the clock-vs-endTime comparison, so endTime alone
             /// can't detect it.
             let isActive: Bool
+            /// Session total cost. Included so a cost-only backfill (the
+            /// finalize pass reprices requests without moving endTime)
+            /// still invalidates the guard and repaints the price label.
+            let costUSD: Double
         }
     }
     private var lastRenderSnapshot: RenderSnapshot = RenderSnapshot(
@@ -994,7 +998,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
                     title: resolved.text,
                     isCustomTitle: resolved.origin == .custom,
                     isPinned: pinnedIds.contains(session.id),
-                    isActive: store.isSessionActive(session, now: now)
+                    isActive: store.isSessionActive(session, now: now),
+                    costUSD: store.sessionListAggregates[session.id]?.costUSD ?? 0
                 )
             },
             visibleCounts: visibleCountByProject,
@@ -2543,10 +2548,6 @@ final class SessionCellView: NSTableCellView {
             a11yParts.append("\(subAgentCount) sub-agent\(subAgentCount == 1 ? "" : "s")")
         }
         self.setAccessibilityLabel(a11yParts.joined(separator: ", "))
-    }
-
-    private static func costLabel(totalCost: Double, confidence: CostConfidence) -> String {
-        CostConfidencePresentation.label(totalCost: totalCost, confidence: confidence)
     }
 
     private static func costTooltip(provider: ProviderKind, confidence: CostConfidence) -> String? {
