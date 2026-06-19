@@ -66,6 +66,11 @@ final class ProviderIndexCoordinator: @unchecked Sendable {
         /// for its whole import (the 109 GB jumbo group measured in
         /// the wild held "7 of 383" for tens of minutes).
         var largeUnitDemoteBytes: Int64 = 1 << 30   // 1 GiB
+        /// Forwarded to the Codex detail importer: a non-duplicated piece
+        /// at least this large imports via the memory-bounded projection
+        /// (user prompts kept, non-user body clipped). Overridable so the
+        /// safety floor can be tuned per environment rather than baked in.
+        var oversizedPieceByteThreshold: Int64 = CodexDetailImporter.defaultOversizedPieceByteThreshold
         init() {}
     }
 
@@ -388,6 +393,7 @@ final class ProviderIndexCoordinator: @unchecked Sendable {
             case .codex(let codexHome):
                 var importerConfiguration = CodexDetailImporter.Configuration()
                 importerConfiguration.writeBatchRowLimit = configuration.writeBatchRowLimit
+                importerConfiguration.oversizedPieceByteThreshold = configuration.oversizedPieceByteThreshold
                 let importer = CodexDetailImporter(
                     writer: store, configuration: importerConfiguration
                 )
