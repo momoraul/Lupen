@@ -2475,8 +2475,6 @@ final class SessionCellView: NSTableCellView {
         ].compactMap { $0 }.filter { !$0.isEmpty }
         metaLabel.stringValue = metaParts.joined(separator: " · ")
         metaLabel.toolTip = Self.metadataTooltip(
-            provider: provider,
-            confidence: costConfidence,
             requestCount: requestCount,
             totalTokens: totalTokens
         )
@@ -2556,8 +2554,6 @@ final class SessionCellView: NSTableCellView {
     }
 
     private static func metadataTooltip(
-        provider: ProviderKind,
-        confidence: CostConfidence,
         requestCount: Int,
         totalTokens: Int
     ) -> String? {
@@ -2565,9 +2561,6 @@ final class SessionCellView: NSTableCellView {
             "Requests: \(formatCount(requestCount))",
             "Tokens: \(formatCount(totalTokens))",
         ]
-        if let cost = costTooltip(provider: provider, confidence: confidence) {
-            lines.append(cost)
-        }
         return lines.joined(separator: "\n")
     }
 
@@ -2586,6 +2579,9 @@ final class SessionCellView: NSTableCellView {
     }
     var titleLabelCompressionResistanceForTesting: Float {
         titleLabel.contentCompressionResistancePriority(for: .horizontal).rawValue
+    }
+    func metaTooltipForTesting(requestCount: Int, totalTokens: Int) -> String? {
+        Self.metadataTooltip(requestCount: requestCount, totalTokens: totalTokens)
     }
 }
 
