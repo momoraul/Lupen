@@ -162,7 +162,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// until the user touched pagination. Keep this struct in lockstep with
     /// whatever `reloadData` actually reads — if you add a new cell input,
     /// add it here first.
-    private struct RenderSnapshot: Equatable {
+    struct RenderSnapshot: Equatable {
         /// Per-session (id, endTime, title). endTime catches "session got new
         /// requests" without us having to compare the full `requests` array;
         /// title catches "first Turn assembled / preview text changed" which
@@ -216,6 +216,10 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             /// only the clock-vs-endTime comparison, so endTime alone
             /// can't detect it.
             let isActive: Bool
+            /// Session total cost. Included so a cost-only backfill (the
+            /// finalize pass reprices requests without moving endTime)
+            /// still invalidates the guard and repaints the price label.
+            let costUSD: Double
         }
     }
     private var lastRenderSnapshot: RenderSnapshot = RenderSnapshot(
@@ -991,7 +995,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
                     title: resolved.text,
                     isCustomTitle: resolved.origin == .custom,
                     isPinned: pinnedIds.contains(session.id),
-                    isActive: store.isSessionActive(session, now: now)
+                    isActive: store.isSessionActive(session, now: now),
+                    costUSD: store.sessionListAggregates[session.id]?.costUSD ?? 0
                 )
             },
             visibleCounts: visibleCountByProject,
@@ -2147,7 +2152,7 @@ private final class SessionListNode: NSObject {
 ///
 /// The project name is not shown here anymore — it lives in the group header
 /// above (and collapses with the group).
-private final class SessionCellView: NSTableCellView {
+final class SessionCellView: NSTableCellView {
 
     private let titleLabel = NSTextField(labelWithString: "")
     /// Filled `tag.fill` SF Symbol rendered in front of the title for
@@ -2174,6 +2179,11 @@ private final class SessionCellView: NSTableCellView {
     private let branchIcon = NSImageView()
     private let branchLabel = NSTextField(labelWithString: "")
     private let metaLabel = NSTextField(labelWithString: "")
+    /// Dedicated cost label pinned to the title row's trailing edge.
+    /// Carries the session total so it survives sidebar narrowing — the
+    /// title truncates first (lower compression resistance), the price
+    /// stays. Mirrors the turn outline's Cost column tinting via CostColor.
+    private let costLabel = NSTextField(labelWithString: "")
     private let activeDot = NSView()
     /// `person.2.fill` glyph + small count rendered as a paired view in the
     /// trailing edge of the meta row when the session has spawned at least
@@ -2217,6 +2227,7 @@ private final class SessionCellView: NSTableCellView {
         titleLabel.textColor = .labelColor
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         // Indicator weight: user explicitly chose to name this session, so
         // the glyph is tinted in the system accent colour (same blue as
@@ -2271,6 +2282,15 @@ private final class SessionCellView: NSTableCellView {
         metaLabel.lineBreakMode = .byTruncatingTail
         metaLabel.maximumNumberOfLines = 1
 
+        costLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        costLabel.textColor = .labelColor
+        costLabel.alignment = .right
+        costLabel.lineBreakMode = .byClipping
+        costLabel.maximumNumberOfLines = 1
+        // 비용은 핵심 지표 — 절대 안 잘리고 폭도 안 늘어남. 제목이 먼저 …로 양보.
+        costLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        costLabel.setContentHuggingPriority(.required, for: .horizontal)
+
         activeDot.wantsLayer = true
         activeDot.layer?.cornerRadius = 3
         activeDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
@@ -2290,7 +2310,7 @@ private final class SessionCellView: NSTableCellView {
         subAgentCountLabel.setAccessibilityElement(false)
 
         for v in [activeDot, customTitleIcon, pinIcon, titleLabel, branchIcon, branchLabel, metaLabel,
-                  subAgentIcon, subAgentCountLabel] {
+                  costLabel, subAgentIcon, subAgentCountLabel] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -2341,10 +2361,14 @@ private final class SessionCellView: NSTableCellView {
             pinIcon.widthAnchor.constraint(equalToConstant: 10),
             pinIcon.heightAnchor.constraint(equalToConstant: 10),
 
-            // Title row.
+            // Title row — title yields to the cost label on the right.
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             titleLeadingNoTag,
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: costLabel.leadingAnchor, constant: -8),
+
+            // Dedicated cost label — title-row trailing, baseline-aligned to title.
+            costLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            costLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
 
             // Branch row — icon + label aligned to the shared left column.
             branchTopToTitle,
@@ -2433,26 +2457,26 @@ private final class SessionCellView: NSTableCellView {
             titleLeadingNoTag.isActive = true
         }
 
+        // Dedicated cost label on the title row.
+        let costDisplay = CostColor.display(cost: totalCost, confidence: costConfidence)
+        costLabel.stringValue = costDisplay.text
+        costLabel.textColor = costDisplay.color
+        // Codex 신뢰도 설명 툴팁은 비용 라벨로 이동(이전엔 metaLabel에 붙였음).
+        costLabel.toolTip = Self.costTooltip(provider: provider, confidence: costConfidence)
+
         // Format numbers tersely. "·" is a middle-dot separator — more compact
         // than " · " or "  " and reads well at 10pt.
         let requests = CompactNumber.compact(requestCount)
-        let cost = Self.costLabel(totalCost: totalCost, confidence: costConfidence)
         // Flat layout surfaces the project in the meta row (Grouped shows it
-        // in the group header, so we skip it there). Order is
-        // project → time → cost → req: the cost figure is the
-        // primary at-a-glance signal (users budget by session), so it sits
-        // adjacent to the time. Token totals stay in the tooltip; in a
-        // narrow sidebar they otherwise truncate the unit-bearing suffix.
+        // in the group header, so we skip it there). Cost has moved to the
+        // dedicated costLabel on the title row; meta now shows project, time, req.
         let metaParts = [
             projectLabel,
             startTime,
-            cost,
             "\(requests) req",
         ].compactMap { $0 }.filter { !$0.isEmpty }
         metaLabel.stringValue = metaParts.joined(separator: " · ")
         metaLabel.toolTip = Self.metadataTooltip(
-            provider: provider,
-            confidence: costConfidence,
             requestCount: requestCount,
             totalTokens: totalTokens
         )
@@ -2523,17 +2547,11 @@ private final class SessionCellView: NSTableCellView {
         self.setAccessibilityLabel(a11yParts.joined(separator: ", "))
     }
 
-    private static func costLabel(totalCost: Double, confidence: CostConfidence) -> String {
-        CostConfidencePresentation.label(totalCost: totalCost, confidence: confidence)
-    }
-
     private static func costTooltip(provider: ProviderKind, confidence: CostConfidence) -> String? {
         CostConfidencePresentation.sidebarTooltip(provider: provider, confidence: confidence)
     }
 
     private static func metadataTooltip(
-        provider: ProviderKind,
-        confidence: CostConfidence,
         requestCount: Int,
         totalTokens: Int
     ) -> String? {
@@ -2541,14 +2559,27 @@ private final class SessionCellView: NSTableCellView {
             "Requests: \(formatCount(requestCount))",
             "Tokens: \(formatCount(totalTokens))",
         ]
-        if let cost = costTooltip(provider: provider, confidence: confidence) {
-            lines.append(cost)
-        }
         return lines.joined(separator: "\n")
     }
 
     private static func formatCount(_ value: Int) -> String {
         NumberFormatter.localizedString(from: NSNumber(value: value), number: .decimal)
+    }
+
+    // MARK: - Test seams
+
+    func costDisplayForTesting(totalCost: Double, confidence: CostConfidence) -> (text: String, color: NSColor) {
+        let d = CostColor.display(cost: totalCost, confidence: confidence)
+        return (d.text, d.color)
+    }
+    var costLabelCompressionResistanceForTesting: Float {
+        costLabel.contentCompressionResistancePriority(for: .horizontal).rawValue
+    }
+    var titleLabelCompressionResistanceForTesting: Float {
+        titleLabel.contentCompressionResistancePriority(for: .horizontal).rawValue
+    }
+    func metaTooltipForTesting(requestCount: Int, totalTokens: Int) -> String? {
+        Self.metadataTooltip(requestCount: requestCount, totalTokens: totalTokens)
     }
 }
 

@@ -3231,49 +3231,18 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         warningThreshold: Double = .infinity
     ) -> NSAttributedString {
         let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: weight)
-        if confidence == .unavailable {
-            return NSAttributedString(
-                string: "\(prefix)N/A",
-                attributes: [
-                    .font: font,
-                    .foregroundColor: NSColor.systemOrange,
-                    .paragraphStyle: rightAlignedParagraph,
-                ]
-            )
-        }
-        guard cost > 0 else {
-            return NSAttributedString(
-                string: "\(prefix)\(CostFormatter.emDash)",
-                attributes: [
-                    .font: font,
-                    .foregroundColor: NSColor.quaternaryLabelColor,
-                    .paragraphStyle: rightAlignedParagraph,
-                ]
-            )
-        }
-        let tint: NSColor
-        let text: String
-        if confidence == .partial {
-            tint = .systemOrange
-            text = "\(prefix)≈\(CostFormatter.compact(cost))"
-        } else if cost >= warningThreshold {
-            tint = .systemOrange
-            text = "\(prefix)\(CostFormatter.compact(cost))"
-        } else if let exactColor {
-            tint = exactColor
-            text = "\(prefix)\(CostFormatter.compact(cost))"
-        } else if cost <= 0.1 {
-            tint = .tertiaryLabelColor
-            text = "\(prefix)\(CostFormatter.compact(cost))"
-        } else {
-            tint = .labelColor
-            text = "\(prefix)\(CostFormatter.compact(cost))"
-        }
+        let display = CostColor.display(
+            cost: cost,
+            confidence: confidence,
+            prefix: prefix,
+            exactColor: exactColor,
+            warningThreshold: warningThreshold
+        )
         return NSAttributedString(
-            string: text,
+            string: display.text,
             attributes: [
                 .font: font,
-                .foregroundColor: tint,
+                .foregroundColor: display.color,
                 .paragraphStyle: rightAlignedParagraph,
             ]
         )

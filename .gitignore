@@ -47,6 +47,10 @@ test-artifacts/
 # Internal research docs — not for the public repo
 docs/Research/
 
+# Superpowers workflow scratch (plans / mockups). Durable design notes
+# belong in docs/design/ and are tracked normally.
+docs/superpowers/
+
 # Coverage / profiling artifacts
 *.profraw
 *.profdata
