@@ -37,7 +37,7 @@ final class ManageViewController: NSViewController {
     private let providerSeg = NSSegmentedControl(
         labels: ["Claude Code", "Codex"], trackingMode: .selectOne, target: nil, action: nil)
     private let scopeSeg = NSSegmentedControl(
-        labels: ["Sessions", "Projects", "Lupen Cache", "All Disk"], trackingMode: .selectOne, target: nil, action: nil)
+        labels: ["Sessions", "Lupen Cache", "All Disk"], trackingMode: .selectOne, target: nil, action: nil)
     private let searchField = NSSearchField()
     private let scrollView = NSScrollView()
     private let tableView = ManageTableView()
@@ -99,7 +99,6 @@ final class ManageViewController: NSViewController {
         scopeSeg.selectedSegment = 0
         scopeSeg.target = self
         scopeSeg.action = #selector(scopeChanged)
-        scopeSeg.setEnabled(false, forSegment: 1)   // Projects 탭은 추후 제공
 
         searchField.placeholderString = "Search prompts…"
         searchField.target = self
@@ -271,7 +270,7 @@ final class ManageViewController: NSViewController {
         store.switchProvider(providerSeg.selectedSegment == 0 ? .claudeCode : .codex)
     }
     @objc private func scopeChanged() {
-        let scopes: [ManageScope] = [.sessions, .projects, .cache, .allDisk]
+        let scopes: [ManageScope] = [.sessions, .cache, .allDisk]
         store.scope = scopes[min(scopeSeg.selectedSegment, scopes.count - 1)]
         store.clearSelection()
         refresh()
@@ -513,12 +512,13 @@ final class ManageViewController: NSViewController {
 
         if showCache {
             statusLabel.isHidden = true
-        } else if store.scope == .projects {
-            statusLabel.stringValue = "Coming soon."
-            statusLabel.isHidden = false
         } else if cachedRows.isEmpty {
-            let scanningText = store.scope == .allDisk ? "Measuring disk items…" : "Loading sessions…"
-            let emptyText = store.scope == .allDisk ? "No items to show." : "No sessions for this provider."
+            let scanningText = store.scope == .allDisk ? "Measuring disk items…" : "Loading…"
+            let emptyText: String
+            switch store.scope {
+            case .allDisk:  emptyText = "No items to show."
+            default:        emptyText = "No sessions for this provider."
+            }
             statusLabel.stringValue = store.isScanning ? scanningText
                 : (store.searchText.isEmpty ? emptyText : "No matching items.")
             statusLabel.isHidden = false

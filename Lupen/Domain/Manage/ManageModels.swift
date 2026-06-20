@@ -14,7 +14,6 @@ import Foundation
 /// (research-ccmgr.md §1.6 — 2단계 표시 결정).
 enum ManageScope: String, CaseIterable, Sendable, Identifiable {
     case sessions
-    case projects
     case cache
     case allDisk
 
@@ -23,7 +22,6 @@ enum ManageScope: String, CaseIterable, Sendable, Identifiable {
     var title: String {
         switch self {
         case .sessions: return "Sessions"
-        case .projects: return "Projects"
         case .cache:    return "Lupen Cache"
         case .allDisk:  return "All Disk"
         }
@@ -36,8 +34,6 @@ enum ManageItemKind: String, Sendable, Equatable {
     case session
     /// 세션영역 내부지만 인덱스가 모르는 `.jsonl` (미추적).
     case orphanFile
-    /// 프로젝트 디렉터리 단위 집계.
-    case project
     /// provider 홈 루트의 큰 점유물 (읽기전용 보조 뷰).
     case diskItem
     /// 인덱스에는 있으나 디스크에 원본 파일이 없는 잔재 (prune 대상).

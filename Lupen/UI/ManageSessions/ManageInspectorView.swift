@@ -8,8 +8,8 @@
 import SwiftUI
 
 /// 우측 인스펙터 — 단일 선택 행의 상세, 또는 다중 선택 요약. Sessions 탭에서만
-/// 노출(ViewController가 제어). 분류(안전/주의)는 표시하지 않는다 — 삭제 시
-/// 얼럿으로만 작동. UI 문자열은 영어(앱 전역 정책).
+/// 노출(ViewController가 제어). 분류는 표시하지 않고 상태(비정상)만 박스로
+/// 안내. UI 문자열은 영어(앱 전역 정책).
 struct ManageInspectorView: View {
     let store: ManageStore
     let actions: ManageRowActions
@@ -61,18 +61,7 @@ struct ManageInspectorView: View {
             Text(row.provider == .claudeCode ? "Claude Code session" : "Codex session")
                 .font(.caption).foregroundStyle(.secondary)
 
-            if row.status != .normal {
-                HStack(alignment: .top, spacing: 6) {
-                    Text(row.status.emoji)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.status.label).font(.caption).fontWeight(.semibold)
-                        Text(row.status.detailDescription).font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
-            }
+            if row.status != .normal { statusBox(row) }
 
             VStack(alignment: .leading, spacing: 5) {
                 metaRow("Path", row.projectPath ?? "—")
@@ -100,6 +89,19 @@ struct ManageInspectorView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func statusBox(_ row: ManageRowModel) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(row.status.emoji)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.status.label).font(.caption).fontWeight(.semibold)
+                Text(row.status.detailDescription).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+    }
+
     private func metaRow(_ key: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(key).foregroundStyle(.tertiary).frame(width: 56, alignment: .leading)
@@ -110,20 +112,24 @@ struct ManageInspectorView: View {
     @ViewBuilder
     private func actionButtons(_ row: ManageRowModel) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            if row.kind == .session {
-                Button { actions.resume(row) } label: { Label("Resume", systemImage: "play.fill") }
-                Button { actions.copyCommand(row) } label: { Label("Copy Resume Command", systemImage: "doc.on.doc") }
-            }
-            Button { actions.reveal(row) } label: { Label("Reveal in Finder", systemImage: "folder") }
-            if row.projectPath != nil {
-                Button { actions.openFolder(row) } label: { Label("Open Project Folder", systemImage: "folder.badge.gearshape") }
-                Button { actions.openTerminal(row) } label: { Label("Open in Terminal", systemImage: "terminal") }
-            }
-            if row.kind == .session {
-                Button { actions.export(row) } label: { Label("Export…", systemImage: "square.and.arrow.up") }
-            }
-            if row.protection == .deletable {
-                Button(role: .destructive) { actions.trashRow(row) } label: { Label("Move to Trash", systemImage: "trash") }
+            if row.kind == .diskItem {
+                Button { actions.reveal(row) } label: { Label("Reveal in Finder", systemImage: "folder") }
+            } else {
+                if row.kind == .session {
+                    Button { actions.resume(row) } label: { Label("Resume", systemImage: "play.fill") }
+                    Button { actions.copyCommand(row) } label: { Label("Copy Resume Command", systemImage: "doc.on.doc") }
+                }
+                Button { actions.reveal(row) } label: { Label("Reveal in Finder", systemImage: "folder") }
+                if row.projectPath != nil {
+                    Button { actions.openFolder(row) } label: { Label("Open Project Folder", systemImage: "folder.badge.gearshape") }
+                    Button { actions.openTerminal(row) } label: { Label("Open in Terminal", systemImage: "terminal") }
+                }
+                if row.kind == .session {
+                    Button { actions.export(row) } label: { Label("Export…", systemImage: "square.and.arrow.up") }
+                }
+                if row.protection == .deletable {
+                    Button(role: .destructive) { actions.trashRow(row) } label: { Label("Move to Trash", systemImage: "trash") }
+                }
             }
         }
         .buttonStyle(.bordered)
