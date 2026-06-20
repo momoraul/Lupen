@@ -24,12 +24,14 @@ final class ManageViewController: NSViewController {
     private let columns: [Column] = [
         Column(id: "status", title: "", width: 32, sort: .status, rightAligned: false, flexible: false),
         Column(id: "project", title: "Project", width: 104, sort: .project, rightAligned: false, flexible: false),
-        Column(id: "session", title: "Session", width: 320, sort: .session, rightAligned: false, flexible: true),
-        Column(id: "created", title: "Created", width: 120, sort: .created, rightAligned: false, flexible: false),
-        Column(id: "updated", title: "Updated", width: 120, sort: .updated, rightAligned: false, flexible: false),
+        Column(id: "session", title: "Session", width: 200, sort: .session, rightAligned: false, flexible: true),
+        Column(id: "created", title: "Created", width: 96, sort: .created, rightAligned: false, flexible: false),
+        Column(id: "updated", title: "Updated", width: 96, sort: .updated, rightAligned: false, flexible: false),
         Column(id: "size", title: "Size", width: 90, sort: .size, rightAligned: true, flexible: false),
         Column(id: "files", title: "Files", width: 60, sort: .files, rightAligned: true, flexible: false),
     ]
+    /// flexible(=session) 컬럼이 줄어들 수 있는 최소폭. 그 이하로는 줄이지 않는다.
+    private let flexibleColumnMinWidth: CGFloat = 200
 
     private let store: ManageStore
     private let sessionResumer = SessionResumer()
@@ -42,7 +44,7 @@ final class ManageViewController: NSViewController {
     private let scrollView = NSScrollView()
     private let tableView = ManageTableView()
     private let statusLabel = NSTextField(labelWithString: "")
-    private let collectorBar = NSView()
+    private let collectorBar = ManageDynamicBackgroundView()
     private let collectorLabel = NSTextField(labelWithString: "")
     private let clearButton = NSButton(title: "Clear Selection", target: nil, action: nil)
     private let trashButton = NSButton(title: "Move to Trash", target: nil, action: nil)
@@ -80,6 +82,12 @@ final class ManageViewController: NSViewController {
         super.viewDidLoad()
         buildUI()
         store.onChange = { [weak self] in self?.refresh() }
+        // load는 viewDidAppear에서 — 윈도우를 닫았다 다시 열어도 디스크/인덱스
+        // 변화를 반영하도록(재오픈 stale 방지).
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
         store.load()
     }
 
@@ -87,6 +95,13 @@ final class ManageViewController: NSViewController {
         super.viewWillDisappear()
         indexingPoll?.invalidate()
         indexingPoll = nil
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        // 윈도우 리사이즈·인스펙터 토글로 테이블 가용폭이 바뀔 때마다 Session 폭을
+        // 다시 맞춘다(고정 6컬럼은 그대로, Session만 늘고 줄어듦).
+        adjustFlexibleColumnWidth()
     }
 
     // MARK: - Build
@@ -129,14 +144,22 @@ final class ManageViewController: NSViewController {
             col.title = column.title
             col.width = column.width
             col.minWidth = column.id == "status" ? 28 : 40
+            if column.id == "status" {
+                // 헤더 텍스트가 빈 컬럼이라 VoiceOver에 의미가 전달되지 않으므로 라벨 부여.
+                col.headerCell.setAccessibilityLabel("Status")
+            }
             if column.sort != nil {
                 col.sortDescriptorPrototype = NSSortDescriptor(key: column.id, ascending: true)
             }
-            // Session만 테이블 리사이즈 시 늘어나게(여유 공간을 Session이 가짐).
-            col.resizingMask = column.flexible ? [.autoresizingMask, .userResizingMask] : .userResizingMask
+            // 자동 리사이즈는 끄고(아래 .noColumnAutoresizing) Session 폭을
+            // viewDidLayout에서 직접 재계산한다. 사용자 수동 드래그만 허용.
+            col.resizingMask = .userResizingMask
             tableView.addTableColumn(col)
         }
-        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        // 한 컬럼(Session)만 여유 공간을 흡수하는 정책을 명시적 재계산으로 통일한다.
+        // uniform/sequential 같은 전역 자동 리사이즈는 끄고(컬럼 마스크와의 모순 제거)
+        // viewDidLayout에서 Session 폭 = 가용폭 − 고정컬럼합 으로 직접 맞춘다.
+        tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.sortDescriptors = [NSSortDescriptor(key: "size", ascending: false)]
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -185,8 +208,7 @@ final class ManageViewController: NSViewController {
         leftSeparator = leftSep
 
         // collector
-        collectorBar.wantsLayer = true
-        collectorBar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        collectorBar.fillColor = .windowBackgroundColor   // updateLayer에서 모드별 재해석
         collectorBar.translatesAutoresizingMaskIntoConstraints = false
         collectorLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         clearButton.target = self; clearButton.action = #selector(clearTapped); clearButton.bezelStyle = .rounded
@@ -264,6 +286,25 @@ final class ManageViewController: NSViewController {
     }
     private func makeVerticalSeparator() -> NSView { makeSeparator() }
 
+    /// Session(flexible) 컬럼 폭을 "테이블 가용폭 − 고정컬럼합"으로 맞춘다.
+    /// .inset 스타일 인셋과 세로 스크롤러 폭이 빠진 실제 콘텐츠 폭(scrollView의
+    /// contentSize)을 기준으로 계산하므로 Size·Files가 잘리지 않는다. 음수가 되면
+    /// 최소폭으로 클램프해(가로 스크롤로 처리) 우측 컬럼 잘림을 막는다.
+    private func adjustFlexibleColumnWidth() {
+        guard isReady,
+              let flexColumn = tableView.tableColumn(
+                  withIdentifier: NSUserInterfaceItemIdentifier("session")) else { return }
+        let available = scrollView.contentSize.width
+        guard available > 0 else { return }
+        let fixedSum = tableView.tableColumns.reduce(CGFloat.zero) { sum, col in
+            col === flexColumn ? sum : sum + col.width
+        }
+        // 컬럼 사이 간격(intercellSpacing)도 가용폭에서 빠진다.
+        let spacing = tableView.intercellSpacing.width * CGFloat(max(0, tableView.tableColumns.count - 1))
+        let target = max(flexibleColumnMinWidth, available - fixedSum - spacing)
+        if abs(flexColumn.width - target) > 0.5 { flexColumn.width = target }
+    }
+
     // MARK: - Toolbar actions
 
     @objc private func providerChanged() {
@@ -333,9 +374,14 @@ final class ManageViewController: NSViewController {
         panel.prompt = "Export"
         panel.message = "Choose a folder to copy the session files into."
         guard panel.runModal() == .OK, let dest = panel.url else { return }
-        for path in row.trashTargets {
-            let src = URL(fileURLWithPath: path)
-            try? FileManager.default.copyItem(at: src, to: dest.appendingPathComponent(src.lastPathComponent))
+        do {
+            for path in row.trashTargets {
+                let src = URL(fileURLWithPath: path)
+                try FileManager.default.copyItem(at: src, to: dest.appendingPathComponent(src.lastPathComponent))
+            }
+        } catch {
+            // 충돌·권한·디스크부족 등 — 다른 액션과 동일하게 사용자에게 알린다.
+            showActionError(error)
         }
     }
     private func makeSession(_ row: ManageRowModel) -> Session? {
@@ -402,12 +448,11 @@ final class ManageViewController: NSViewController {
         guard !outcome.trashedPaths.isEmpty || !outcome.failedPaths.isEmpty else { return }
         pendingRestore = outcome.restore
 
-        let bar = NSView()
-        bar.wantsLayer = true
-        bar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        bar.layer?.cornerRadius = 9
-        bar.layer?.borderWidth = 1
-        bar.layer?.borderColor = NSColor.separatorColor.cgColor
+        let bar = ManageDynamicBackgroundView()
+        bar.fillColor = .controlBackgroundColor   // 모드 전환 시 updateLayer에서 재해석
+        bar.corner = 9
+        bar.strokeWidth = 1
+        bar.strokeColor = .separatorColor
         bar.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(labelWithString: snackbarText(outcome, attempted: attempted))
@@ -590,8 +635,14 @@ extension ManageViewController: NSTableViewDataSource, NSTableViewDelegate {
         cell.textField?.textColor = (columnId == "created" || columnId == "updated") ? .secondaryLabelColor : .labelColor
         switch columnId {
         case "project": cell.toolTip = model.projectPath
-        case "status":  cell.toolTip = model.status.label
-        default:        cell.toolTip = nil
+        case "status":
+            cell.toolTip = model.status.label
+            // 이모지만으로는 VoiceOver·색맹 사용자에게 상태가 전달되지 않으므로
+            // 접근성 라벨로 상태명을 명시한다(모델 주석의 "색 단독 의존 금지" 준수).
+            cell.textField?.setAccessibilityLabel(model.status.label)
+        default:
+            cell.toolTip = nil
+            cell.textField?.setAccessibilityLabel(nil)
         }
         return cell
     }
@@ -648,5 +699,35 @@ extension ManageViewController: NSTableViewDataSource, NSTableViewDelegate {
         store.sortKey = sort
         store.sortAscending = descriptor.ascending
         refresh()
+    }
+}
+
+// MARK: - ManageDynamicBackgroundView
+
+/// 다크↔라이트 모드 전환 시 배경/테두리 색을 다시 칠하는 레이어 백드 뷰.
+/// `.cgColor`는 정적 캡처라 effectiveAppearance 변경에 반응하지 않으므로,
+/// 프로젝트 표준(PillBackgroundView)과 동일하게 `updateLayer()`에서 동적
+/// NSColor를 매번 재해석한다. AppKit이 appearance 변경 시 layer를 무효화하고
+/// `updateLayer()`를 호출하므로 별도 관찰이 필요 없다.
+private final class ManageDynamicBackgroundView: NSView {
+    var fillColor: NSColor = .windowBackgroundColor
+    var strokeColor: NSColor?
+    var strokeWidth: CGFloat = 0
+    var corner: CGFloat = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = fillColor.cgColor
+        layer?.cornerRadius = corner
+        layer?.borderWidth = strokeWidth
+        layer?.borderColor = strokeColor?.cgColor
     }
 }

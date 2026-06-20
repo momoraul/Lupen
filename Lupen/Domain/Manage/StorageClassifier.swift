@@ -82,14 +82,16 @@ struct StorageClassifier: Sendable {
         ]
         if blockedSuffixes.contains(where: { name.hasSuffix($0) }) { return true }
 
-        // auth / credentials / config 계열.
-        let blockedPrefixes = ["auth", "credentials", ".credentials", "config", ".env"]
-        if blockedPrefixes.contains(where: { name.hasPrefix($0) }) { return true }
-
-        let blockedExact = ["config.toml", "config.json", "auth.json", ".env"]
-        if blockedExact.contains(name) { return true }
-
-        return false
+        // auth / credentials / config 계열 — 정확 파일명만 차단한다. prefix
+        // 매칭(`hasPrefix`)은 `configuration-notes.jsonl`처럼 정상 세션 로그까지
+        // 잠그므로 쓰지 않는다. 실제 민감 파일(auth.json/.credentials.json 등)은
+        // provider 홈 루트에 있어 isInsideSessionArea=false로 이미 차단되며,
+        // 여기 exact 목록은 그 위에 더하는 다층 방어다.
+        let blockedExact = [
+            "config.toml", "config.json", "auth.json", ".env",
+            "credentials.json", ".credentials.json",
+        ]
+        return blockedExact.contains(name)
     }
 
     // MARK: - Containment

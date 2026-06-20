@@ -1032,6 +1032,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Claude Code 탭의 세션을 볼 수 있게 한다.
     private func manageProviderStore(for provider: ProviderKind) -> ProviderStore? {
         if let startup = sqliteFirstStartups[provider] {
+            // 활성 store를 우선 사용하고, 비활성 시절 열어 둔 읽기전용 풀이 있으면
+            // 해제한다(파일핸들/WAL 누수 방지 — GRDB 풀은 ref 해제 시 닫힘).
+            managedReadStores[provider] = nil
             return startup.coordinator.store
         }
         if let cached = managedReadStores[provider] {

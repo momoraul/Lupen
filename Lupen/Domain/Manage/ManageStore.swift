@@ -41,6 +41,8 @@ final class ManageStore {
     private let scanService = ManageScanService()
     private let trashService = ManageTrashService()
     private var scanGeneration = 0
+    /// 진행 중 스캔을 중단시키는 플래그(새 load마다 교체 — 토글 시 CPU 낭비 방지).
+    private var scanFlag: ScanCancellationFlag?
 
     init(
         provider: ProviderKind,
@@ -163,6 +165,10 @@ final class ManageStore {
         guard newProvider != provider else { return }
         provider = newProvider
         selectedIDs = []
+        // 이전 provider 행을 즉시 비워, 비동기 load의 1차 렌더 전까지 잘못된
+        // provider 데이터가 보이는 깜빡임을 막는다.
+        rows = []
+        diskItems = []
         load()
     }
 
@@ -173,29 +179,43 @@ final class ManageStore {
             rows = []
             diskItems = []
             cacheInfo = nil
+            isScanning = false
             onChange?()
             return
         }
-        let indexed = Self.loadIndexed(from: store)
         let classifier = StorageClassifier(scope: context.classifierScope)
-        let indexing = isIndexingProvider()
         let prov = provider
 
-        // 1차: 인덱스만(근사 크기) — 즉시 렌더, 잔재/미추적 판정 보류.
-        rows = ManageReconciler.reconcile(
-            provider: prov, indexed: indexed, diskFiles: [],
-            classifier: classifier, isIndexing: indexing, scanned: false
-        )
-        loadCacheInfo()
-        onChange?()
-
-        // 2차: 백그라운드 FS 실측 → 정확 크기·미추적·잔재 보정.
+        // 진행 중 스캔을 취소하고 새 세대를 시작한다. 인덱스 읽기(대량 세션의
+        // 동기 DB 조회)와 FS 실측을 모두 백그라운드에서 수행해 메인스레드
+        // 반응성을 보장한다(plan §3 — 메인 블로킹 0).
+        scanFlag?.cancel()
+        let flag = ScanCancellationFlag()
+        scanFlag = flag
         scanGeneration += 1
         let generation = scanGeneration
         isScanning = true
+        onChange?()
+
         Task { @MainActor in
-            let disk = await self.scanService.scanSessionArea(roots: context.sessionAreaRoots)
-            let items = await self.scanService.scanDiskItems(home: context.providerHome)
+            // 1차: 인덱스만(근사 크기) — 잔재/미추적 판정 보류. loadIndexed는
+            // detached로 돌려 메인을 막지 않고, 결과 반영 시 최신 load인지 확인.
+            let indexed = await Task.detached(priority: .userInitiated) {
+                Self.loadIndexed(from: store)
+            }.value
+            guard generation == self.scanGeneration else { return }
+            self.rows = ManageReconciler.reconcile(
+                provider: prov, indexed: indexed, diskFiles: [],
+                classifier: classifier, isIndexing: self.isIndexingProvider(), scanned: false
+            )
+            self.loadCacheInfo()
+            self.onChange?()
+
+            // 2차: 백그라운드 FS 실측 → 정확 크기·미추적·잔재 보정(취소 가능).
+            let disk = await self.scanService.scanSessionArea(
+                roots: context.sessionAreaRoots, isCancelled: { flag.isCancelled })
+            let items = await self.scanService.scanDiskItems(
+                home: context.providerHome, isCancelled: { flag.isCancelled })
             // 더 새로운 load가 시작됐으면 이 결과는 버린다.
             guard generation == self.scanGeneration else { return }
             // 스캔 중 인덱싱 상태가 바뀔 수 있으니 보정 시점에 재평가.
@@ -249,21 +269,20 @@ final class ManageStore {
 
     // MARK: - Index loading (synchronous index reads — fast)
 
-    static func loadIndexed(from store: ProviderStore) -> [ManageReconciler.IndexedSession] {
+    nonisolated static func loadIndexed(from store: ProviderStore) -> [ManageReconciler.IndexedSession] {
         let sessions = (try? allSessions(store)) ?? []
         let sources = (try? store.allSourceFiles()) ?? []
-        let aggregates = (try? store.sessionListAggregates()) ?? [:]
         let byRaw = Dictionary(grouping: sources) { $0.sessionRawId ?? "" }
         return sessions.map { row in
             ManageReconciler.IndexedSession(
                 row: row,
                 sourceFiles: byRaw[row.rawId] ?? [],
-                aggregate: aggregates[row.id]
+                aggregate: nil   // reconcile 미사용 — sessionListAggregates() GROUP BY 비용 회피.
             )
         }
     }
 
-    static func allSessions(_ store: ProviderStore) throws -> [StoreSessionRow] {
+    nonisolated static func allSessions(_ store: ProviderStore) throws -> [StoreSessionRow] {
         var out: [StoreSessionRow] = []
         var cursor: StoreSessionPageCursor?
         repeat {
