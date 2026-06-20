@@ -313,7 +313,7 @@ struct CodexDetailImporter: Sendable {
             }
             directChildMetadataById = childMetadata
 
-            visible = titleIndex.isEmpty || titleIndex.contains(sessionId: unit.sessionRawId)
+            visible = true
 
             // Legacy primary-piece rule for cwd/title: the root's own
             // piece when present, else the earliest-created piece.

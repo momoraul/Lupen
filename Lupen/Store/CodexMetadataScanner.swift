@@ -15,12 +15,12 @@ import Foundation
 /// rollout in `source_files` with its group as `session_raw_id` — the
 /// atomic import unit of plan rule 3 — and seeds one shell per group.
 ///
-/// `session_index.jsonl` drives the visible-vs-billing split (plan §4 /
-/// research G9): membership → `visible`, `thread_name` → `cached_title`.
-/// Those are index-derived facts that change without any rollout
+/// `session_index.jsonl` is only a title hint source. Normal Codex
+/// rollout JSONL remains authoritative for whether a session exists,
+/// because Codex can show local sessions that are missing from the
+/// title index. Thread-name edits can change without any rollout
 /// changing, so they're applied through `applySessionVisibility` on
-/// every scan rather than seed (fill-if-null) semantics. An absent or
-/// empty index means everything is visible, matching the legacy loader.
+/// every scan rather than seed (fill-if-null) semantics.
 ///
 /// First-line metadata is re-read for all files on every scan — the
 /// same cost model as the legacy `CodexSessionIndexBuilder` discovery
@@ -187,12 +187,12 @@ struct CodexMetadataScanner: Sendable {
         try writer.seedSessionShells(seeds)
         summary.seededSessions = seeds.count
 
-        // Pass 5: visibility/title projection from the session index —
-        // applied unconditionally so index-only edits propagate.
+        // Pass 5: rollout-backed visibility plus title hints from the
+        // session index, applied unconditionally so index-only edits propagate.
         let visibilityUpdates = groups.keys.map { groupId in
             StoreSessionVisibilityUpdate(
                 sessionId: ProviderScopedID(provider: .codex, rawSessionId: groupId).value,
-                visible: titleIndex.isEmpty || titleIndex.contains(sessionId: groupId),
+                visible: true,
                 cachedTitle: titleIndex.title(for: groupId)
             )
         }.sorted { $0.sessionId < $1.sessionId }
