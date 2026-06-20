@@ -2377,7 +2377,8 @@ final class SessionCellView: NSTableCellView {
         costLabel.alignment = .right
         costLabel.lineBreakMode = .byClipping
         costLabel.maximumNumberOfLines = 1
-        // 비용은 핵심 지표 — 절대 안 잘리고 폭도 안 늘어남. 제목이 먼저 …로 양보.
+        // Cost is the key metric — never clipped, never grows the column; the
+        // title yields to a … truncation first.
         costLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         costLabel.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -2554,7 +2555,8 @@ final class SessionCellView: NSTableCellView {
         costLabel.stringValue = costDisplay.text
         costBaseColor = costDisplay.color
         applyCostLabelColor()
-        // Codex 신뢰도 설명 툴팁은 비용 라벨로 이동(이전엔 metaLabel에 붙였음).
+        // The Codex confidence tooltip now lives on the cost label (it was on
+        // metaLabel before).
         costLabel.toolTip = Self.costTooltip(provider: provider, confidence: costConfidence)
 
         // Format numbers tersely. "·" is a middle-dot separator — more compact
