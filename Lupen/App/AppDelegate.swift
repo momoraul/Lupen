@@ -187,6 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var reportsWindowController: ReportsWindowController?
     private var verifyCostsWindowController: VerifyCostsWindowController?
     private var preferencesWindowController: PreferencesWindowController?
+    private var manageSessionsWindowController: ManageSessionsWindowController?
+    /// 관리 창이 비활성 provider의 인덱스를 읽을 때 쓰는 store 캐시.
+    private var managedReadStores: [ProviderKind: ProviderStore] = [:]
     private var verifyUsageMenuItem: NSMenuItem?
     private lazy var logWindowController = LogWindowController(logger: LoggerService.shared)
     private let smokeTest = LaunchSmokeTestConfig.current()
@@ -911,6 +914,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         verifyUsageMenuItem = verifyItem
         windowMenu.addItem(verifyItem)
 
+        let manageItem = NSMenuItem(
+            title: "Manage Sessions & Storage…",
+            action: #selector(openManageSessions(_:)),
+            keyEquivalent: "m"
+        )
+        manageItem.keyEquivalentModifierMask = [.command, .shift]
+        manageItem.target = self
+        windowMenu.addItem(manageItem)
+
         // The log window is a maintainer-only diagnostic; its entry points
         // (this menu item and the dashboard toolbar button) ship in DEBUG
         // builds only.
@@ -997,6 +1009,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             verifyCostsWindowController = VerifyCostsWindowController(store: store)
         }
         verifyCostsWindowController?.show()
+    }
+
+    // MARK: - Manage Sessions & Storage window
+
+    @objc func openManageSessions(_ sender: Any?) {
+        if manageSessionsWindowController == nil {
+            manageSessionsWindowController = ManageSessionsWindowController(
+                provider: settings.activeProvider,
+                isIndexingProvider: { [weak self] in self?.store.isIndexing ?? false },
+                storeProvider: { [weak self] provider in self?.manageProviderStore(for: provider) },
+                contextProvider: { [weak self] provider in self?.manageContext(for: provider) },
+                requestRescan: { [weak self] provider in self?.sqliteFirstStartups[provider]?.coordinator.requestRescan() },
+                rebuildIndex: { [weak self] provider in self?.sqliteFirstStartups[provider]?.rebuildIndex() }
+            )
+        }
+        manageSessionsWindowController?.show()
+    }
+
+    /// 활성 provider면 인덱싱 store를, 비활성이면 그 provider의 인덱스 DB를
+    /// 직접 열어(읽기/삭제 정합용) 제공한다. codex로 시작해도 관리 창에서
+    /// Claude Code 탭의 세션을 볼 수 있게 한다.
+    private func manageProviderStore(for provider: ProviderKind) -> ProviderStore? {
+        if let startup = sqliteFirstStartups[provider] {
+            return startup.coordinator.store
+        }
+        if let cached = managedReadStores[provider] {
+            return cached
+        }
+        let url = LupenPaths.indexDatabaseURL(for: provider)
+        guard FileManager.default.fileExists(atPath: url.path),
+              let database = try? ProviderDatabase.open(at: url) else { return nil }
+        let store = ProviderStore(database: database)
+        managedReadStores[provider] = store
+        return store
+    }
+
+    private func manageContext(for provider: ProviderKind) -> ManageProviderContext? {
+        switch provider {
+        case .claudeCode:
+            return .claude(projectsDirectory: FileDiscovery().projectsDirectory)
+        case .codex:
+            return .codex(codexHome: CodexSessionDiscovery(codexHome: codexHomeURLFromSettings()).codexHome)
+        }
     }
 
     // MARK: - Preferences window
