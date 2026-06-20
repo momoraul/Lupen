@@ -126,12 +126,4 @@ struct CodexSessionTitleIndex: Equatable, Sendable {
         }
         return title
     }
-
-    var isEmpty: Bool {
-        entriesById.isEmpty
-    }
-
-    func contains(sessionId: String) -> Bool {
-        entriesById[sessionId] != nil
-    }
 }
