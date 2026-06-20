@@ -2256,6 +2256,24 @@ final class SessionCellView: NSTableCellView {
     /// title truncates first (lower compression resistance), the price
     /// stays. Mirrors the turn outline's Cost column tinting via CostColor.
     private let costLabel = NSTextField(labelWithString: "")
+    /// The cost label's non-selected color (from `CostColor`). Stored so the
+    /// selection handler can restore it after the row deselects.
+    private var costBaseColor: NSColor = .labelColor
+
+    /// NSTableCellView repaints system-colored labels (title, branch, meta)
+    /// white when the row is selected, but the cost label uses a custom
+    /// accent the automatic path leaves untouched — which read as a bug on
+    /// the highlight. Mirror the title: a selected row shows the cost in the
+    /// selection text color so the two match; otherwise the accent/dim color.
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { applyCostLabelColor() }
+    }
+
+    private func applyCostLabelColor() {
+        costLabel.textColor = backgroundStyle == .emphasized
+            ? .alternateSelectedControlTextColor
+            : costBaseColor
+    }
     private let activeDot = NSView()
     /// `person.2.fill` glyph + small count rendered as a paired view in the
     /// trailing edge of the meta row when the session has spawned at least
@@ -2530,9 +2548,12 @@ final class SessionCellView: NSTableCellView {
         }
 
         // Dedicated cost label on the title row.
-        let costDisplay = CostColor.display(cost: totalCost, confidence: costConfidence)
+        let costDisplay = CostColor.display(
+            cost: totalCost, confidence: costConfidence, accentColor: CostColor.accent
+        )
         costLabel.stringValue = costDisplay.text
-        costLabel.textColor = costDisplay.color
+        costBaseColor = costDisplay.color
+        applyCostLabelColor()
         // Codex 신뢰도 설명 툴팁은 비용 라벨로 이동(이전엔 metaLabel에 붙였음).
         costLabel.toolTip = Self.costTooltip(provider: provider, confidence: costConfidence)
 
@@ -2641,7 +2662,9 @@ final class SessionCellView: NSTableCellView {
     // MARK: - Test seams
 
     func costDisplayForTesting(totalCost: Double, confidence: CostConfidence) -> (text: String, color: NSColor) {
-        let d = CostColor.display(cost: totalCost, confidence: confidence)
+        let d = CostColor.display(
+            cost: totalCost, confidence: confidence, accentColor: CostColor.accent
+        )
         return (d.text, d.color)
     }
     var costLabelCompressionResistanceForTesting: Float {
