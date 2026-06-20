@@ -1679,9 +1679,12 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// to call it per-session on every reload; the heavy lifting is in
     /// the pure helper so the priority order is unit-tested.
     private func sessionTitleResolved(for session: Session) -> SessionTitleResolver.Resolved {
-        // SQLite-first shells carry the live first-prompt derivation in
-        // `cachedTitle` (importer-updated); the legacy in-memory Turn
-        // preview died with the graphs (5.3).
+        // The legacy in-memory Turn preview died with the graphs (5.3), so
+        // `firstTurnPreview` stays nil here. The first-prompt fallback now
+        // rides on the session shell (`session.firstPrompt`, from
+        // `sessions.first_prompt`) and is applied inside the resolver's
+        // ladder, below `slug` — so Codex sessions with no thread-name
+        // index entry show their first prompt instead of the id prefix.
         SessionTitleResolver.resolve(session: session, firstTurnPreview: nil)
     }
 
