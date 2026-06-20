@@ -372,6 +372,17 @@ enum CodexConversationAssembler {
     }
 }
 
+extension CodexConversationAssembler {
+    /// Canonical Codex user-message predicate. Shared (internal) with
+    /// `CodexEntry.lightweightProjection` so the projection's preserved
+    /// set is defined by the SAME rule the aggregator/trimmer/assembler
+    /// match on — it cannot silently drift.
+    static func isUserMessage(_ entry: CodexEntry, _ payload: CodexEntry.Payload) -> Bool {
+        (entry.type == "response_item" && payload.type == "message" && payload.role == "user")
+            || (entry.type == "event_msg" && payload.type == "user_message")
+    }
+}
+
 private extension CodexConversationAssembler {
     struct TurnDraft {
         let key: String
@@ -407,11 +418,6 @@ private extension CodexConversationAssembler {
 
     static func isTurnContext(_ entry: CodexEntry, _ payload: CodexEntry.Payload) -> Bool {
         entry.type == "turn_context" || payload.type == "turn_context"
-    }
-
-    static func isUserMessage(_ entry: CodexEntry, _ payload: CodexEntry.Payload) -> Bool {
-        (entry.type == "response_item" && payload.type == "message" && payload.role == "user")
-            || (entry.type == "event_msg" && payload.type == "user_message")
     }
 
     static func isAssistantMessage(_ entry: CodexEntry, _ payload: CodexEntry.Payload) -> Bool {

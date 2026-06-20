@@ -44,6 +44,13 @@ struct ClaudeUsageVerifier: ProviderUsageVerifier {
 /// those carry their own test suites.
 struct CodexUsageVerifier: ProviderUsageVerifier {
     let provider: ProviderKind = .codex
+    /// Oversized non-duplicated pieces are read via the importer's
+    /// memory-bounded projection so the verify/ground-truth path doesn't
+    /// OOM on the same giant rollouts the importer now bounds. Usage is
+    /// projection-invariant (user prompts + token events preserved), so
+    /// the ground-truth numbers — and thus the divergence verdict — are
+    /// unchanged. Injectable so tests can force the path on small fixtures.
+    var oversizedPieceByteThreshold: Int64 = CodexDetailImporter.defaultOversizedPieceByteThreshold
 
     func computeReport(files: [URL]) -> GroundTruth.Report {
         var usageLines: [GroundTruth.UsageLine] = []
@@ -120,9 +127,18 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
                 var chainTracker = CodexSubagentReplayTrimmer.ParentSummary()
 
                 for piece in pieces {
+                    // Mirror the importer gate: bound non-duplicated
+                    // oversized pieces (dup chains key on body text, so
+                    // they read full — and never reach here projected).
+                    let lightweight = CodexDetailImporter.usesLightweightProjection(
+                        pieceByteSize: Self.fileByteSize(piece.url),
+                        usesDiscriminator: usesDiscriminator,
+                        threshold: oversizedPieceByteThreshold
+                    )
                     let decoded = Self.readDecodedLines(
                         from: piece.url,
                         sessionId: groupSessionId,
+                        lightweight: lightweight,
                         issues: &issues
                     )
 
@@ -179,16 +195,31 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
 
     // MARK: - Line reading
 
+    private static func fileByteSize(_ url: URL) -> Int64 {
+        Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+    }
+
     private static func readDecodedLines(
         from url: URL,
         sessionId: String,
+        lightweight: Bool,
         issues: inout [GroundTruth.ReportIssue]
     ) -> [CodexLineReader.DecodedLine] {
         var decodedLines: [CodexLineReader.DecodedLine] = []
         _ = CodexLineReader.streamEntries(from: url) { streamed in
             switch streamed {
             case .decoded(let line):
-                decodedLines.append(line)
+                let entry = lightweight
+                    ? line.entry.lightweightProjection(textCap: CodexDetailImporter.lightweightTextCap)
+                    : line.entry
+                // Drop raw bytes — the usage fold consumes entries and
+                // diagnostics use the locator, so retaining rawData only
+                // bloated the verify path (worse than the importer, which
+                // already dropped it). When oversized, also clip non-user
+                // body like the importer.
+                decodedLines.append(CodexLineReader.DecodedLine(
+                    entry: entry, rawData: Data(), rawLocator: line.rawLocator
+                ))
             case .rejected(_, let lineOrdinal, _):
                 issues.append(GroundTruth.ReportIssue(
                     sessionId: sessionId,

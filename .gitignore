@@ -1,6 +1,8 @@
 # Build artifacts
 .build/
 DerivedData/
+# Release pipeline output (Tools/release.sh): staged DMG, appcast, export.
+/build/
 
 # SPM user state (obsolete but may linger)
 .swiftpm/
@@ -48,3 +50,7 @@ docs/Research/
 # Coverage / profiling artifacts
 *.profraw
 *.profdata
+
+# Homebrew tap working clone (separate repo: momoraul/homebrew-lupen),
+# checked out here for release convenience. Never part of this repo.
+/homebrew-lupen/
