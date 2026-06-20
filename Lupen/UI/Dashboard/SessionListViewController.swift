@@ -2555,7 +2555,7 @@ final class SessionCellView: NSTableCellView {
         requestCount: Int,
         totalTokens: Int
     ) -> String? {
-        var lines = [
+        let lines = [
             "Requests: \(formatCount(requestCount))",
             "Tokens: \(formatCount(totalTokens))",
         ]
