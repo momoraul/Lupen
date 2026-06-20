@@ -183,6 +183,23 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.4.1 — _2026-06-20_
+
+Maintenance release — cost-accuracy fixes and a clearer cost in the sidebar.
+
+- Per-session cost now has a dedicated, compression-resistant sidebar label —
+  the title truncates first so the cost stays visible, with the same confidence
+  tinting as the turn rows.
+- Codex: sessions backed by valid rollout JSONL now appear in the sidebar even
+  when they're missing from `session_index.jsonl`, matching the local Codex view.
+- Verify Costs: `usage` blocks that omit input/output tokens are kept (coerced
+  to 0) instead of silently dropping the line — fixes an undercount versus the
+  ground-truth scan.
+- Codex usage verifier: fold `last`-only token events into the running total so
+  the verifier matches the importer.
+- Codex: bound memory when importing/verifying oversized single-piece rollouts,
+  preventing an out-of-memory spike on very large sessions.
+
 ### v0.4.0 — _2026-06-18_
 
 First release of the `lupen` command line — the app binary doubles as a
