@@ -2,7 +2,6 @@
 
 - **날짜**: 2026-06-19
 - **브랜치**: `feature/session-pricing`
-- **목업**: `docs/superpowers/mockups/session-pricing-sidebar.html`
 
 ## 1. 문제 정의
 
