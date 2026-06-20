@@ -140,10 +140,9 @@ protocol ImportWriting: Sendable {
     /// and `detail_state` are left untouched on conflict.
     func seedSessionShells(_ sessions: [StoreSessionRow]) throws
 
-    /// Applies index-derived visibility/title facts on top of seeded
-    /// shells (Codex `session_index.jsonl`). Runs on every scan so
-    /// index-only edits — thread renamed, hidden, deleted — propagate
-    /// without any rollout file changing.
+    /// Applies scan-derived visibility/title facts on top of seeded
+    /// shells. For Codex, `session_index.jsonl` contributes thread-name
+    /// hints only; rollout JSONL is authoritative for visibility.
     func applySessionVisibility(_ updates: [StoreSessionVisibilityUpdate]) throws
 
     /// Deletes session shells that no source claims (by raw id) and no

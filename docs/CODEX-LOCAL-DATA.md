@@ -32,8 +32,10 @@ Lupen accepts a rollout file only when its first line is readable as
 first-line reader is capped at 1 MiB so modern Codex metadata with large system
 prompt fields is accepted while corrupt files without a newline stay bounded.
 
-`session_index.jsonl`, when present, is used as a title hint source. The
-conversation itself remains authoritative for turns, usage, and raw payloads.
+`session_index.jsonl`, when present, is used as a title hint source only. The
+rollout JSONL itself remains authoritative for session visibility, turns,
+usage, and raw payloads because Codex can show sessions that are missing from
+the title index.
 
 ## Session Metadata
 

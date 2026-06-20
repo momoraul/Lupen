@@ -74,8 +74,44 @@ struct CodexDetailImporter: Sendable {
         /// Rows per write transaction inside `replaceSource` — bounds
         /// journal growth and gives cancellation its batch boundaries.
         var writeBatchRowLimit: Int = 2_000
+        /// A non-duplicated rollout piece whose file is at least this
+        /// large is imported via a memory-bounded projection
+        /// (`CodexEntry.lightweightProjection`): user-prompt text is kept
+        /// verbatim and only the non-user conversation body is clipped,
+        /// so usage/cost/turn/skill/link numbers stay identical. This
+        /// bounds the SINGLE-PIECE peak that 3.8a's group streaming left
+        /// unbounded — a lone multi-hundred-MB rollout (standalone,
+        /// subagent, or parent) would otherwise materialize whole and
+        /// could OOM on low-memory machines. DUPLICATED chains are
+        /// excluded (their same-raw dedup keys on assistant body text).
+        /// `.max` disables it (used to pin full-vs-light equivalence).
+        var oversizedPieceByteThreshold: Int64 = CodexDetailImporter.defaultOversizedPieceByteThreshold
         init() {}
     }
+
+    /// Default oversized-piece byte threshold (192 MiB). One source of
+    /// truth shared by the importer `Configuration`, the GUI/CLI index
+    /// coordinator, and the Codex verifier so they all agree on what
+    /// counts as "oversized".
+    static let defaultOversizedPieceByteThreshold: Int64 = 192 << 20
+
+    /// The ONE projection-eligibility rule, shared by the importer and the
+    /// verifier so the two paths cannot drift: a piece is projected iff it
+    /// is at least `threshold` AND not part of a duplicated chain (whose
+    /// same-raw dedup keys on the assistant body text the projection clips,
+    /// so those must always be read in full).
+    static func usesLightweightProjection(
+        pieceByteSize: Int64, usesDiscriminator: Bool, threshold: Int64
+    ) -> Bool {
+        pieceByteSize >= threshold && !usesDiscriminator
+    }
+
+    /// Character cap applied to the NON-USER conversation body (assistant
+    /// replies, tool output) of an oversized piece's lines (see
+    /// `Configuration.oversizedPieceByteThreshold`). User-prompt text is
+    /// never clipped, so prompt preview, search, skill detection, and
+    /// replay matching are unaffected; only long bodies clip.
+    static let lightweightTextCap = 2_000
 
     struct Outcome: Equatable, Sendable {
         var importedSources = 0
@@ -277,7 +313,7 @@ struct CodexDetailImporter: Sendable {
             }
             directChildMetadataById = childMetadata
 
-            visible = titleIndex.isEmpty || titleIndex.contains(sessionId: unit.sessionRawId)
+            visible = true
 
             // Legacy primary-piece rule for cwd/title: the root's own
             // piece when present, else the earliest-created piece.
@@ -391,13 +427,32 @@ struct CodexDetailImporter: Sendable {
         // 1. Stream-read this rollout. Raw line bytes are dropped at
         //    collection — the assembler and aggregator consume locators
         //    only; rejected lines keep their bytes out-of-band counts.
+        //
+        //    Oversized pieces take a memory-bounded projection that
+        //    preserves user-prompt text verbatim and clips only non-user
+        //    body, so usage/cost/turn/skill/link numbers stay identical
+        //    while the per-piece working set tracks line count, not file
+        //    bytes. Only DUPLICATED chains (`usesDiscriminator`) are
+        //    excluded — their same-raw dedup is the one cross-piece
+        //    matcher that keys on assistant body text. Standalone,
+        //    subagent, and parent pieces are all eligible: the subagent
+        //    trim and a parent's `ParentSummary` seeding match on prompts,
+        //    which the projection preserves.
+        let useLightweightProjection = Self.usesLightweightProjection(
+            pieceByteSize: piece.byteSize,
+            usesDiscriminator: chain.usesDiscriminator,
+            threshold: configuration.oversizedPieceByteThreshold
+        )
         var decodedLines: [CodexLineReader.DecodedLine] = []
         var rejected: [(line: CodexLineReader.RejectedLine, ordinal: Int, offset: UInt64)] = []
         CodexLineReader.streamEntries(from: piece.url) { streamed in
             switch streamed {
             case .decoded(let line):
+                let entry = useLightweightProjection
+                    ? line.entry.lightweightProjection(textCap: Self.lightweightTextCap)
+                    : line.entry
                 decodedLines.append(CodexLineReader.DecodedLine(
-                    entry: line.entry, rawData: Data(), rawLocator: line.rawLocator
+                    entry: entry, rawData: Data(), rawLocator: line.rawLocator
                 ))
             case .rejected(let line, let ordinal, let offset):
                 rejected.append((line, ordinal, offset))
@@ -606,6 +661,22 @@ struct CodexDetailImporter: Sendable {
             ))
         }
         outcome.diagnosticRows += payload.diagnostics.count
+
+        // The body trim is a benign, expected memory optimization, not a
+        // parse problem — so it is a developer-facing log breadcrumb, NOT
+        // a persisted diagnostic row (those are reserved for warning/error
+        // and would otherwise surface as a spurious warning in the
+        // Diagnostics window). A user-facing "body trimmed" notice on the
+        // conversation tab is deferred to the Phase 2 UX work.
+        if useLightweightProjection {
+            LoggerService.shared.logFromAnyThread(
+                .info,
+                "Codex oversized piece \(piece.path) (\(piece.byteSize >> 20) MB) imported with a "
+                    + "lightweight projection: conversation body clipped to bound memory; "
+                    + "usage and cost are unaffected.",
+                context: "Import"
+            )
+        }
 
         // 11. Shell rides along (partial; widening upsert).
         payload.sessions = [plan.sessionShell(

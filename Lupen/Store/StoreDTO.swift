@@ -155,10 +155,9 @@ struct StoreSessionPageCursor: Sendable, Equatable {
     let id: String
 }
 
-/// Sidebar visibility/title facts derived from a provider's own session
-/// list (Codex `session_index.jsonl`). Unlike seed columns these are
-/// re-derived on every metadata scan: `visible` always tracks the
-/// index, a non-nil `cachedTitle` (thread name) replaces the stored one.
+/// Sidebar visibility/title facts derived during metadata scanning.
+/// Codex `session_index.jsonl` contributes thread-name hints only;
+/// rollout JSONL is authoritative for visibility.
 struct StoreSessionVisibilityUpdate: Sendable, Equatable {
     let sessionId: String
     let visible: Bool
