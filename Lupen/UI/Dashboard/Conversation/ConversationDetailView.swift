@@ -97,6 +97,7 @@ final class ConversationDetailView: NSView {
             view.removeFromSuperview()
         }
         var highlightedView: NSView?
+        var previous: (view: NSView, tier: BlockTier)?
         for block in blocks {
             let view = registry.view(for: block, context: renderContext)
             stack.addArrangedSubview(view)
@@ -104,6 +105,13 @@ final class ConversationDetailView: NSView {
             let trailing = view.trailingAnchor.constraint(equalTo: stack.trailingAnchor)
             cardConstraints.append(contentsOf: [leading, trailing])
             NSLayoutConstraint.activate([leading, trailing])
+            if let previous {
+                // 곁가지(사고·도구)끼리는 촘촘히 묶고, 본문 카드가 끼면 넉넉히 띄워
+                // '대화 단위'로 끊어 읽히게 한다(간격 그룹핑).
+                let bothSecondary = previous.tier == .secondary && block.tier == .secondary
+                stack.setCustomSpacing(bothSecondary ? 2 : 14, after: previous.view)
+            }
+            previous = (view, block.tier)
             if block.isHighlighted, highlightedView == nil { highlightedView = view }
         }
         // 정확한 좌표를 위해 3단계 레이아웃 강제 후 스크롤.

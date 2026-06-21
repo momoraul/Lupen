@@ -39,27 +39,35 @@ final class CardContainerView: NSView {
 
     private func setup() {
         layer?.cornerRadius = 8
-        layer?.borderWidth = highlighted ? 1.5 : (tier == .primary ? 0.75 : 0.4)
+        // 본문(primary)·선택 카드만 셸(배경/외곽선/거터)을 그린다. 곁가지(secondary
+        // 사고·도구)는 셸 없이 들여쓴 한 줄로 렌더 → 화면 노이즈를 줄이고 본문을 부각.
+        let showShell = tier == .primary || highlighted
+        layer?.borderWidth = highlighted ? 1.5 : (showShell ? 0.75 : 0)
 
         gutter.wantsLayer = true
-        gutter.layer?.cornerRadius = 1.5
+        gutter.layer?.cornerRadius = 2
+        gutter.isHidden = !showShell
         gutter.translatesAutoresizingMaskIntoConstraints = false
         addSubview(gutter)
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bodyContainer)
 
-        let gutterWidth: CGFloat = tier == .primary ? 4 : 3
+        let verticalInset: CGFloat = showShell ? 12 : 4      // 곁가지는 납작하게
+        let bodyLeadingInset: CGFloat = showShell ? 0 : 26   // 곁가지는 들여쓰기
         NSLayoutConstraint.activate([
             gutter.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             gutter.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             gutter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            gutter.widthAnchor.constraint(equalToConstant: gutterWidth),
+            gutter.widthAnchor.constraint(equalToConstant: 4),
 
-            bodyContainer.leadingAnchor.constraint(equalTo: gutter.trailingAnchor, constant: 10),
+            bodyContainer.leadingAnchor.constraint(
+                equalTo: showShell ? gutter.trailingAnchor : leadingAnchor,
+                constant: showShell ? 10 : bodyLeadingInset
+            ),
             bodyContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            bodyContainer.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            bodyContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            bodyContainer.topAnchor.constraint(equalTo: topAnchor, constant: verticalInset),
+            bodyContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -verticalInset),
         ])
     }
 
@@ -71,7 +79,10 @@ final class CardContainerView: NSView {
     /// 현재 외관(다크/라이트) 기준으로 layer 색 재계산.
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = Self.surfaceColor(role: role, tier: tier, highlighted: highlighted).cgColor
+            let showShell = tier == .primary || highlighted
+            layer?.backgroundColor = showShell
+                ? Self.surfaceColor(role: role, tier: tier, highlighted: highlighted).cgColor
+                : NSColor.clear.cgColor
             layer?.borderColor = (highlighted
                 ? Self.accentColor(for: role).withAlphaComponent(0.7)
                 : NSColor.separatorColor.withAlphaComponent(0.5)).cgColor
@@ -112,6 +123,6 @@ final class CardContainerView: NSView {
         case .system:    base = .systemOrange
         case .subAgent:  base = .systemPurple
         }
-        return base.withAlphaComponent(tier == .primary ? 0.06 : 0.03)
+        return base.withAlphaComponent(tier == .primary ? 0.09 : 0.04)
     }
 }
