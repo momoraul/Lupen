@@ -67,38 +67,23 @@ final class ConversationDetailView: NSView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // 문서 뷰는 스크롤 뷰포트 폭을 따라간다(세로 스크롤) — TokensDetailView와
-            // 동일한 검증된 패턴. 너비 고정의 진짜 원인은 이 제약이 아니라 본문
-            // NSTextView의 가로 밀어냄이었으므로, 본문을 NSTextField로 교체해 해결한다.
+            // 컨테이너(documentView)는 뷰포트(clipView)를 단방향으로 따라간다.
+            // 4변을 clipView에 ==로 고정해, 하위 카드/텍스트의 intrinsic 폭이 위로
+            // 전파돼 컨테이너(=패널/윈도우) 폭을 제약하는 것을 원천 차단한다.
+            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            documentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
 
+            // stack은 documentView 폭을 그대로(==) 따른다. 읽기폭 클램프·centerX·
+            // min/max 없음 — 카드는 스스로 폭 제약을 갖지 않고 컨테이너를 따른다.
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: DetailStyles.horizontalInset),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -DetailStyles.horizontalInset),
             stack.topAnchor.constraint(equalTo: documentView.topAnchor),
             stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
-            // 읽기 컬럼(Q4): 좁으면 패널 폭(좌우 inset)을 따라가고, 넓으면 620pt에서
-            // 멈춰 가운데 정렬 — 와이드 모니터에서 본문이 '읽히지 않는 벽'이 되는 것 방지.
-            stack.centerXAnchor.constraint(equalTo: documentView.centerXAnchor),
-            stack.leadingAnchor.constraint(
-                greaterThanOrEqualTo: documentView.leadingAnchor,
-                constant: DetailStyles.horizontalInset
-            ),
-            stack.trailingAnchor.constraint(
-                lessThanOrEqualTo: documentView.trailingAnchor,
-                constant: -DetailStyles.horizontalInset
-            ),
-            stack.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxReadingWidth),
         ])
-        // 좁을 때 패널 폭(−좌우 inset)을 선호하되, 위 `<= 620`이 우선이라
-        // 넓어지면 620에서 멈춘다.
-        let preferredWidth = stack.widthAnchor.constraint(
-            equalTo: documentView.widthAnchor,
-            constant: -DetailStyles.horizontalInset * 2
-        )
-        preferredWidth.priority = .defaultHigh
-        preferredWidth.isActive = true
     }
-
-    /// 읽기 컬럼 최대 폭(Q4). 본문은 이 폭 안에서 줄바꿈/말줄임한다.
-    private static let maxReadingWidth: CGFloat = 620
 
     /// 큐레이션된 블록들로 카드 스택을 다시 그린다. (선택 스킵은 상위
     /// `DetailViewController`가 동일 Step 재바인드에서 처리하므로 — 회귀
