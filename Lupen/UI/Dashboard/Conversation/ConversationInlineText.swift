@@ -7,17 +7,18 @@
 
 import AppKit
 
-/// 카드 본문/헤더용 attributed 텍스트 빌더.
+/// Builds attributed text for card bodies/headers.
 ///
-/// `[Image source: /path]` / `[Image #N]` 마커를 인라인 SF Symbol(photo)로
-/// 치환하고, 경로 마커에는 `file://` 링크를 걸어 클릭 시 Finder reveal이
-/// 되도록 한다(기존 `ConversationDetailView.buildBodyWithImageLinks` 이식 —
-/// 회귀 금지). 인라인 마크다운 강조(볼드/코드/표 등)는 Phase C의 노드
-/// 렌더러가 담당하므로 여기서는 다루지 않는다.
+/// Replaces `[Image source: /path]` / `[Image #N]` markers with an inline SF
+/// Symbol (photo), and attaches a `file://` link to path markers so a click
+/// reveals them in Finder (ported from the old
+/// `ConversationDetailView.buildBodyWithImageLinks` — parity kept). Inline
+/// markdown emphasis (bold/code/table/etc.) is handled by Phase C node
+/// renderers, so it is not done here.
 @MainActor
 enum ConversationInlineText {
 
-    /// 본문 텍스트 → 이미지 마커가 치환된 attributed 문자열.
+    /// Body text → attributed string with image markers replaced.
     static func body(
         _ text: String,
         font: NSFont,
@@ -61,9 +62,9 @@ enum ConversationInlineText {
         return result
     }
 
-    /// 프롬프트에 인라인 이미지 블록이 있을 때 앞에 붙일 🖼 글리프들.
-    /// (현재 Claude Code는 이미지를 base64 블록으로만 넣어 텍스트 마커가
-    /// 없으므로, 첨부가 있었다는 시각 신호를 본문 앞에 표시한다.)
+    /// Glyphs to prepend when a prompt carries inline image blocks.
+    /// (Claude Code currently embeds images only as base64 blocks with no text
+    /// marker, so we show a visual signal that an attachment was present.)
     static func imageGlyphPrefix(count: Int, font: NSFont, color: NSColor) -> NSAttributedString {
         let result = NSMutableAttributedString()
         for index in 0..<max(0, count) {
@@ -75,10 +76,10 @@ enum ConversationInlineText {
         return result
     }
 
-    /// 마크다운 인라인(볼드/기울임/인라인코드/링크)을 base 폰트에 반영한
-    /// attributed 문자열. 블록 구조(테이블/코드블록/리스트)는 호출부가 이미
-    /// `MarkdownParser`로 노드 분리했으므로 여기서는 인라인만 처리한다.
-    /// 파싱 실패 시 평문(`body`)으로 폴백한다.
+    /// Attributed string reflecting inline markdown (bold/italic/inline-code/
+    /// link) on the base font. Block structure (table/code block/list) is
+    /// already split by the caller via `MarkdownParser`, so only inline is
+    /// handled here. Falls back to plain text (`body`) on parse failure.
     static func markdownInline(_ text: String, font: NSFont, color: NSColor) -> NSAttributedString {
         var options = AttributedString.MarkdownParsingOptions()
         options.interpretedSyntax = .inlineOnlyPreservingWhitespace
@@ -110,8 +111,8 @@ enum ConversationInlineText {
         return result
     }
 
-    /// SF Symbol(이모지 아님 — 시스템 틴트·다크모드·VoiceOver 정상)을 텍스트
-    /// 앞에 붙인 attributed 문자열. 카드 헤더/요약 글리프에 쓴다.
+    /// Attributed string with an SF Symbol (not emoji — proper system tint /
+    /// dark mode / VoiceOver) prepended to text. Used for card header/summary glyphs.
     static func symbolPrefixed(
         _ symbolName: String, text: String, font: NSFont, color: NSColor
     ) -> NSAttributedString {
@@ -133,7 +134,7 @@ enum ConversationInlineText {
     }
 }
 
-/// 카드 상단의 역할/메타 헤더("You", "Assistant · opus-4-8 · $0.37").
+/// Card-top role/meta header ("You", "Assistant · opus-4-8 · $0.37").
 @MainActor
 enum ConversationCardHeader {
     static func make(_ text: String, color: NSColor, symbol: String? = nil) -> NSTextField {
@@ -144,7 +145,7 @@ enum ConversationCardHeader {
                 symbol, text: text, font: font, color: color
             )
         }
-        // 모델·비용이 붙은 긴 헤더가 카드 폭을 밀어내지 않도록 말줄임 + 낮은 compression.
+        // Truncate + low compression so a long header (model·cost) doesn't push the card width.
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

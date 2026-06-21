@@ -7,13 +7,15 @@
 
 import Foundation
 
-/// 마크다운 텍스트를 블록 레벨 `MarkdownNode` 배열로 분리하는 순수 파서.
+/// Pure parser that splits markdown text into an array of block-level
+/// `MarkdownNode`s.
 ///
-/// 인라인 문법(굵게/기울임/링크/인라인코드)은 **건드리지 않고** 원문을
-/// `paragraph`/리스트 항목 문자열로 보존한다 — 렌더러가 그 문자열을
-/// `AttributedString(markdown:)`로 그린다. 이 파서는 "어디서 코드블록·표·
-/// 리스트·헤딩·인용이 시작/끝나는가"만 책임진다. 미지원/모호 입력은
-/// `paragraph`로 안전 폴백한다(절대 throw하지 않음).
+/// Inline syntax (bold/italic/link/inline-code) is **left untouched** — the
+/// raw text is preserved as `paragraph` / list-item strings, and the renderer
+/// draws it with `AttributedString(markdown:)`. This parser is only
+/// responsible for "where do code blocks / tables / lists / headings / quotes
+/// start and end". Unsupported/ambiguous input safely falls back to
+/// `paragraph` (never throws).
 enum MarkdownParser {
 
     static func parse(_ text: String) -> [MarkdownNode] {
@@ -33,7 +35,7 @@ enum MarkdownParser {
             let raw = lines[i]
             let line = raw.trimmingCharacters(in: .whitespaces)
 
-            // 코드펜스: ``` ~ ``` (언어 태그 선택)
+            // Code fence: ``` ~ ``` (optional language tag)
             if line.hasPrefix("```") {
                 flushParagraph()
                 let lang = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
@@ -44,13 +46,13 @@ enum MarkdownParser {
                     code.append(lines[i])
                     i += 1
                 }
-                i += 1 // 닫는 펜스(또는 EOF) 소비
+                i += 1 // consume the closing fence (or EOF)
                 nodes.append(.codeBlock(language: lang.isEmpty ? nil : lang,
                                         code: code.joined(separator: "\n")))
                 continue
             }
 
-            // 테이블: 헤더 행 다음 줄이 구분선(|---|---|)일 때만
+            // Table: only when the line after the header row is a separator (|---|---|)
             if line.contains("|"), i + 1 < lines.count, isTableSeparator(lines[i + 1]) {
                 flushParagraph()
                 let headers = splitRow(line)
@@ -66,7 +68,7 @@ enum MarkdownParser {
                 continue
             }
 
-            // 헤딩: # ~ ######
+            // Heading: # ~ ######
             if let heading = parseHeading(line) {
                 flushParagraph()
                 nodes.append(heading)
@@ -74,7 +76,7 @@ enum MarkdownParser {
                 continue
             }
 
-            // 불릿 리스트
+            // Bullet list
             if isBullet(line) {
                 flushParagraph()
                 var items: [String] = []
@@ -88,7 +90,7 @@ enum MarkdownParser {
                 continue
             }
 
-            // 순서 리스트
+            // Ordered list
             if isOrdered(line) {
                 flushParagraph()
                 var items: [String] = []
@@ -102,7 +104,7 @@ enum MarkdownParser {
                 continue
             }
 
-            // 인용
+            // Quote
             if line.hasPrefix(">") {
                 flushParagraph()
                 var quote: [String] = []
@@ -116,14 +118,14 @@ enum MarkdownParser {
                 continue
             }
 
-            // 빈 줄 → 문단 경계
+            // Blank line → paragraph boundary
             if line.isEmpty {
                 flushParagraph()
                 i += 1
                 continue
             }
 
-            // 일반 텍스트 누적(원문 유지 — 인라인 마크다운 보존)
+            // Accumulate plain text (keep raw — preserve inline markdown)
             paragraph.append(raw)
             i += 1
         }
@@ -141,7 +143,7 @@ enum MarkdownParser {
         }
         guard (1...6).contains(level) else { return nil }
         let rest = s.dropFirst(level)
-        // "# text"만 헤딩으로 인정("#hashtag"는 일반 문단).
+        // Only "# text" counts as a heading ("#hashtag" is a normal paragraph).
         guard rest.first == " " else { return nil }
         return .heading(level: level, text: rest.trimmingCharacters(in: .whitespaces))
     }
@@ -167,8 +169,8 @@ enum MarkdownParser {
         return String(s[s.index(after: dot)...]).trimmingCharacters(in: .whitespaces)
     }
 
-    /// `|---|:--:|--:|` 형태의 표 구분선인지. 모든 셀이 `-`/`:`로만 구성되고
-    /// 최소 한 개의 `-`를 포함해야 한다.
+    /// Whether this is a `|---|:--:|--:|`-style table separator. Every cell
+    /// must consist only of `-`/`:` and contain at least one `-`.
     private static func isTableSeparator(_ line: String) -> Bool {
         let t = line.trimmingCharacters(in: .whitespaces)
         guard t.contains("|"), t.contains("-") else { return false }

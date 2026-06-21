@@ -7,10 +7,10 @@
 
 import AppKit
 
-/// Conversation 탭의 본문 — Turn을 큐레이션한 `[ConversationBlock]`을 카드
-/// 스택으로 그린다. 검증된 Tokens 탭 패턴(NSScrollView + flipped
-/// documentView + 수직 NSStackView)을 복제하고, 블록→뷰 매핑은
-/// `BlockRendererRegistry`에 위임한다(미등록 블록은 평문 폴백).
+/// Body of the Conversation tab — draws a curated `[ConversationBlock]` of a
+/// Turn as a card stack. Mirrors the proven Tokens-tab pattern (NSScrollView +
+/// flipped documentView + vertical NSStackView) and delegates block→view
+/// mapping to `BlockRendererRegistry` (unregistered blocks fall back to plain text).
 @MainActor
 final class ConversationDetailView: NSView {
 
@@ -19,9 +19,10 @@ final class ConversationDetailView: NSView {
     private let stack = NSStackView()
     private let registry = BlockRendererRegistry()
     private let renderContext = RenderContext()
-    /// 현재 렌더된 카드들의 leading/trailing 제약 — 재구성 시 일괄 비활성(A1).
-    /// 추적 없이 매번 activate만 하면 빠른 Turn 전환 때 dangling 제약이 쌓여
-    /// 레이아웃이 꼬인다.
+    /// Leading/trailing constraints of the currently rendered cards —
+    /// deactivated in bulk on rebuild (A1). Without tracking, activating every
+    /// time leaves dangling constraints that pile up and break layout on fast
+    /// Turn switching.
     private var cardConstraints: [NSLayoutConstraint] = []
 
     override init(frame: NSRect) {
@@ -33,9 +34,9 @@ final class ConversationDetailView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    /// 전용 렌더러 등록. 여기에 `register(_:)` 한 줄을 더하면 새 표시
-    /// 대상이 추가된다(확장 포인트). 미등록 블록(ToolGroup/Thinking 등
-    /// Phase D 이전)은 `PlainTextBlockRenderer`로 안전하게 폴백된다.
+    /// Register dedicated renderers. Adding one `register(_:)` line here adds a
+    /// new display target (extension point). Unregistered blocks fall back
+    /// safely to `PlainTextBlockRenderer`.
     private func registerRenderers() {
         registry.register(UserPromptCardRenderer())
         registry.register(AssistantTextCardRenderer())
@@ -67,17 +68,22 @@ final class ConversationDetailView: NSView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // 컨테이너(documentView)는 뷰포트(clipView)를 단방향으로 따라간다.
-            // 4변을 clipView에 ==로 고정해, 하위 카드/텍스트의 intrinsic 폭이 위로
-            // 전파돼 컨테이너(=패널/윈도우) 폭을 제약하는 것을 원천 차단한다.
+            // The container (documentView) follows the viewport (clipView) one-way.
+            // Pinning all 4 edges to the clipView with == blocks any child card/
+            // text intrinsic width from propagating up and constraining the
+            // container (= panel/window) width.
             documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
             documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            documentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
+            // The documentView height is determined by the stack (= content)
+            // height. Forcing it to at least the viewport height (height >=
+            // viewport) combined with stack.bottom == documentView.bottom makes
+            // short content stretch the card to fill the viewport height (bug).
 
-            // stack은 documentView 폭을 그대로(==) 따른다. 읽기폭 클램프·centerX·
-            // min/max 없음 — 카드는 스스로 폭 제약을 갖지 않고 컨테이너를 따른다.
+            // The stack follows the documentView width exactly (==). No reading-
+            // width clamp / centerX / min-max — cards don't own a width
+            // constraint; they follow the container.
             stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: Self.contentHorizontalInset),
             stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -Self.contentHorizontalInset),
             stack.topAnchor.constraint(equalTo: documentView.topAnchor),
@@ -85,15 +91,15 @@ final class ConversationDetailView: NSView {
         ])
     }
 
-    /// Conversation 콘텐츠 좌우 여백 — 카드가 패널 가장자리에 붙어 답답해 보이지
-    /// 않도록 공용 inset(16)보다 넉넉히 준다.
+    /// Horizontal margin for conversation content — a bit more than the shared
+    /// inset (16) so cards don't crowd the panel edges.
     private static let contentHorizontalInset: CGFloat = 24
 
-    /// 큐레이션된 블록들로 카드 스택을 다시 그린다. (선택 스킵은 상위
-    /// `DetailViewController`가 동일 Step 재바인드에서 처리하므로 — 회귀
-    /// 유지 — 여기서는 매 호출 재구성한다.)
+    /// Redraw the card stack from the curated blocks. (Selection skipping is
+    /// handled by the parent `DetailViewController` on same-Step rebind — parity
+    /// kept — so this rebuilds on every call.)
     func configure(blocks: [ConversationBlock]) {
-        // 카드 제약을 명시적으로 비활성·정리(A1): 누적 dangling 제약 방지.
+        // Explicitly deactivate/clear card constraints (A1): avoid dangling pile-up.
         NSLayoutConstraint.deactivate(cardConstraints)
         cardConstraints.removeAll()
         for view in stack.arrangedSubviews {
@@ -110,21 +116,23 @@ final class ConversationDetailView: NSView {
             cardConstraints.append(contentsOf: [leading, trailing])
             NSLayoutConstraint.activate([leading, trailing])
             if let previous {
-                // 곁가지(사고·도구)끼리는 촘촘히 묶고, 본문 카드가 끼면 넉넉히 띄워
-                // '대화 단위'로 끊어 읽히게 한다(간격 그룹핑).
+                // Pack supporting (thinking·tools) cards tightly, and give
+                // breathing room when a body card is adjacent, so it reads as
+                // 'dialogue units' (spacing grouping).
                 let bothSecondary = previous.tier == .secondary && block.tier == .secondary
                 stack.setCustomSpacing(bothSecondary ? 2 : 14, after: previous.view)
             }
             previous = (view, block.tier)
             if block.isHighlighted, highlightedView == nil { highlightedView = view }
         }
-        // 정확한 좌표를 위해 3단계 레이아웃 강제 후 스크롤.
+        // Force a 3-stage layout for accurate coordinates before scrolling.
         layoutSubtreeIfNeeded()
         documentView.layoutSubtreeIfNeeded()
         stack.layoutSubtreeIfNeeded()
         if let highlightedView {
-            // 선택 카드를 상단 근처(−12)로 올린다(이미 일부 보여도). maxY 클램프로
-            // 과스크롤 방지. scrollToVisible는 '이미 보이면 안 움직임'이라 부적합.
+            // Bring the selected card near the top (−12) even if partly visible.
+            // Clamp to maxY to avoid over-scroll. scrollToVisible is unsuitable
+            // ('doesn't move if already visible').
             let rect = highlightedView.convert(highlightedView.bounds, to: documentView)
             let visibleHeight = scrollView.contentView.bounds.height
             let documentHeight = max(documentView.bounds.height, stack.fittingSize.height)
@@ -138,8 +146,9 @@ final class ConversationDetailView: NSView {
     }
 }
 
-/// `isFlipped = true` 문서 뷰 — `scroll(.zero)`가 맨 위로 가도록(아니면
-/// NSStackView 기본 좌표계가 (0,0)을 바닥에 둬 매 바인드 끝으로 스크롤됨).
+/// `isFlipped = true` document view — so `scroll(.zero)` goes to the top
+/// (otherwise NSStackView's default coordinate system puts (0,0) at the bottom
+/// and every rebind scrolls to the end).
 private final class ConversationFlippedDocumentView: NSView {
     override var isFlipped: Bool { true }
 }

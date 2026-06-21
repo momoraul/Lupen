@@ -557,7 +557,7 @@ final class DetailViewController: NSViewController {
             provider: ProviderScopedID(value: step.sessionId)?.provider ?? .claudeCode
         )
 
-        // Q1: Step 선택 시에도 Turn 전체 흐름을 그리고 해당 Step만 강조한다.
+        // Q1: even on Step selection, draw the whole Turn flow and highlight only that Step.
         conversationView.configure(
             blocks: ConversationStoryBuilder.build(turn: turn, highlight: step.uuid)
         )

@@ -7,7 +7,7 @@
 
 import AppKit
 
-/// 사고 카드 — "💭 Thinking · 첫 줄…" 한 줄로 접고, 펼치면 전체 사고 텍스트.
+/// Thinking card — collapses into "Thinking · first line…"; expands to the full thinking text.
 @MainActor
 struct ThinkingCardRenderer: BlockRenderer {
     func makeView(for block: ThinkingBlock, context: RenderContext) -> NSView {

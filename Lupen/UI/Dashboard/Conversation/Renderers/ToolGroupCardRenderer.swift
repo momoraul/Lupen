@@ -7,8 +7,8 @@
 
 import AppKit
 
-/// 도구 묶음 카드 — "🔧 Read · 3개 ›" 한 줄로 접고, 펼치면 개별 호출의
-/// 입력/결과 요약을 보여준다(스샷의 "읽기 파일 N개" 패턴 + 큐레이션).
+/// Tool-group card — collapses into one line like "Read · 3 ›"; expands to show
+/// each call's input/result summary (the "N files read" pattern + curation).
 @MainActor
 struct ToolGroupCardRenderer: BlockRenderer {
     func makeView(for block: ToolGroupBlock, context: RenderContext) -> NSView {
@@ -22,7 +22,7 @@ struct ToolGroupCardRenderer: BlockRenderer {
 
     private func summary(_ block: ToolGroupBlock) -> NSAttributedString {
         let name = StepKindStyle.displayName(forToolName: block.toolName)
-        let head = block.count == 1 ? name : "\(name) · \(block.count)개"
+        let head = block.count == 1 ? name : "\(name) · \(block.count)"
         let result = NSMutableAttributedString(attributedString:
             ConversationInlineText.symbolPrefixed(
                 "wrench.adjustable.fill", text: head,

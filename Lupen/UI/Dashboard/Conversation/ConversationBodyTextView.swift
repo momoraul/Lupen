@@ -7,14 +7,16 @@
 
 import AppKit
 
-/// 카드 본문 — selectable `NSTextView`(여러 줄 드래그 선택·복사가 자연스럽고,
-/// 선택 시 레이아웃이 흔들리지 않음. NSTextField는 field editor 특성상 여러 줄
-/// 선택이 불가하고 선택 시 레이아웃이 변해 부적합했다).
+/// Card body — a selectable `NSTextView` (multi-line drag selection and copy
+/// feel natural, and selecting doesn't shift the layout. NSTextField was a poor
+/// fit: its field editor can't do multi-line selection and the layout changes
+/// on selection).
 ///
-/// 과거 NSTextView가 가로 폭을 밀어내 패널 리사이즈를 막았던 문제는, 컨테이너를
-/// 뷰포트에 단방향 `==`로 고정(ConversationDetailView)해 근본 해결했다. 본 뷰는
-/// 추가 안전장치로 intrinsic 가로 크기를 없애고(width = noIntrinsicMetric) 가로
-/// hugging/compression을 낮춰, 어떤 경우에도 컨테이너 폭을 위로 밀어내지 않는다.
+/// The past problem where NSTextView pushed its horizontal width and blocked
+/// panel resizing is fixed at the root by pinning the container to the viewport
+/// one-way (ConversationDetailView). As an extra guard, this view drops its
+/// intrinsic horizontal size (width = noIntrinsicMetric) and lowers horizontal
+/// hugging/compression so it never pushes the container width upward.
 @MainActor
 final class ConversationBodyTextView: NSTextView, NSTextViewDelegate {
 
@@ -24,7 +26,15 @@ final class ConversationBodyTextView: NSTextView, NSTextViewDelegate {
         let container = NSTextContainer(
             size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         )
-        container.widthTracksTextView = true
+        // widthTracksTextView is OFF: leaving the container width to the text
+        // system's relayout timing falls into a trap where a new card measures
+        // its intrinsic height at width 0 (before it receives its frame width),
+        // blowing up the line wrapping (reproduces on repeated reselection).
+        // Instead, sync the container width to the current bounds width at
+        // measure time (see syncContainerWidth).
+        container.widthTracksTextView = false
+        // lineFragmentPadding 0: drop horizontal padding so body width == container width.
+        container.lineFragmentPadding = 0
         let layoutManager = NSLayoutManager()
         layoutManager.addTextContainer(container)
         let storage = NSTextStorage()
@@ -51,7 +61,8 @@ final class ConversationBodyTextView: NSTextView, NSTextViewDelegate {
         ]
         translatesAutoresizingMaskIntoConstraints = false
         delegate = self
-        // 컨테이너 폭을 위로 밀어내지 않도록(단방향 전파 보장) 가로 우선순위를 낮춘다.
+        // Lower horizontal priority so it never pushes the container width
+        // upward (guarantees one-way width propagation).
         setContentHuggingPriority(.defaultLow, for: .horizontal)
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
@@ -65,16 +76,44 @@ final class ConversationBodyTextView: NSTextView, NSTextViewDelegate {
         guard let layoutManager, let textContainer else {
             return super.intrinsicContentSize
         }
+        // Measure height only after matching the container width to the current
+        // bounds width. If the width is still 0 (before layout), defer and
+        // return 0 — this blocks the width-0 height blow-up. Once the width is
+        // set, setFrameSize calls invalidate so it re-measures on the next pass.
+        guard syncContainerWidth() else {
+            return NSSize(width: NSView.noIntrinsicMetric, height: 0)
+        }
         layoutManager.ensureLayout(for: textContainer)
         let used = layoutManager.usedRect(for: textContainer)
-        // 가로는 intrinsic 없음(컨테이너 폭을 따름), 세로만 콘텐츠 높이.
+        // No intrinsic width (follows the container width); height only.
         return NSSize(width: NSView.noIntrinsicMetric, height: ceil(used.height))
     }
 
+    /// Sync the text container width to the current bounds width. Returns true
+    /// if the width is valid (>0). With widthTracksTextView off, matching it
+    /// explicitly at measure time makes height measurement always happen at the
+    /// correct width, independent of the text system's relayout timing.
+    @discardableResult
+    private func syncContainerWidth() -> Bool {
+        guard let textContainer else { return false }
+        let width = bounds.width
+        guard width > 0 else { return false }
+        if textContainer.containerSize.width != width {
+            textContainer.containerSize = NSSize(
+                width: width, height: CGFloat.greatestFiniteMagnitude
+            )
+        }
+        return true
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(newSize.width - frame.width) > 0.5
         super.setFrameSize(newSize)
-        // 폭이 바뀌면 줄바꿈이 달라지므로 높이를 다시 계산.
-        invalidateIntrinsicContentSize()
+        // A width change re-wraps the text, so match the container width and recompute height.
+        if widthChanged {
+            syncContainerWidth()
+            invalidateIntrinsicContentSize()
+        }
     }
 
     func textView(_ view: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {

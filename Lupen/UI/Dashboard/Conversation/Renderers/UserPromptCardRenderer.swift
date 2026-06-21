@@ -7,7 +7,7 @@
 
 import AppKit
 
-/// 내 프롬프트 카드 — "You" 헤더 + selectable 본문(+첨부 이미지 글리프).
+/// My prompt card — a "You" header + selectable body (+ attached image glyphs).
 @MainActor
 struct UserPromptCardRenderer: BlockRenderer {
     func makeView(for block: UserPromptBlock, context: RenderContext) -> NSView {
@@ -39,7 +39,7 @@ struct UserPromptCardRenderer: BlockRenderer {
                 attributed.append(ConversationInlineText.body(text, font: font, color: .labelColor))
             } else if block.inlineImageCount == 0 {
                 attributed.append(NSAttributedString(
-                    string: "(빈 프롬프트)",
+                    string: "(empty prompt)",
                     attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]
                 ))
             }

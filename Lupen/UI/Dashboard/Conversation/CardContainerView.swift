@@ -7,13 +7,17 @@
 
 import AppKit
 
-/// 모든 대화 카드의 공통 셸: 역할 거터 + tier별 표면(배경/보더/거터폭) + 본문 슬롯.
+/// Common shell for every conversation card: a role gutter + a tier-based
+/// surface (background/border/gutter width) + a body slot.
 ///
-/// 역할(user/assistant/system/subAgent)로 색을, tier(primary/secondary)로 강도를
-/// 나눠 중요한 대화(프롬프트·최종 답변=primary)가 보조(도구·사고=secondary)보다
-/// 또렷하게 읽히도록 한다. 선택된 Step 카드는 accent 보더로 강조.
-/// 표면색은 전경(labelColor 등) 저알파 오버레이라 다크/라이트 모두 배경보다 대비를
-/// 유지한다(이전 textBackgroundColor 방식의 다크모드 함몰 수정).
+/// Role (user/assistant/system/subAgent) picks the color; tier
+/// (primary/secondary) picks the strength, so important dialogue (prompts /
+/// final replies = primary) reads more sharply than supporting content
+/// (tools / thinking = secondary). The selected Step card is emphasized with an
+/// accent border. The surface tint is a low-alpha foreground overlay
+/// (labelColor, etc.) so it keeps contrast against the background in both dark
+/// and light modes (fixes the dark-mode sink of the old textBackgroundColor
+/// approach).
 @MainActor
 final class CardContainerView: NSView {
 
@@ -39,8 +43,9 @@ final class CardContainerView: NSView {
 
     private func setup() {
         layer?.cornerRadius = 8
-        // 본문(primary)·선택 카드만 셸(배경/외곽선/거터)을 그린다. 곁가지(secondary
-        // 사고·도구)는 셸 없이 들여쓴 한 줄로 렌더 → 화면 노이즈를 줄이고 본문을 부각.
+        // Only body (primary) / selected cards draw a shell (background/border/
+        // gutter). Supporting (secondary: thinking·tools) cards render as an
+        // indented single line with no shell → less noise, body stands out.
         let showShell = tier == .primary || highlighted
         layer?.borderWidth = highlighted ? 1.5 : (showShell ? 0.75 : 0)
 
@@ -53,8 +58,8 @@ final class CardContainerView: NSView {
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bodyContainer)
 
-        let verticalInset: CGFloat = showShell ? 12 : 4      // 곁가지는 납작하게
-        let bodyLeadingInset: CGFloat = showShell ? 0 : 26   // 곁가지는 들여쓰기
+        let verticalInset: CGFloat = showShell ? 12 : 4      // supporting cards are flatter
+        let bodyLeadingInset: CGFloat = showShell ? 0 : 26   // supporting cards are indented
         NSLayoutConstraint.activate([
             gutter.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             gutter.topAnchor.constraint(equalTo: topAnchor, constant: 12),
@@ -76,7 +81,7 @@ final class CardContainerView: NSView {
         applyColors()
     }
 
-    /// 현재 외관(다크/라이트) 기준으로 layer 색 재계산.
+    /// Recompute layer colors for the current appearance (dark/light).
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             let showShell = tier == .primary || highlighted
@@ -102,7 +107,8 @@ final class CardContainerView: NSView {
         ])
     }
 
-    /// 역할 강조색(거터 + 강조 보더). systemYellow는 다크 대비가 나빠 피한다.
+    /// Role accent color (gutter + emphasis border). systemYellow has poor dark
+    /// contrast, so it is avoided.
     static func accentColor(for role: BlockRole) -> NSColor {
         switch role {
         case .user:      return .systemTeal
@@ -112,14 +118,15 @@ final class CardContainerView: NSView {
         }
     }
 
-    /// 역할×tier 표면 틴트. 전경색 저알파 오버레이라 다크/라이트 모두 배경 대비 유지.
-    /// primary(프롬프트·답변)는 진하게, secondary(도구·사고)는 옅게 → 위계.
+    /// Role×tier surface tint. A low-alpha foreground overlay keeps contrast in
+    /// both dark and light modes. primary (prompts·replies) is stronger,
+    /// secondary (tools·thinking) is lighter → hierarchy.
     static func surfaceColor(role: BlockRole, tier: BlockTier, highlighted: Bool) -> NSColor {
         if highlighted { return accentColor(for: role).withAlphaComponent(0.12) }
         let base: NSColor
         switch role {
         case .user:      base = .systemTeal
-        case .assistant: base = .labelColor   // 중립 전경 — 다크=흰 저알파, 라이트=검정 저알파
+        case .assistant: base = .labelColor   // neutral foreground — dark = white low-alpha, light = black low-alpha
         case .system:    base = .systemOrange
         case .subAgent:  base = .systemPurple
         }

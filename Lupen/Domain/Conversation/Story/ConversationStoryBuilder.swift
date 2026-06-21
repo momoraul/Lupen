@@ -7,22 +7,22 @@
 
 import Foundation
 
-/// `Turn`을 Conversation 탭이 그릴 큐레이션된 `[ConversationBlock]`으로
-/// 변환하는 **순수 함수**(UI 의존 없음 → 단위 테스트 대상).
+/// Pure function that converts a `Turn` into the curated `[ConversationBlock]`
+/// the Conversation tab draws (no UI dependency → unit-testable).
 ///
-/// 규칙(3-Tier 큐레이션):
-/// - `.prompt` → `UserPromptBlock`(primary)
-/// - `.reply` 텍스트 → `AssistantTextBlock`(primary), `thinkingText` → `ThinkingBlock`(secondary)
-/// - `.thought` 텍스트/`thinkingText` → `ThinkingBlock`(secondary), 도구는 묶음으로
-/// - `.toolCall`/`.thought`의 도구 호출 → 연속 동종이면 하나의 `ToolGroupBlock`으로 병합,
-///   대응 `.toolResult`(`toolUseId` 매칭)를 결과 요약으로 흡수
-/// - `.stop`(합성 API 오류) → `StatusBlock(.apiError)`, 그 외 `.stop` → `.stopped`
+/// Rules (3-tier curation):
+/// - `.prompt` → `UserPromptBlock` (primary)
+/// - `.reply` text → `AssistantTextBlock` (primary); `thinkingText` → `ThinkingBlock` (secondary)
+/// - `.thought` text / `thinkingText` → `ThinkingBlock` (secondary); tools become a group
+/// - `.toolCall`/`.thought` tool calls → consecutive same-kind calls merge into one
+///   `ToolGroupBlock`, absorbing the matching `.toolResult` (`toolUseId` match) as a result summary
+/// - `.stop` (synthetic API error) → `StatusBlock(.apiError)`; other `.stop` → `.stopped`
 /// - `.interruption` → `StatusBlock(.interrupted)`
-/// - `isSystemInjected` Step은 제외(Phase D에서 토글 노출 예정)
-/// - Turn 레벨: `wasCompactedAway` → `.compactedAway` 배너, 고아 Turn → `.orphan` 배너
+/// - `isSystemInjected` steps are excluded (toggle exposure planned in Phase D)
+/// - Turn level: `wasCompactedAway` → `.compactedAway` banner; orphan Turn → `.orphan` banner
 ///
-/// `highlight`로 전달된 stepUuid에 해당하는 블록은 `isHighlighted == true`
-/// (Q1: Turn 전체를 그리되 선택 Step만 강조).
+/// A block whose stepUuid matches the passed `highlight` gets `isHighlighted == true`
+/// (Q1: draw the whole Turn but highlight only the selected Step).
 enum ConversationStoryBuilder {
 
     static func build(
@@ -33,7 +33,7 @@ enum ConversationStoryBuilder {
         var blocks: [ConversationBlock] = []
         func isHL(_ uuid: String) -> Bool { highlightStepUuid == uuid }
 
-        // toolResult를 toolUseId로 인덱싱(도구 호출과 병합용).
+        // Index toolResult by toolUseId (for merging with tool calls).
         var resultsByToolUseId: [String: ToolResultInfo] = [:]
         for step in turn.steps where step.kind == .toolResult {
             if let tr = step.toolResult {
@@ -41,7 +41,7 @@ enum ConversationStoryBuilder {
             }
         }
 
-        // 연속 동종 도구 묶음 상태.
+        // State for grouping consecutive same-kind tool calls.
         var run: [ToolCallItem] = []
         var runToolName: String?
         var runAnchorUuid: String?
@@ -108,11 +108,11 @@ enum ConversationStoryBuilder {
                         isHighlighted: isHL(step.uuid)
                     ))
                 }
-                // 텍스트 없는 reply(usage-only)는 블록을 만들지 않는다.
+                // A reply with no text (usage-only) produces no block.
 
             case .thought:
-                // 도구 사용 전 중간 설명/사고는 secondary. 텍스트가 나오면
-                // 도구 묶음이 끊기므로 먼저 flush.
+                // Pre-tool intermediate note/thinking is secondary. Emitted text
+                // breaks the tool group, so flush first.
                 if let text = step.text, !text.isEmpty {
                     flushRun()
                     blocks.append(ThinkingBlock(
@@ -133,7 +133,7 @@ enum ConversationStoryBuilder {
                 appendToolCalls(step)
 
             case .toolResult:
-                continue // 도구 호출 블록에 병합됨
+                continue // merged into the tool-call block
 
             case .stop:
                 flushRun()
@@ -159,7 +159,7 @@ enum ConversationStoryBuilder {
         }
         flushRun()
 
-        // Turn 레벨 상태 배너.
+        // Turn-level status banner.
         if turn.wasCompactedAway(nextTurnInSession: neighbor) {
             blocks.append(StatusBlock(
                 id: "st:compacted:\(turn.id)", kind: .compactedAway, isHighlighted: false

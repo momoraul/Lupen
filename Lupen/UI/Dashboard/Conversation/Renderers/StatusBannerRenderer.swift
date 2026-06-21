@@ -7,8 +7,8 @@
 
 import AppKit
 
-/// 상태 배너 카드 — 중단/API오류/compact/orphan/stop 사유를 보여준다.
-/// "(no response available)" 대신 무슨 일이 있었는지 명확히 전달.
+/// Status banner card — shows the interrupted / API-error / compact / orphan /
+/// stop reason. Conveys what happened instead of "(no response available)".
 @MainActor
 struct StatusBannerRenderer: BlockRenderer {
     func makeView(for block: StatusBlock, context: RenderContext) -> NSView {

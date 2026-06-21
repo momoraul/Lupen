@@ -3686,9 +3686,10 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     private func notifySelection(for node: TurnOutlineNode) {
         switch node.kind {
         case .step(let step, let parentTurnId):
-            // Q1: Step 클릭 시 소속 Turn 전체를 detail에 넘긴다(해당 Step은
-            // 빌더가 highlight). SQLite-first 환경에선 stub일 수 있어
-            // materialize하고, 못 찾으면 그 Step만의 단일-Step Turn으로 폴백.
+            // Q1: on Step click, pass the whole owning Turn to the detail (the
+            // builder highlights that Step). In a SQLite-first setup the Turn
+            // may be a stub, so materialize it; if not found, fall back to a
+            // single-Step Turn of just that Step.
             let parent = turns.first { $0.id == parentTurnId }
             let resolved = parent.map { materializedTurn(for: $0) }
                 ?? Turn(id: parentTurnId, sessionId: step.sessionId, steps: [step], isInterrupted: false)

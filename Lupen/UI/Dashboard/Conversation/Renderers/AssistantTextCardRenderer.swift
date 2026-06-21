@@ -7,12 +7,12 @@
 
 import AppKit
 
-/// 모델 답변 카드 — "✦ Assistant · model · cost" 헤더 + selectable 본문.
+/// Model reply card — "✦ Assistant · model · cost" header + selectable body.
 ///
-/// Phase B는 본문을 줄바꿈 보존 평문(+이미지 링크)으로 표시해 Turn 선택 시
-/// 응답이 보이게 한다("no response available" 박멸이 1차 목표). 마크다운
-/// 블록(테이블/코드블록/리스트) 리치 렌더는 Phase C에서 이 렌더러를
-/// `MarkdownParser` 노드 렌더로 확장한다.
+/// Phase B showed the body as newline-preserving plain text (+ image links) so
+/// a response is visible on Turn selection (killing "no response available" was
+/// the first goal). Rich markdown block rendering (table/code block/list) is
+/// added in Phase C by extending this renderer to `MarkdownParser` node rendering.
 @MainActor
 struct AssistantTextCardRenderer: BlockRenderer {
     func makeView(for block: AssistantTextBlock, context: RenderContext) -> NSView {

@@ -7,9 +7,10 @@
 
 import AppKit
 
-/// 접었다 펼치는 카드 본문 — 헤더(▸/▾ + 한 줄 요약)를 클릭하면 상세가
-/// 열린다. 상세는 펼칠 때 lazy 생성(성능 게이트: 접힌 블록은 본문 뷰를
-/// 만들지 않음). 도구 묶음·사고처럼 "기본 접힘, 한눈에 훑기" 블록에 쓴다.
+/// Collapsible card body — clicking the header (▸/▾ + one-line summary) opens
+/// the detail. The detail is built lazily on expand (perf gate: collapsed
+/// blocks build no body view). Used for "collapsed by default, scan at a
+/// glance" blocks like tool groups and thinking.
 @MainActor
 final class DisclosureCardView: NSView {
 
@@ -43,8 +44,8 @@ final class DisclosureCardView: NSView {
         summaryLabel.isSelectable = false
         summaryLabel.isBordered = false
         summaryLabel.drawsBackground = false
-        // 긴 한 줄 요약이 카드 폭을 밀어내지 않도록 가로 compression을 낮춰
-        // 좁아지면 말줄임(…)되게 한다.
+        // Lower horizontal compression so a long one-line summary doesn't push
+        // the card width — it truncates (…) when narrow.
         summaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let header = NSStackView(views: [chevron, summaryLabel])
@@ -77,7 +78,7 @@ final class DisclosureCardView: NSView {
         header.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(toggle)))
     }
 
-    /// 테스트/프로그램에서 펼침 상태를 직접 제어(스모크 커버리지).
+    /// Directly control the expanded state from tests/programmatically (smoke coverage).
     func setExpandedForTesting(_ value: Bool) {
         if value != expanded { toggle() }
     }

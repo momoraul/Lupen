@@ -7,18 +7,18 @@
 
 import Foundation
 
-/// 큐레이션 우선순위. 한눈에 훑게 하기 위해 secondary/hidden은 기본적으로
-/// 접힌 한 줄로 렌더된다(렌더러의 책임).
+/// Curation priority. To keep the view scannable, secondary/hidden blocks
+/// render as a collapsed single line by default (the renderer's responsibility).
 enum BlockTier: Sendable, Equatable {
-    /// 항상 펼침 — 내 프롬프트, 모델 최종 답변, 오류/중단 신호.
+    /// Always expanded — my prompt, the model's final reply, error/stop signals.
     case primary
-    /// 기본 접힘 한 줄 — 도구 호출 묶음, 사고.
+    /// Collapsed single line by default — tool-call groups, thinking.
     case secondary
-    /// 토글/Raw로만 — 시스템 메타 등(현재는 빌더에서 제외).
+    /// Toggle/Raw only — system meta, etc. (currently excluded by the builder).
     case hidden
 }
 
-/// 대화 화자 역할. 렌더러가 거터/색을 정하는 데 쓴다.
+/// Conversation speaker role. Used by the renderer to pick gutter/color.
 enum BlockRole: Sendable, Equatable {
     case user
     case assistant
@@ -26,19 +26,20 @@ enum BlockRole: Sendable, Equatable {
     case subAgent
 }
 
-/// Conversation 탭이 그리는 한 블록.
+/// A single block drawn by the Conversation tab.
 ///
-/// `ConversationStoryBuilder`가 `Turn`을 이 프로토콜 값들의 배열로
-/// 큐레이션하고, 렌더러 레지스트리(Phase B)가 타입별로 뷰를 만든다.
-/// 미등록 타입은 `plainTextFallback`으로 폴백하므로 새 블록 타입 추가가
-/// 안전하다(폴백 불변식 — 절대 빈 화면/크래시 없음).
+/// `ConversationStoryBuilder` curates a `Turn` into an array of these protocol
+/// values, and the renderer registry (Phase B) builds a view per type.
+/// Unregistered types fall back to `plainTextFallback`, so adding a new block
+/// type is safe (fallback invariant — never a blank screen / crash).
 protocol ConversationBlock: Sendable {
     var id: String { get }
     var tier: BlockTier { get }
     var role: BlockRole { get }
-    /// 현재 선택된 Step에 해당하는 블록인지(Q1: Turn 전체를 그리되 선택 Step 강조).
+    /// Whether this block maps to the currently selected Step
+    /// (Q1: draw the whole Turn but highlight the selected Step).
     var isHighlighted: Bool { get }
-    /// 전용 렌더러가 없을 때(미등록) 평문으로라도 보여줄 텍스트.
+    /// Text shown as a plain fallback when no dedicated renderer is registered.
     var plainTextFallback: String { get }
 }
 
@@ -46,28 +47,29 @@ extension ConversationBlock {
     var plainTextFallback: String { "[\(role)]" }
 }
 
-// MARK: - 구체 블록 타입
+// MARK: - Concrete block types
 
-/// 내 프롬프트(`.prompt`). 첨부/인라인 이미지 메타를 함께 들고 온다.
+/// My prompt (`.prompt`). Carries attachment / inline-image metadata.
 struct UserPromptBlock: ConversationBlock, Equatable {
     let id: String
     let stepUuid: String
     let text: String?
     let attachments: [AttachmentRef]
     let inlineImageCount: Int
-    /// `/compact` 직후의 합성 프롬프트면 본문 대신 "↻ Compact resume" 표시.
+    /// If this is the synthetic prompt right after `/compact`, show
+    /// "↻ Compact resume" instead of the body.
     let isCompactSummary: Bool
     let isHighlighted: Bool
     var tier: BlockTier { .primary }
     var role: BlockRole { .user }
     var plainTextFallback: String {
         if isCompactSummary { return "↻ Compact resume" }
-        return text ?? "(빈 프롬프트)"
+        return text ?? "(empty prompt)"
     }
 }
 
-/// 모델의 본문 답변(`.reply`의 텍스트). 마크다운 원문을 담고, 렌더러가
-/// `MarkdownParser`로 블록 분리 + `AttributedString(markdown:)`로 그린다.
+/// The model's reply body (text of `.reply`). Holds raw markdown; the renderer
+/// splits blocks via `MarkdownParser` and draws with `AttributedString(markdown:)`.
 struct AssistantTextBlock: ConversationBlock, Equatable {
     let id: String
     let stepUuid: String
@@ -81,7 +83,7 @@ struct AssistantTextBlock: ConversationBlock, Equatable {
     var plainTextFallback: String { markdown }
 }
 
-/// 확장 사고(`thinkingText`) 또는 도구 사용 전 중간 설명(`.thought`의 텍스트).
+/// Extended thinking (`thinkingText`) or a pre-tool intermediate note (text of `.thought`).
 struct ThinkingBlock: ConversationBlock, Equatable {
     let id: String
     let stepUuid: String
@@ -89,10 +91,11 @@ struct ThinkingBlock: ConversationBlock, Equatable {
     let isHighlighted: Bool
     var tier: BlockTier { .secondary }
     var role: BlockRole { .assistant }
-    var plainTextFallback: String { "💭 \(text)" }
+    var plainTextFallback: String { "[thinking] \(text)" }
 }
 
-/// 한 도구 호출 + (있으면) 그 결과의 요약. `ToolGroupBlock`이 동종 호출을 묶는다.
+/// A single tool call plus (if present) a summary of its result.
+/// `ToolGroupBlock` groups consecutive same-kind calls.
 struct ToolCallItem: Sendable, Equatable {
     let toolUseId: String
     let toolName: String
@@ -102,10 +105,10 @@ struct ToolCallItem: Sendable, Equatable {
     let stepUuid: String
 }
 
-/// 연속된 동종 도구 호출 묶음 — "읽기 파일 3개 ›"처럼 한 줄로 접어 보여준다.
+/// A group of consecutive same-kind tool calls — collapsed into one line like "Read · 3 ›".
 struct ToolGroupBlock: ConversationBlock, Equatable {
     let id: String
-    /// 묶음의 도구명(동종). 예: "Read", "Bash".
+    /// The group's (same-kind) tool name. e.g. "Read", "Bash".
     let toolName: String
     let calls: [ToolCallItem]
     let isHighlighted: Bool
@@ -120,33 +123,33 @@ struct ToolGroupBlock: ConversationBlock, Equatable {
     }
 }
 
-/// Turn이 비정상/특수 종료된 사유. "(no response available)" 대신 이 배너를 쓴다.
+/// Why a Turn ended abnormally / specially. Used instead of "(no response available)".
 enum StatusKind: Sendable, Equatable {
-    /// 사용자가 중단(`.interruption`).
+    /// User interrupted (`.interruption`).
     case interrupted
-    /// Claude Code가 API 실패에 주입한 합성 종료(본문 메시지 포함 가능).
+    /// Synthetic termination Claude Code injected on API failure (may carry a body message).
     case apiError(String?)
-    /// `end_turn`이 아닌 종료(max_tokens / refusal / custom stop 등).
+    /// Non-`end_turn` termination (max_tokens / refusal / custom stop, etc.).
     case stopped(String?)
-    /// 다음 turn의 `/compact`로 응답이 요약·소실됨.
+    /// The reply was summarized/lost by the next turn's `/compact`.
     case compactedAway
-    /// 프롬프트로 시작하지 않는 불완전(고아) Turn.
+    /// An incomplete (orphan) Turn that does not start with a prompt.
     case orphan
 
-    /// 사용자에게 보여줄 한 줄 설명.
+    /// One-line description shown to the user.
     var message: String {
         switch self {
         case .interrupted:
-            return "✋ 사용자가 이 요청을 중단했습니다"
+            return "✋ User interrupted this request"
         case .apiError(let body):
             if let body, !body.isEmpty { return "⚠ \(body)" }
-            return "⚠ 이 Turn은 API 오류로 종료되었습니다"
+            return "⚠ This turn ended with an API error"
         case .stopped(let reason):
-            return "■ 응답이 종료되었습니다 (\(reason ?? "unknown"))"
+            return "■ Response ended (\(reason ?? "unknown"))"
         case .compactedAway:
-            return "✂ 응답이 다음 turn으로 요약되었습니다 (compact)"
+            return "✂ Response was compacted into the next turn"
         case .orphan:
-            return "⚠ 이 Turn은 프롬프트 없이 시작되었습니다"
+            return "⚠ This turn started without a prompt"
         }
     }
 }

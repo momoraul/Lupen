@@ -7,11 +7,12 @@
 
 import AppKit
 
-/// 마크다운 본문 렌더 — 연속된 텍스트 계열 노드(헤딩/문단/리스트/인용)는 하나의
-/// attributed 문자열로 합쳐 **단일 `NSTextView`** 로 그린다. 노드마다 별도
-/// NSTextView로 쪼개면 노드 경계를 넘는 드래그 선택이 불가했던 문제(한 step 안의
-/// 여러 줄 선택 안 됨)를 해결한다. 테이블/코드블록만 전용 뷰(NSGridView / Copy
-/// 버튼 코드 카드)로 분리해 리치 렌더를 유지한다.
+/// Markdown body rendering — consecutive text-family nodes (heading/paragraph/
+/// list/quote) are merged into a single attributed string and drawn as a single
+/// `NSTextView`. This fixes the problem where splitting each node into its own
+/// NSTextView blocked drag selection across node boundaries (couldn't select
+/// multiple lines within one step). Only tables/code blocks are split into
+/// dedicated views (NSGridView / Copy-button code card) to keep rich rendering.
 @MainActor
 final class ConversationMarkdownView: NSStackView {
 
@@ -51,7 +52,7 @@ final class ConversationMarkdownView: NSStackView {
                 flushRun()
                 addArranged(MarkdownTableView(headers: headers, rows: rows))
             default:
-                // 텍스트 계열 노드는 누적해 하나의 NSTextView로 → 통째 드래그 선택.
+                // Accumulate text-family nodes into one NSTextView → select the whole run by drag.
                 if run.length > 0 { run.append(NSAttributedString(string: "\n\n")) }
                 run.append(Self.attributed(for: node))
             }
@@ -64,7 +65,7 @@ final class ConversationMarkdownView: NSStackView {
         view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
     }
 
-    // MARK: - 텍스트 노드 → attributed
+    // MARK: - Text node → attributed
 
     private static func attributed(for node: MarkdownNode) -> NSAttributedString {
         switch node {
@@ -81,14 +82,14 @@ final class ConversationMarkdownView: NSStackView {
                 lines.joined(separator: "\n"), font: bodyFont, color: .secondaryLabelColor
             )
         case .codeBlock, .table:
-            return NSAttributedString() // 별도 뷰로 처리되어 여기 도달하지 않음
+            return NSAttributedString() // handled by a dedicated view; never reached here
         }
     }
 
     private static func list(_ items: [(marker: String, text: String)]) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.35
-        paragraph.headIndent = 16        // 줄바꿈된 둘째 줄은 마커 너비만큼 들여쓰기(행잉 인덴트)
+        paragraph.headIndent = 16        // indent the wrapped second line by the marker width (hanging indent)
         paragraph.firstLineHeadIndent = 0
         let result = NSMutableAttributedString()
         for (index, item) in items.enumerated() {
@@ -120,7 +121,7 @@ final class ConversationMarkdownView: NSStackView {
     }
 }
 
-/// 코드블록 — 모노 텍스트 + 옅은 배경 + 좌측 accent 바 + 우상단 Copy 버튼.
+/// Code block — mono text + faint background + left accent + Copy button at top-right.
 @MainActor
 final class CodeBlockView: NSView {
 
@@ -175,7 +176,7 @@ final class CodeBlockView: NSView {
     }
 }
 
-/// 마크다운 표 — NSGridView로 헤더(강조) + 데이터 행을 격자로 그린다.
+/// Markdown table — header (emphasized) + data rows drawn as a grid via NSGridView.
 @MainActor
 final class MarkdownTableView: NSView {
 
