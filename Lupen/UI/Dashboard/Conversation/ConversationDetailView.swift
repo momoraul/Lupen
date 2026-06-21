@@ -121,15 +121,23 @@ final class ConversationDetailView: NSView {
             NSLayoutConstraint.activate([leading, trailing])
             if block.isHighlighted, highlightedView == nil { highlightedView = view }
         }
+        // 정확한 좌표를 위해 3단계 레이아웃 강제 후 스크롤.
         layoutSubtreeIfNeeded()
-        // 선택한 Step(하이라이트)이 있으면 그 카드가 보이도록 스크롤하고,
-        // 없으면(Turn/SkillGroup 선택) 맨 위로. flipped 문서 뷰라 (0,0)이 좌상단.
+        documentView.layoutSubtreeIfNeeded()
+        stack.layoutSubtreeIfNeeded()
         if let highlightedView {
+            // 선택 카드를 상단 근처(−12)로 올린다(이미 일부 보여도). maxY 클램프로
+            // 과스크롤 방지. scrollToVisible는 '이미 보이면 안 움직임'이라 부적합.
             let rect = highlightedView.convert(highlightedView.bounds, to: documentView)
-            documentView.scrollToVisible(rect.insetBy(dx: 0, dy: -12))
+            let visibleHeight = scrollView.contentView.bounds.height
+            let documentHeight = max(documentView.bounds.height, stack.fittingSize.height)
+            let maxY = max(0, documentHeight - visibleHeight)
+            let targetY = min(max(0, rect.minY - 12), maxY)
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetY))
         } else {
-            documentView.scroll(.zero)
+            scrollView.contentView.scroll(to: .zero)
         }
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 }
 
