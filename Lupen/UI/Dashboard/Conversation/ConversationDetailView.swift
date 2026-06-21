@@ -36,6 +36,8 @@ final class ConversationDetailView: NSView {
         registry.register(UserPromptCardRenderer())
         registry.register(AssistantTextCardRenderer())
         registry.register(StatusBannerRenderer())
+        registry.register(ToolGroupCardRenderer())
+        registry.register(ThinkingCardRenderer())
     }
 
     private func setup() {

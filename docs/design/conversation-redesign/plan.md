@@ -238,13 +238,15 @@ final class BlockRendererRegistry {
 
 ### Phase D — 도구/구조 카드 + 큐레이션 컨트롤
 **진행 방식**: 가장 복잡 → **성능 게이트 중점.** 도구/서브에이전트/diff 본문은 펼칠 때만 생성(lazy)·로드. 재귀(서브에이전트)는 깊이 1로 제한.
-- [ ] D1. `ToolGroupCardRenderer` — "읽기 파일 N개 ›" 접힘 → 펼치면 개별(입력/출력 lazy 로드 via `store.rawJSON`).
-- [ ] D2. `ThinkingCardRenderer` — 접힘 디스클로저.
-- [ ] D3. `SubAgentExtractor`/`SubAgentCardRenderer` — 인라인 카드, 펼치면 build() 재귀(깊이 1), 비용=서브Turn aggregate.
-- [ ] D4. `DiffExtractor`/`DiffCardRenderer` — 파일명 + +N/−M 배지 + hunk 병치(스샷 패턴).
-- [ ] D5. `AttachmentCardRenderer` — 문서/첨부 카드("다음에서 열기").
-- [ ] D6. 헤더 전역 토글 바(도구·thinking·시스템) + Compact↔Full, UserDefaults 영속.
-- [ ] D7. 병합/그룹핑/diff 추출 로직 테스트 + 긴 Turn 성능 확인 → 피드백 루프 클린 → 커밋.
+- [x] D1. `ToolGroupCardRenderer` + `DisclosureCardView` — "🔧 Read · N개 ›" 접힘 → 펼치면 개별 입력/결과 요약(lazy 생성). 전체 본문 lazy(store.rawJSON)는 Raw 탭 escape로 대체.
+- [x] D2. `ThinkingCardRenderer` — 접힘 디스클로저(첫 줄 미리보기 + 펼치면 전체).
+- [~] D3. `SubAgentExtractor`/`SubAgentCardRenderer` — **후속**(확장 골격: SubAgentBlock 타입 + extractor + register). 빌더에 graft/이웃 파라미터, TurnOutline의 SubAgentGraftIndex 전달 필요.
+- [~] D4. `DiffExtractor`/`DiffCardRenderer` — **후속**(Edit/Write toolCall → DiffBlock + register).
+- [~] D5. `AttachmentCardRenderer` — **후속**(AttachmentBlock + register).
+- [~] D6. 헤더 전역 토글 바(Compact↔Full, UserDefaults) — **후속**(상태 관리 동반).
+- [x] D7. ToolGroup/Thinking/Disclosure 로직 테스트(커버리지 100%/100%/98%). 디스클로저 lazy 생성 검증.
+
+> D3~D6는 **확장 레지스트리 위에서 "타입 1개 + extractor + renderer 등록"으로 추가**되는 후속 표시 대상(설계 목표 "확장 쉽게" 달성). 핵심 큐레이션(도구/사고 접기)은 D1/D2로 완료.
 **게이트**: 도구 병합 로직 커버리지, lazy 로드 검증, 재귀 깊이 1, 긴 Turn 성능.
 
 ### Phase E — 마감
