@@ -75,6 +75,10 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// changed. The next reload with rows for that provider auto-selects a
     /// session so the right pane recovers without another user click.
     private var pendingAutoSelectProvider: ProviderKind?
+    /// Cold-launch guard: `showDashboard` calls `selectFirstSessionIfNeeded`
+    /// before any rows exist, so that eager attempt no-ops. We retry once when
+    /// the first non-empty data arrives. Set true only on a successful select.
+    private var didAutoSelectInitialSession = false
     /// Project keys currently expanded.
     ///
     /// On first launch (no persisted state) this defaults to empty — groups
@@ -1165,6 +1169,10 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
                 if restoreSelection(sessionId: candidate.sessionId) {
                     let row = outlineView.row(forItem: candidate)
                     if row >= 0 { outlineView.scrollRowToVisible(row) }
+                    // Claim keyboard focus for the outline so AppKit doesn't
+                    // leave first-responder on the provider-mode popup (stray
+                    // focus ring). Applies to every auto-select path.
+                    if let window = view.window { window.makeFirstResponder(outlineView) }
                     return true
                 }
             }
@@ -1235,6 +1243,18 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
                   pendingAutoSelectProvider == activeProvider {
             if selectFirstVisibleSession() {
                 pendingAutoSelectProvider = nil
+            }
+        } else if !restoredSelection,
+                  automaticSessionSelectionEnabled,
+                  !didAutoSelectInitialSession {
+            // Cold launch: `showDashboard` fired `selectFirstSessionIfNeeded`
+            // before any rows existed, so nothing got selected and there was no
+            // retry — leaving a permanent "No Selection". Retry when the first
+            // non-empty data arrives; `selectFirstVisibleSession` claims
+            // keyboard focus for the outline on success, so AppKit doesn't
+            // leave a stray focus ring on the provider-mode popup.
+            if selectFirstVisibleSession() {
+                didAutoSelectInitialSession = true
             }
         } else if !restoredSelection, previousSelectionId != nil {
             onSelectionCleared?()
@@ -2096,7 +2116,18 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// 2. Otherwise, the first session of the first (most-recent activity) group.
     func selectFirstSessionIfNeeded() {
         guard automaticSessionSelectionEnabled else { return }
-        guard outlineView.selectedRow < 0 else { return }
+        guard outlineView.selectedRow < 0 else {
+            // Already auto-selected by the first reloadData — which ran before
+            // the window existed, so its makeFirstResponder was a no-op. The
+            // window is live now (this runs from showDashboard after
+            // makeKeyAndOrderFront), so claim focus for the outline; otherwise
+            // AppKit's key loop leaves first-responder on the provider-mode
+            // popup, showing a stray focus ring.
+            if let window = view.window {
+                window.makeFirstResponder(outlineView)
+            }
+            return
+        }
 
         // Prefer the active session's node if it's in the tree.
         if let activeId = store.activeSession?.id,

@@ -156,11 +156,9 @@ final class DashboardSplitViewController: NSSplitViewController {
         sidebarItem.minimumThickness = 200
         sidebarItem.maximumThickness = 400
         sidebarItem.canCollapse = false
-        addSplitViewItem(sidebarItem)
 
         let rightItem = NSSplitViewItem(viewController: rightVC)
         rightItem.minimumThickness = 400
-        addSplitViewItem(rightItem)
 
         // Wire selection: session list -> turn outline -> detail
         sessionListVC.onSessionSelected = { [weak self] session in
@@ -213,6 +211,16 @@ final class DashboardSplitViewController: NSSplitViewController {
         detailVC.onHeaderResizeEnded = { [weak self] in
             self?.handleResizeEnded()
         }
+
+        // Add split items LAST. `addSplitViewItem(sidebarItem)` loads
+        // sessionListVC.view, which triggers its first `reloadData` — and that
+        // reload can auto-select a session and invoke `onSessionSelected`.
+        // Wiring the callbacks above FIRST ensures that early auto-select
+        // actually drives the turn outline; otherwise `onSessionSelected` is
+        // still nil at that point, so the row gets selected but the turn list
+        // never renders until the user clicks a *different* session.
+        addSplitViewItem(sidebarItem)
+        addSplitViewItem(rightItem)
     }
 
     // MARK: - Drag-to-resize handlers
