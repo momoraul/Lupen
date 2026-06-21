@@ -1,0 +1,154 @@
+//
+//  ConversationDetailView.swift
+//  Lupen
+//
+//  Created by jaden on 2026/06/21.
+//
+
+import AppKit
+
+/// Body of the Conversation tab — draws a curated `[ConversationBlock]` of a
+/// Turn as a card stack. Mirrors the proven Tokens-tab pattern (NSScrollView +
+/// flipped documentView + vertical NSStackView) and delegates block→view
+/// mapping to `BlockRendererRegistry` (unregistered blocks fall back to plain text).
+@MainActor
+final class ConversationDetailView: NSView {
+
+    private let scrollView = NSScrollView()
+    private let documentView = ConversationFlippedDocumentView()
+    private let stack = NSStackView()
+    private let registry = BlockRendererRegistry()
+    private let renderContext = RenderContext()
+    /// Leading/trailing constraints of the currently rendered cards —
+    /// deactivated in bulk on rebuild (A1). Without tracking, activating every
+    /// time leaves dangling constraints that pile up and break layout on fast
+    /// Turn switching.
+    private var cardConstraints: [NSLayoutConstraint] = []
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        registerRenderers()
+        setup()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Register dedicated renderers. Adding one `register(_:)` line here adds a
+    /// new display target (extension point). Unregistered blocks fall back
+    /// safely to `PlainTextBlockRenderer`.
+    private func registerRenderers() {
+        registry.register(UserPromptCardRenderer())
+        registry.register(AssistantTextCardRenderer())
+        registry.register(StatusBannerRenderer())
+        registry.register(ToolGroupCardRenderer())
+        registry.register(ThinkingCardRenderer())
+    }
+
+    private func setup() {
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 0, bottom: 24, right: 0)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(stack)
+
+        scrollView.documentView = documentView
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            // The container (documentView) follows the viewport (clipView) one-way.
+            // Pinning all 4 edges to the clipView with == blocks any child card/
+            // text intrinsic width from propagating up and constraining the
+            // container (= panel/window) width.
+            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            // The documentView height is determined by the stack (= content)
+            // height. Forcing it to at least the viewport height (height >=
+            // viewport) combined with stack.bottom == documentView.bottom makes
+            // short content stretch the card to fill the viewport height (bug).
+
+            // The stack follows the documentView width exactly (==). No reading-
+            // width clamp / centerX / min-max — cards don't own a width
+            // constraint; they follow the container.
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: Self.contentHorizontalInset),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -Self.contentHorizontalInset),
+            stack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+        ])
+    }
+
+    /// Horizontal margin for conversation content — a bit more than the shared
+    /// inset (16) so cards don't crowd the panel edges.
+    private static let contentHorizontalInset: CGFloat = 24
+
+    /// Redraw the card stack from the curated blocks. (Selection skipping is
+    /// handled by the parent `DetailViewController` on same-Step rebind — parity
+    /// kept — so this rebuilds on every call.)
+    func configure(blocks: [ConversationBlock]) {
+        // Explicitly deactivate/clear card constraints (A1): avoid dangling pile-up.
+        NSLayoutConstraint.deactivate(cardConstraints)
+        cardConstraints.removeAll()
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        var highlightedView: NSView?
+        var previous: (view: NSView, tier: BlockTier)?
+        for block in blocks {
+            let view = registry.view(for: block, context: renderContext)
+            stack.addArrangedSubview(view)
+            let leading = view.leadingAnchor.constraint(equalTo: stack.leadingAnchor)
+            let trailing = view.trailingAnchor.constraint(equalTo: stack.trailingAnchor)
+            cardConstraints.append(contentsOf: [leading, trailing])
+            NSLayoutConstraint.activate([leading, trailing])
+            if let previous {
+                // Pack supporting (thinking·tools) cards tightly, and give
+                // breathing room when a body card is adjacent, so it reads as
+                // 'dialogue units' (spacing grouping).
+                let bothSecondary = previous.tier == .secondary && block.tier == .secondary
+                stack.setCustomSpacing(bothSecondary ? 2 : 14, after: previous.view)
+            }
+            previous = (view, block.tier)
+            if block.isHighlighted, highlightedView == nil { highlightedView = view }
+        }
+        // Force a 3-stage layout for accurate coordinates before scrolling.
+        layoutSubtreeIfNeeded()
+        documentView.layoutSubtreeIfNeeded()
+        stack.layoutSubtreeIfNeeded()
+        if let highlightedView {
+            // Bring the selected card near the top (−12) even if partly visible.
+            // Clamp to maxY to avoid over-scroll. scrollToVisible is unsuitable
+            // ('doesn't move if already visible').
+            let rect = highlightedView.convert(highlightedView.bounds, to: documentView)
+            let visibleHeight = scrollView.contentView.bounds.height
+            let documentHeight = max(documentView.bounds.height, stack.fittingSize.height)
+            let maxY = max(0, documentHeight - visibleHeight)
+            let targetY = min(max(0, rect.minY - 12), maxY)
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetY))
+        } else {
+            scrollView.contentView.scroll(to: .zero)
+        }
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+}
+
+/// `isFlipped = true` document view — so `scroll(.zero)` goes to the top
+/// (otherwise NSStackView's default coordinate system puts (0,0) at the bottom
+/// and every rebind scrolls to the end).
+private final class ConversationFlippedDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}

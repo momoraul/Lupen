@@ -181,8 +181,8 @@ final class DashboardSplitViewController: NSSplitViewController {
             self?.detailVC.clearSelection()
         }
 
-        turnOutlineVC.onStepSelected = { [weak self] step in
-            self?.detailVC.showStep(step)
+        turnOutlineVC.onStepSelected = { [weak self] step, turn in
+            self?.detailVC.showStep(step, in: turn)
         }
 
         turnOutlineVC.onTurnSelected = { [weak self] turn, displayCost, displayTokens in
