@@ -204,12 +204,16 @@ final class MarkdownTableView: NSView {
         guard columnCount > 0 else { return }
 
         func cell(_ text: String, bold: Bool) -> NSView {
-            DetailStyles.makeSelectableValueLabel(
+            let label = DetailStyles.makeSelectableValueLabel(
                 text,
                 font: .systemFont(ofSize: 12, weight: bold ? .semibold : .regular),
                 color: bold ? .labelColor : .secondaryLabelColor,
                 alignment: .left
             )
+            // 넓은 표가 카드/패널 폭을 밀어내지 않도록 셀도 말줄임 + 낮은 compression.
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            return label
         }
 
         var gridRows: [[NSView]] = []

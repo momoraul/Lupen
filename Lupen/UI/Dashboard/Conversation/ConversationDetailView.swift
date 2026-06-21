@@ -81,15 +81,23 @@ final class ConversationDetailView: NSView {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        var highlightedView: NSView?
         for block in blocks {
             let view = registry.view(for: block, context: renderContext)
             stack.addArrangedSubview(view)
             view.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
             view.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
+            if block.isHighlighted, highlightedView == nil { highlightedView = view }
         }
-        // flipped 문서 뷰라 (0,0)이 좌상단 — 새 선택은 맨 위에서 시작.
         layoutSubtreeIfNeeded()
-        documentView.scroll(.zero)
+        // 선택한 Step(하이라이트)이 있으면 그 카드가 보이도록 스크롤하고,
+        // 없으면(Turn/SkillGroup 선택) 맨 위로. flipped 문서 뷰라 (0,0)이 좌상단.
+        if let highlightedView {
+            let rect = highlightedView.convert(highlightedView.bounds, to: documentView)
+            documentView.scrollToVisible(rect.insetBy(dx: 0, dy: -12))
+        } else {
+            documentView.scroll(.zero)
+        }
     }
 }
 

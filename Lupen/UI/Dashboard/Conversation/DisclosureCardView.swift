@@ -43,6 +43,9 @@ final class DisclosureCardView: NSView {
         summaryLabel.isSelectable = false
         summaryLabel.isBordered = false
         summaryLabel.drawsBackground = false
+        // 긴 한 줄 요약이 카드 폭을 밀어내지 않도록 가로 compression을 낮춰
+        // 좁아지면 말줄임(…)되게 한다.
+        summaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let header = NSStackView(views: [chevron, summaryLabel])
         header.orientation = .horizontal

@@ -48,6 +48,11 @@ final class ConversationBodyTextView: NSTextView, NSTextViewDelegate {
         ]
         translatesAutoresizingMaskIntoConstraints = false
         delegate = self
+        // 가로로 콘텐츠 크기를 유지하려는 NSTextView 성향이 카드/스크롤 폭을
+        // 밀어내 detail pane 리사이즈를 막지 않도록, 가로 hugging/compression을
+        // 낮춰 항상 부모 폭에 양보하고 줄바꿈하도록 한다.
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 
     func setBody(_ attributed: NSAttributedString) {

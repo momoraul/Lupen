@@ -108,11 +108,16 @@ enum ConversationInlineText {
 @MainActor
 enum ConversationCardHeader {
     static func make(_ text: String, color: NSColor) -> NSTextField {
-        DetailStyles.makeChromeLabel(
+        let label = DetailStyles.makeChromeLabel(
             text,
             font: .systemFont(ofSize: 11, weight: .semibold),
             color: color,
             alignment: .left
         )
+        // 모델·비용이 붙은 긴 헤더가 카드 폭을 밀어내지 않도록 말줄임 + 낮은 compression.
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return label
     }
 }
