@@ -183,6 +183,22 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.5.0 — _2026-06-21_
+
+Adds a storage manager and sharpens the Codex sidebar.
+
+- **Manage Sessions & Storage window** (⌘⇧M) — browse and clean up Claude Code
+  and Codex sessions by disk usage, with Lupen cache inspection (index / WAL /
+  snapshot) and a read-only all-disk view. Deletion is trash-only with an
+  allowlist + Undo; auth/config/state files are hard-blocked.
+- **Codex first-prompt titles** — sessions without a `session_index.jsonl`
+  thread name now show their first user prompt instead of the raw id prefix.
+- **Zero-cost session hiding** — low-signal $0 sessions (Codex
+  auto-review/guardian, idle) collapse behind a small `(N)` toggle per project
+  group; active, selected, and no-cost-aggregate sessions stay visible.
+- **Cost recoloring** — cost ≥ $1 reads orange (softer on dark), N/A reads
+  slate, sub-$1 stays dim; colors adapt per light/dark and invert on selection.
+
 ### v0.4.1 — _2026-06-20_
 
 Maintenance release — cost-accuracy fixes and a clearer cost in the sidebar.
