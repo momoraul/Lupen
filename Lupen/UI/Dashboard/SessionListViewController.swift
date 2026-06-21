@@ -802,7 +802,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// detail pane even though nothing was actually deleted.
     private func buildGroupedTree(
         from sessions: [Session],
-        previousSelectionId: String?
+        previousSelectionId: String?,
+        now: Date
     ) -> TreeBuild {
         let groups = SessionGrouping.groupByProject(sessions)
 
@@ -821,7 +822,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
                 sessions: group.sessions,
                 hidingEnabled: hidingEnabled,
                 keepShown: keepShown,
-                isLowSignal: { self.isLowSignalSession($0) }
+                isLowSignal: { self.isLowSignalSession($0, now: now) }
             )
             let hiddenCount = partition.hidden.count
             let expanded = expandedHiddenByProject.contains(projectKey)
@@ -1092,7 +1093,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         case .grouped:
             let built = buildGroupedTree(
                 from: sessionsForGrouping,
-                previousSelectionId: selectionToRestore
+                previousSelectionId: selectionToRestore,
+                now: now
             )
             newRoots = built.roots
             newSessionNodes = built.nodesById
@@ -1470,18 +1472,18 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         reloadData()
     }
 
-    /// A session is a "low-signal" hide candidate when its cost aggregate is
-    /// present and non-positive — Codex auto-review assessment threads, empty
-    /// `/clear` sessions, etc., where nothing billable happened. A *missing*
-    /// aggregate (not yet imported) is deliberately NOT hidden: during a cold
-    /// load every aggregate is absent, and hiding on absence would blank the
-    /// sidebar. `costUSD` already feeds the render fingerprint, so a session
-    /// flips between shown/hidden automatically once its cost lands.
-    private func isLowSignalSession(_ session: Session) -> Bool {
-        guard let aggregate = store.sessionListAggregates[session.id] else {
-            return false
-        }
-        return aggregate.costUSD <= 0
+    /// Store-backed wrapper over `SessionListHiddenPartition.isLowSignal` —
+    /// supplies the session's cost aggregate and active state. Only sessions
+    /// that ran requests with no billable cost (Codex auto-review threads,
+    /// unpriced models) and are idle get hidden; active sessions and sessions
+    /// with no aggregate (cold load / no requests, e.g. empty `/clear` shells)
+    /// stay visible. `now` is the reload's shared timestamp so this active
+    /// check matches the render fingerprint's `isActive` exactly.
+    private func isLowSignalSession(_ session: Session, now: Date) -> Bool {
+        SessionListHiddenPartition.isLowSignal(
+            costUSD: store.sessionListAggregates[session.id]?.costUSD,
+            isActive: store.isSessionActive(session, now: now)
+        )
     }
 
     /// Flip this group's hidden (zero-cost) bucket open/closed and rebuild.
@@ -2784,8 +2786,12 @@ private final class SessionListGroupHeaderView: NSTableCellView {
         guard !hiddenToggle.isHidden else { return false }
         // Convert the toggle's bounds into cell coordinates (it lives inside
         // `rightStack`), plus a few points of horizontal grace.
-        let rect = convert(hiddenToggle.bounds, from: hiddenToggle)
-        return point.x >= rect.minX - 4 && point.x <= rect.maxX + 4
+        // Accept a click inside the toggle's bounds (in cell coordinates;
+        // it lives inside `rightStack`) plus a small grace margin on both
+        // axes, so the compact pill is comfortable to hit without claiming
+        // the full-height header band the way an x-only test did.
+        let rect = convert(hiddenToggle.bounds, from: hiddenToggle).insetBy(dx: -4, dy: -4)
+        return rect.contains(point)
     }
 }
 

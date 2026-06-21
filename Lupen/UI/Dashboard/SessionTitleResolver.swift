@@ -58,8 +58,9 @@ enum SessionTitleResolver {
     /// already trims leading/trailing whitespace before storing, so
     /// `session.customTitle` with only outer whitespace cannot reach here;
     /// but internal spacing ("plan  7") is preserved exactly as typed by
-    /// the user. Same for `firstTurnPreview` / `cachedTitle` /
-    /// `firstPrompt`.
+    /// the user. Same for `firstTurnPreview` / `cachedTitle`. `firstPrompt`
+    /// is the exception: it is importer-extracted (not user-authored), so its
+    /// outer whitespace is trimmed before display (inner spacing preserved).
     static func resolve(
         session: Session,
         firstTurnPreview: String?
@@ -78,9 +79,15 @@ enum SessionTitleResolver {
         if let slug = session.slug, !slug.isEmpty {
             return Resolved(text: slug, origin: .slug)
         }
-        if let firstPrompt = session.firstPrompt,
-           !firstPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return Resolved(text: firstPrompt, origin: .firstPrompt)
+        if let firstPrompt = session.firstPrompt {
+            // Unlike customTitle / firstTurnPreview (user-authored, kept
+            // verbatim), firstPrompt is importer-extracted message text — trim
+            // outer whitespace so a prompt that starts with blank lines or
+            // pasted indentation doesn't render as an empty/indented row.
+            let trimmed = firstPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return Resolved(text: trimmed, origin: .firstPrompt)
+            }
         }
         return Resolved(text: String(session.rawSessionId.prefix(8)), origin: .idPrefix)
     }

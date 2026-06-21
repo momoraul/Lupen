@@ -46,4 +46,20 @@ enum SessionListHiddenPartition {
         }
         return Result(shown: shown, hidden: hidden)
     }
+
+    /// Whether a session is a "low-signal" hide candidate: it incurred no
+    /// billable cost (cost present and `<= 0`) AND is not currently active.
+    ///
+    /// - `costUSD == nil` means the cost aggregate is absent — a cold load
+    ///   before costs import, or a session with no requests at all (e.g. an
+    ///   empty `/clear` shell). Never hidden: hiding on absence would blank
+    ///   the sidebar mid-import, and an empty shell has nothing to aggregate.
+    /// - An `isActive` session is never hidden even at zero cost: it is the
+    ///   one the user is most likely watching and simply hasn't been billed
+    ///   yet. `isActive` already feeds the render fingerprint, so a session
+    ///   flips shown↔hidden automatically when it goes idle.
+    static func isLowSignal(costUSD: Double?, isActive: Bool) -> Bool {
+        guard let costUSD, !isActive else { return false }
+        return costUSD <= 0
+    }
 }
