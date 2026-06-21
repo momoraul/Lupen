@@ -63,17 +63,28 @@ final class ConversationDetailView: NSView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // 문서 뷰는 스크롤 뷰포트 폭을 따라가 본문이 pane-wide가 된다.
+            // 문서 뷰를 클립 뷰에 leading/trailing/top/width/height까지 완전히
+            // 고정한다. width만 묶으면 documentView의 위치(leading/top)가
+            // ambiguous해져 레이아웃이 깨지고 패널 너비 리사이즈가 막히는
+            // 원인이 된다(이전 너비 고정 버그의 진짜 원인 — work_3 검증 패턴).
+            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            documentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
 
             stack.topAnchor.constraint(equalTo: documentView.topAnchor),
             stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
-            // 읽기 컬럼(Q4): 좁으면 패널 폭을 따라가고(좌우 inset), 넓으면 620pt에서
+            // 읽기 컬럼(Q4): 좁으면 패널 폭(좌우 inset)을 따라가고, 넓으면 620pt에서
             // 멈춰 가운데 정렬 — 와이드 모니터에서 본문이 '읽히지 않는 벽'이 되는 것 방지.
             stack.centerXAnchor.constraint(equalTo: documentView.centerXAnchor),
             stack.leadingAnchor.constraint(
                 greaterThanOrEqualTo: documentView.leadingAnchor,
                 constant: DetailStyles.horizontalInset
+            ),
+            stack.trailingAnchor.constraint(
+                lessThanOrEqualTo: documentView.trailingAnchor,
+                constant: -DetailStyles.horizontalInset
             ),
             stack.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxReadingWidth),
         ])

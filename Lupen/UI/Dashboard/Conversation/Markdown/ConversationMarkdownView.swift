@@ -168,10 +168,11 @@ final class CodeBlockView: NSView {
         NSLayoutConstraint.activate([
             text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            text.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            // 본문은 Copy 버튼 아래에서 시작 — 우상단 버튼과 코드 첫 줄이 겹치던 문제 해소.
+            text.topAnchor.constraint(equalTo: copyButton.bottomAnchor, constant: 2),
             text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            copyButton.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            copyButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            copyButton.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            copyButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
     }
 
