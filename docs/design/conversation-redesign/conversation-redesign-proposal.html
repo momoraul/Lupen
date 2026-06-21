@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lupen — Conversation 탭 재설계 제안서</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg-soft: #161b22; --bg-card: #1c2230; --bg-elev: #232b3a;
+    --border: #2d3645; --border-soft: #232b3a; --text: #e6edf3; --text-dim: #aab3c0; --text-faint: #7b8694;
+    --accent: #6ea8ff; --accent-soft: #2a3b5c; --green: #56d364; --red: #f87171; --amber: #f0b429;
+    --purple: #c084fc; --user: #58c2a8; --radius: 12px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f8fa; --bg-soft: #ffffff; --bg-card: #ffffff; --bg-elev: #f0f3f6;
+      --border: #d8dee4; --border-soft: #e7ebef; --text: #1f2328; --text-dim: #57606a;
+      --text-faint: #8c959f; --accent: #2f6feb; --accent-soft: #dde9ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.65; font-size: 15px; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 120px; }
+
+  header.hero { padding: 64px 24px 48px; text-align: center; background: radial-gradient(120% 100% at 50% 0%, var(--accent-soft) 0%, transparent 60%); border-bottom: 1px solid var(--border-soft); }
+  .hero .eyebrow { color: var(--accent); font-weight: 600; letter-spacing: .08em; font-size: 12.5px; text-transform: uppercase; }
+  .hero h1 { font-size: 34px; margin: 12px 0 8px; letter-spacing: -.02em; line-height: 1.2; }
+  .hero p.sub { color: var(--text-dim); max-width: 700px; margin: 0 auto; font-size: 17px; }
+  .hero .meta { margin-top: 24px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: var(--bg-card); border: 1px solid var(--border); color: var(--text-dim); padding: 5px 12px; border-radius: 999px; }
+  .pill b { color: var(--text); font-weight: 600; }
+
+  nav.toc { margin: 32px 0; padding: 18px 22px; background: var(--bg-soft); border: 1px solid var(--border-soft); border-radius: var(--radius); display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 24px; }
+  nav.toc a { color: var(--text-dim); text-decoration: none; font-size: 14px; padding: 3px 0; display: flex; gap: 8px; }
+  nav.toc a:hover { color: var(--accent); }
+  nav.toc a .n { color: var(--text-faint); font-variant-numeric: tabular-nums; min-width: 20px; }
+  nav.toc a.hot { color: var(--text); font-weight: 600; }
+  nav.toc a.hot .n { color: var(--accent); }
+
+  section { margin-top: 56px; scroll-margin-top: 24px; }
+  h2 { font-size: 24px; letter-spacing: -.01em; margin: 0 0 6px; display: flex; align-items: baseline; gap: 12px; }
+  h2 .secn { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 18px; }
+  h2 .star { font-size: 13px; background: var(--accent); color: #04132e; padding: 2px 9px; border-radius: 999px; letter-spacing: .03em; font-weight: 700; align-self: center; }
+  h2 + .lede { color: var(--text-dim); margin: 0 0 24px; font-size: 15.5px; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 24px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
+  @media (max-width: 760px) { .grid2,.grid3 { grid-template-columns: 1fr; } nav.toc { grid-template-columns: 1fr; } }
+
+  .callout { border-left: 3px solid var(--accent); background: var(--bg-soft); padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .callout.warn { border-color: var(--amber); } .callout.good { border-color: var(--green); }
+  .callout p { margin: 6px 0; } .callout .tag { font-weight: 700; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; }
+  .callout.warn .tag { color: var(--amber); } .callout.good .tag { color: var(--green); } .callout .tag.acc { color: var(--accent); }
+
+  code { font-family: var(--mono); font-size: 13px; background: var(--bg-elev); padding: 1.5px 6px; border-radius: 5px; color: var(--text); }
+  .filepath { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+
+  ul.clean { list-style: none; padding: 0; margin: 0; }
+  ul.clean li { padding: 8px 0 8px 26px; position: relative; border-bottom: 1px solid var(--border-soft); }
+  ul.clean li:last-child { border-bottom: none; }
+  ul.clean li::before { content: ""; position: absolute; left: 4px; top: 15px; width: 7px; height: 7px; border-radius: 2px; background: var(--accent); }
+  ul.clean.check li::before { content: "✓"; background: none; color: var(--green); top: 6px; font-weight: 700; }
+
+  .mock { font-family: var(--mono); font-size: 12px; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+  .mock .titlebar { background: var(--bg-elev); padding: 8px 14px; display: flex; gap: 7px; align-items: center; border-bottom: 1px solid var(--border); }
+  .mock .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .mock .dot.r { background: #ff5f57; } .mock .dot.y { background: #febc2e; } .mock .dot.g { background: #28c840; }
+  .mock .tname { color: var(--text-faint); font-size: 11.5px; margin-left: 8px; }
+  .mock .body { padding: 16px; background: var(--bg-soft); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 14px; }
+  .seg span { padding: 3px 10px; font-size: 11px; color: var(--text-faint); border-right: 1px solid var(--border); }
+  .seg span:last-child { border-right: none; } .seg span.on { background: var(--accent); color: #fff; }
+
+  .blk { margin: 10px 0; }
+  .role { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  .role .rmeta { font-weight: 400; color: var(--text-faint); letter-spacing: 0; text-transform: none; margin-left: auto; }
+  .userblk { border-left: 3px solid var(--user); background: rgba(88,194,168,.07); padding: 8px 12px; border-radius: 0 8px 8px 0; }
+  .userblk .role { color: var(--user); }
+  .asstblk .role { color: var(--accent); } .asstblk { padding: 4px 2px; }
+  .md-h { font-weight: 700; color: var(--text); margin: 6px 0 2px; }
+  .md-p { color: var(--text-dim); }
+  .codecard { background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: 8px 10px; margin: 6px 0; position: relative; color: var(--text-dim); }
+  .codecard .copy { position: absolute; right: 8px; top: 6px; font-size: 9.5px; color: var(--text-faint); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
+  .chip { display: block; background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; margin: 5px 0; color: var(--text-dim); }
+  .chip .tw { color: var(--text); }
+  .ok { color: var(--green); } .err { color: var(--red); } .dim { color: var(--text-faint); }
+  .disc { color: var(--text-faint); padding: 5px 10px; }
+  .banner { border-left: 3px solid var(--amber); background: rgba(240,180,41,.08); color: var(--amber); padding: 7px 12px; border-radius: 0 6px 6px 0; margin: 6px 0; }
+  .empty { color: var(--text-faint); font-style: italic; }
+  .vs-label { text-align: center; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; margin-bottom: 10px; }
+  .vs-before { color: var(--red); } .vs-after { color: var(--green); }
+
+  /* diff card */
+  .diffcard { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; overflow: hidden; }
+  .diffcard .dh { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--bg-elev); font-size: 11.5px; }
+  .diffcard .dh .pls { color: var(--green); margin-left: auto; } .diffcard .dh .mns { color: var(--red); }
+  .diffcard .dl { padding: 2px 10px; font-size: 11px; }
+  .diffcard .add { background: rgba(86,211,100,.12); color: var(--green); }
+  .diffcard .del { background: rgba(248,113,113,.12); color: var(--red); }
+  .doccard { display: flex; align-items: center; gap: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; margin: 6px 0; }
+  .doccard .ic { width: 26px; height: 26px; border-radius: 6px; background: var(--bg-elev); display: grid; place-items: center; }
+  .doccard .open { margin-left: auto; font-size: 10.5px; color: var(--text-faint); border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; }
+
+  /* mini table render */
+  .gridtbl { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin: 6px 0; font-size: 11.5px; }
+  .gridtbl .tr { display: grid; grid-template-columns: 1.4fr 1fr 1.4fr; }
+  .gridtbl .tr.head { background: var(--bg-elev); font-weight: 700; color: var(--text); }
+  .gridtbl .td { padding: 5px 9px; border-bottom: 1px solid var(--border-soft); border-right: 1px solid var(--border-soft); color: var(--text-dim); }
+  .gridtbl .tr:last-child .td { border-bottom: none; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 8px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th { color: var(--text-faint); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  tbody tr:hover { background: var(--bg-soft); }
+  .t1 { color: var(--green); font-weight: 600; } .t2 { color: var(--amber); font-weight: 600; } .t3 { color: var(--text-faint); font-weight: 600; }
+  .pick { background: rgba(86,211,100,.08); }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 5px; }
+  .b-pick { background: var(--green); color: #04210a; } .b-no { background: var(--bg-elev); color: var(--text-faint); }
+  .b-now { background: var(--accent); color: #04132e; } .b-soon { background: var(--amber); color: #2a1f02; } .b-fut { background: var(--bg-elev); color: var(--text-faint); }
+
+  .pipe { font-family: var(--mono); font-size: 12.5px; color: var(--text-dim); line-height: 2.1; }
+  .pipe .l1 { color: var(--accent); } .pipe .l2 { color: var(--green); } .pipe .l3 { color: var(--purple); } .pipe .dimc { color: var(--text-faint); }
+
+  .road { display: flex; flex-direction: column; gap: 0; }
+  .step { display: grid; grid-template-columns: 88px 1fr; gap: 18px; padding: 16px 0; border-bottom: 1px solid var(--border-soft); }
+  .step:last-child { border-bottom: none; }
+  .pno { font-weight: 800; font-size: 15px; color: var(--accent); font-family: var(--mono); }
+  .pno small { display: block; font-weight: 500; font-size: 10.5px; color: var(--text-faint); margin-top: 2px; }
+  .step h4 { margin: 0 0 4px; font-size: 15.5px; } .step p { margin: 0; color: var(--text-dim); font-size: 14px; }
+  .effort { font-size: 11px; color: var(--text-faint); } .effort b { color: var(--text-dim); }
+
+  .pcard { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
+  .pcard .pn { font-size: 12px; color: var(--accent); font-weight: 700; }
+  .pcard h4 { margin: 4px 0 8px; font-size: 15.5px; line-height: 1.35; } .pcard p { margin: 0; color: var(--text-dim); font-size: 13.5px; }
+  .pcard .link { font-size: 12px; color: var(--text-faint); font-family: var(--mono); margin-top: 10px; display: block; }
+
+  .q { padding: 12px 0; border-bottom: 1px solid var(--border-soft); display: flex; gap: 12px; }
+  .q:last-child { border-bottom: none; } .q .qn { color: var(--amber); font-weight: 700; }
+  footer { margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--border-soft); color: var(--text-faint); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="eyebrow">Lupen · Design Proposal</div>
+  <h1>Conversation 탭 재설계</h1>
+  <p class="sub">지난 Turn을 전용 Claude Code / Codex / Cursor 앱처럼 — 내 프롬프트와 LLM 응답을 <b style="color:var(--text)">한눈에 훑을 수 있게, 표시 대상별로 rich하게</b>. 그리고 <b style="color:var(--accent)">표시 대상이 늘어나도 쉽게 확장</b>되도록.</p>
+  <div class="meta">
+    <span class="pill">🧠 <b>6</b> 에이전트(메인 + 5)</span>
+    <span class="pill">🔬 <b>633k</b> 토큰 리서치</span>
+    <span class="pill">🧩 <b>확장성</b> 1급 설계</span>
+    <span class="pill">🎯 5개 관점 <b>완전 수렴</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <nav class="toc">
+    <a href="#tldr"><span class="n">01</span> 핵심 결론 (TL;DR)</a>
+    <a href="#diagnosis"><span class="n">02</span> 문제 진단 — Before</a>
+    <a href="#insight"><span class="n">03</span> 핵심 통찰: 데이터는 충분</a>
+    <a href="#goal"><span class="n">04</span> 목표 화면 — After</a>
+    <a href="#blueprint"><span class="n">05</span> 통합 설계 청사진</a>
+    <a class="hot" href="#extensibility"><span class="n">06</span> 확장성 아키텍처 ★</a>
+    <a class="hot" href="#catalog"><span class="n">07</span> 표시 대상 카탈로그 ★</a>
+    <a class="hot" href="#patterns"><span class="n">08</span> Claude Code/Codex 참고 패턴 ★</a>
+    <a href="#curation"><span class="n">09</span> 큐레이션 (3-Tier)</a>
+    <a href="#tech"><span class="n">10</span> 렌더링 기술 결정</a>
+    <a href="#proposals"><span class="n">11</span> 관점별 안 요약</a>
+    <a href="#roadmap"><span class="n">12</span> 우선순위 로드맵</a>
+    <a href="#risks"><span class="n">13</span> 리스크 & 열린 질문</a>
+  </nav>
+
+  <!-- 01 -->
+  <section id="tldr">
+    <h2><span class="secn">01</span> 핵심 결론</h2>
+    <p class="lede">5개 서브에이전트와 메인세션이 독립 분석했고 진단·방향이 완전히 일치했습니다.</p>
+    <div class="card">
+      <ul class="clean check">
+        <li><b>병목은 데이터가 아니라 표현 레이어다.</b> <code>Step</code>/<code>Turn</code>은 rich 렌더에 필요한 신호(사고·도구 입출력·모델·비용·서브에이전트)를 이미 전부 보유.</li>
+        <li><b>지금 가장 큰 결함은 "데이터 결선 버그".</b> Turn 선택 시 응답이 비어 <code>"(no response available)"</code> — 스크린샷의 빈 화면.</li>
+        <li><b>해법 = "Turn 대화 리더"로 전환.</b> 순수 헬퍼 <code>ConversationStoryBuilder</code>가 Turn을 큐레이션된 블록으로 변환 → NSStackView 카드 스택으로 렌더.</li>
+        <li class="" style=""><b>확장성을 1급 설계 가치로.</b> 표시 대상(테이블·diff·도구묶음·차트…)이 늘어도 <b>"타입 1개 + 렌더러 등록"</b>으로 추가 — 렌더러 레지스트리 + 2단계 파이프라인 + 안전 폴백.</li>
+        <li><b>한눈에 훑기 우선.</b> 도구는 "읽기 파일 3개 ›"처럼 묶어 접고, 파일 편집은 diff 카드로, 본문은 마크다운(테이블 포함)으로.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 02 -->
+  <section id="diagnosis">
+    <h2><span class="secn">02</span> 문제 진단 — 지금의 Conversation 탭</h2>
+    <p class="lede">단일 <code>NSTextView</code>에 "평문 문자열 2개"를 이어붙이는 1세대 구조.</p>
+    <div class="grid2">
+      <div>
+        <div class="vs-label vs-before">✗ Before (현재)</div>
+        <div class="mock">
+          <div class="titlebar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="tname">Conversation</span></div>
+          <div class="body">
+            <div class="seg"><span class="on">Conversation</span><span>Attachments</span><span>Tokens</span><span>Raw</span></div>
+            <div class="blk"><div class="role" style="color:var(--text-faint)">USER</div><div class="md-p">현재 프로젝트에 큰 기능추가를 해야하는데 먼저 현재 프로젝트를 파악해줘.</div></div>
+            <div class="blk" style="margin-top:20px"><div class="role" style="color:var(--text-faint)">ASSISTANT</div><div class="empty">(no response available)</div></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-top:34px">근본 원인 (코드 검증)</h3>
+        <ul class="clean">
+          <li><b>Turn 선택 시 응답 nil 전달.</b> <code>showTurn</code>이 <code>assistantContent: nil</code>. <span class="filepath">DetailViewController.swift:726–730</span></li>
+          <li><b>평문 2개 인터페이스.</b> <code>configure(humanPrompt:assistantContent:)</code>. <span class="filepath">:1465–1587</span></li>
+          <li><b>마크다운 렌더 0건</b> (grep 전체 확인). 표·코드·리스트가 평문으로 평면화.</li>
+          <li><b>표시 단위가 Step 1개</b> → 항상 반쪽이 빈다.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 03 -->
+  <section id="insight">
+    <h2><span class="secn">03</span> 핵심 통찰 — 데이터는 이미 충분</h2>
+    <p class="lede">새 파이프라인이 필요 없습니다. <code>Step</code>이 rich 렌더의 원재료를 다 들고 있습니다.</p>
+    <div class="card">
+      <table>
+        <thead><tr><th style="width:34%">이미 보유한 신호</th><th>무엇에 쓰나</th><th style="width:24%">근거</th></tr></thead>
+        <tbody>
+          <tr><td><code>kind</code> (7종)</td><td>prompt/thought/toolCall/toolResult/reply/stop/interruption — 역할별 카드</td><td><span class="filepath">StepKind.swift</span></td></tr>
+          <tr><td><code>thinkingText</code></td><td>확장 사고 별도 보관 → 접이식 블록</td><td><span class="filepath">Step.swift:76</span></td></tr>
+          <tr><td><code>toolCalls</code> / <code>toolResult</code></td><td>도구 호출+결과 → 도구 카드 (의미 요약기 내장)</td><td><span class="filepath">ToolUseInfo / ToolResultInfo</span></td></tr>
+          <tr><td><code>model</code>/<code>tokens</code>/<code>cost</code></td><td>답변에 비용·모델 배지 동행 (Lupen 차별점)</td><td><span class="filepath">Step.swift:112–129</span></td></tr>
+          <tr><td><code>isSidechain</code>/<code>agentId</code></td><td>서브에이전트를 부모 Turn에 인라인 카드로</td><td><span class="filepath">SubAgentGraftIndex</span></td></tr>
+          <tr><td>상태 플래그</td><td>중단/오류/compact → 빈 화면 대신 사유 배너</td><td><span class="filepath">Turn.swift:54–87</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout good"><span class="tag">결론</span><p>도메인 모델 변경 없이 <b>표현 레이어만 교체</b> → 리스크 격리, 단위 테스트 용이.</p></div>
+  </section>
+
+  <!-- 04 -->
+  <section id="goal">
+    <h2><span class="secn">04</span> 목표 화면 — Turn 대화 리더</h2>
+    <p class="lede">Turn 선택 시 흐름(프롬프트 → 사고 → 도구 → 최종 답변)이 한 편의 읽을 수 있는 대화로.</p>
+    <div class="vs-label vs-after">✓ After (목표)</div>
+    <div class="mock">
+      <div class="titlebar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="tname">Conversation — Turn</span></div>
+      <div class="body">
+        <div class="seg"><span class="on">Conversation</span><span>Attachments</span><span>Tokens</span><span>Raw</span></div>
+        <div style="font-size:10.5px;color:var(--text-faint);margin-bottom:10px">⚙ 도구 펼치기 · 💭 thinking · 🔇 시스템 &nbsp;&nbsp;|&nbsp;&nbsp; 9 steps · opus-4-8 · $1.37</div>
+        <div class="blk userblk"><div class="role">🗨 You</div><div class="md-p">현재 프로젝트에 큰 기능추가를 해야하는데 먼저 현재 프로젝트를 파악해줘. <span class="dim">🖼 1</span></div></div>
+        <div class="blk asstblk">
+          <div class="role">✦ Assistant <span class="rmeta">opus-4-8 · 25.7k tok · $0.37</span></div>
+          <div class="disc">▸ 💭 Thinking · 3문단 <span class="dim">(접힘)</span></div>
+          <div class="chip">▸ 📖 <span class="tw">읽기 파일 3개</span> <span class="dim">Session.swift · Turn.swift · Step.swift ›</span></div>
+          <div class="chip">▸ ⌘ <span class="tw">실행됨 명령 1개</span> <span class="dim">find Lupen -name *.swift ›</span></div>
+          <div class="md-h">## 아키텍처 (레이어별)</div>
+          <div class="md-p">Lupen은 Claude Code / Codex 세션 비용을 분석하는 macOS 메뉴바 앱입니다…</div>
+          <div class="gridtbl">
+            <div class="tr head"><div class="td">레이어</div><div class="td">역할</div><div class="td">예시</div></div>
+            <div class="tr"><div class="td">Store</div><div class="td">SQLite 인덱스</div><div class="td">ProviderDatabase</div></div>
+            <div class="tr"><div class="td">UI</div><div class="td">AppKit 뷰</div><div class="td">DetailViewController</div></div>
+          </div>
+          <div class="codecard"><span class="copy">⧉ Copy</span><span style="color:var(--purple)">struct</span> Session { <span class="dim">…</span> }</div>
+        </div>
+      </div>
+    </div>
+    <p style="color:var(--text-faint);font-size:13px;margin-top:10px">↑ 도구는 "읽기 파일 3개 ›"로 묶여 접히고(스캔 가독성), 본문 표는 실제 테이블로, 코드블록은 Copy 버튼과 함께 — 모두 별개 렌더러.</p>
+  </section>
+
+  <!-- 05 -->
+  <section id="blueprint">
+    <h2><span class="secn">05</span> 통합 설계 청사진</h2>
+    <p class="lede">두 개의 새 조각 — 순수 변환 헬퍼 하나, 카드 렌더러 하나. (확장 메커니즘은 06절)</p>
+    <div class="grid2">
+      <div class="card">
+        <h3 style="margin-top:0">① ConversationStoryBuilder (순수 헬퍼)</h3>
+        <ul class="clean">
+          <li>입력: <code>Turn</code> (+ <code>SubAgentGraftIndex</code>, 이웃 Turn)</li>
+          <li>출력: <code>[ConversationBlock]</code> — 큐레이션·병합·상태 판정</li>
+          <li><code>toolUseId</code>로 도구 호출 ↔ 결과 병합, 동종 도구 묶음</li>
+          <li>UI 없이 corpus로 단위 테스트 → 리스크 격리</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">② 카드 스택 렌더러</h3>
+        <ul class="clean">
+          <li><code>NSScrollView</code> → flipped documentView → 수직 <code>NSStackView</code> (Tokens 탭 검증 패턴)</li>
+          <li>공통 <code>CardContainerView</code>로 카드 추상화</li>
+          <li>본문 = selectable NSTextView (선택·복사·검색 보존)</li>
+          <li>읽기폭 ~620pt clamp + 줄간격 1.45</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 06 EXTENSIBILITY -->
+  <section id="extensibility">
+    <h2><span class="secn">06</span> 확장성 아키텍처 <span class="star">최우선</span></h2>
+    <p class="lede">표시 대상이 계속 늘어난다 — <b>새 대상 추가 = 작은 타입 1개 + 렌더러 등록.</b> 그 외 코드는 불변이어야 한다.</p>
+
+    <h3>2단계 렌더 파이프라인</h3>
+    <div class="card">
+      <div class="pipe">
+        <b style="color:var(--text)">Level 1 — 대화 구조</b> <span class="dimc">(누가/무엇을 했나)</span><br>
+        Turn(steps[]) ──► <span class="l1">[BlockExtractor]</span> <span class="dimc">Step 해석 규칙</span> ──► <span class="l2">[ConversationBlock]</span> <span class="dimc">큐레이션된 블록</span><br>
+        <span class="dimc">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;▼ 각 블록을 뷰로 (레지스트리)</span><br>
+        <b style="color:var(--text)">Level 2 — 콘텐츠 리치</b> <span class="dimc">(텍스트 안의 표/코드/리스트)</span><br>
+        text.markdown ──► <span class="l3">[MarkdownNode]</span> <span class="dimc">paragraph/heading/list/<b style="color:var(--text)">table</b>/code/quote</span> ──► <span class="l3">[NodeRenderer]</span>
+      </div>
+    </div>
+    <p style="color:var(--text-dim);font-size:14px">두 층을 분리하는 것이 확장성의 핵심. Level 1은 대화 뼈대(화자·도구·사고)와 큐레이션, Level 2는 본문 내부 리치 콘텐츠(<b>테이블</b>이 여기서 NSGridView로 렌더).</p>
+
+    <h3>확장 포인트 3개 — 모두 "등록만"</h3>
+    <div class="grid3">
+      <div class="card"><h4 style="margin:0 0 6px;font-size:14.5px;color:var(--accent)">① BlockExtractor</h4><p style="margin:0;font-size:13px;color:var(--text-dim)">Step을 보고 블록 생성. 새 대화 패턴이 생기면 추출기 추가.<br><span class="dim">예: ToolGroup(묶음), Diff(파일편집), SubAgent</span></p></div>
+      <div class="card"><h4 style="margin:0 0 6px;font-size:14.5px;color:var(--green)">② BlockRenderer</h4><p style="margin:0;font-size:13px;color:var(--text-dim)">블록 → NSView. 타입별 렌더러를 레지스트리에 등록. 미등록은 평문 폴백.</p></div>
+      <div class="card"><h4 style="margin:0 0 6px;font-size:14.5px;color:var(--purple)">③ NodeRenderer</h4><p style="margin:0;font-size:13px;color:var(--text-dim)">마크다운 노드별 리치 렌더.<br><span class="dim">테이블=NSGridView, 코드=카드, 리스트…</span></p></div>
+    </div>
+
+    <h3>블록 모델 — 하이브리드 (열린 protocol + 핵심 enum)</h3>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table style="margin:0">
+        <thead><tr><th>방식</th><th>장점</th><th>단점 / 결론</th></tr></thead>
+        <tbody>
+          <tr><td><code>enum</code> + case</td><td>exhaustive switch로 누락 컴파일 에러</td><td>새 case마다 모든 switch 수정 → 확장 비용↑</td></tr>
+          <tr class="pick"><td><b>protocol + 레지스트리</b></td><td><b>새 타입 = 타입+렌더러 등록만</b>, 기존 불변, 미등록 폴백</td><td>런타임 폴백으로 안전성 보완 → <span class="badge b-pick">채택</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout good"><span class="tag">안전한 확장</span><p>어떤 블록/노드도 렌더러가 없으면 <b>평문으로라도 표시</b>(폴백 불변식). 실험적 표시 대상을 늦게 붙여도 빈 화면·크래시 없음. <code>Tier</code>·<code>Role</code> 같은 핵심 분기만 enum으로 컴파일 안전성 확보.</p></div>
+
+    <h3>검증: "5분 추가" 시나리오</h3>
+    <div class="grid2">
+      <div class="callout" style="margin:0"><span class="tag acc">테이블 리치하게?</span><p>Level 2에 <code>TableNodeRenderer</code>(NSGridView) 등록. <b>다른 코드 0줄 수정.</b></p></div>
+      <div class="callout" style="margin:0"><span class="tag acc">mermaid 다이어그램 추가?</span><p><code>MermaidBlock</code> + <code>MermaidExtractor</code> + <code>MermaidRenderer</code> 등록. 기존 빌더/렌더러 <b>불변</b>. 렌더러 붙기 전엔 코드블록으로 폴백.</p></div>
+    </div>
+    <p style="color:var(--text-faint);font-size:13px;margin-top:14px">전문: <span class="filepath">extensibility-architecture.md</span> (프로토콜 스케치 · 파일 배치 · 성능 전략 포함)</p>
+  </section>
+
+  <!-- 07 CATALOG -->
+  <section id="catalog">
+    <h2><span class="secn">07</span> 표시 대상 카탈로그 <span class="star">확장</span></h2>
+    <p class="lede">지금 지원할 것 / 곧 / 미래 — 모두 같은 블록·렌더러 메커니즘 위에서 누적된다.</p>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table style="margin:0">
+        <thead><tr><th style="width:22%">표시 대상</th><th style="width:30%">블록 / 렌더러</th><th>비고</th><th style="width:12%">시기</th></tr></thead>
+        <tbody>
+          <tr><td>내 프롬프트</td><td><code>UserPromptBlock</code></td><td>강조 카드 + 첨부 칩</td><td><span class="badge b-now">지금</span></td></tr>
+          <tr><td>모델 답변(마크다운)</td><td><code>AssistantTextBlock</code> → L2</td><td>헤더/리스트/굵게/링크</td><td><span class="badge b-now">지금</span></td></tr>
+          <tr><td>코드블록</td><td>L2 <code>CodeBlockNodeRenderer</code></td><td>모노 + Copy, 후에 신택스</td><td><span class="badge b-now">지금</span></td></tr>
+          <tr><td><b>테이블</b></td><td>L2 <code>TableNodeRenderer</code> → NSGridView</td><td>정렬·헤더 강조</td><td><span class="badge b-soon">곧</span></td></tr>
+          <tr><td>도구 액션 묶음</td><td><code>ToolGroupBlock</code></td><td>"읽기 파일 3개 ›" 접힘</td><td><span class="badge b-soon">곧</span></td></tr>
+          <tr><td>파일 편집 diff</td><td><code>DiffBlock</code></td><td>파일명 + <span class="ok">+N</span>/<span class="err">−M</span> 배지</td><td><span class="badge b-soon">곧</span></td></tr>
+          <tr><td>사고(thinking)</td><td><code>ThinkingBlock</code></td><td>접힘 디스클로저</td><td><span class="badge b-soon">곧</span></td></tr>
+          <tr><td>서브에이전트</td><td><code>SubAgentBlock</code></td><td>인라인 카드, 펼치면 미니 대화</td><td><span class="badge b-soon">곧</span></td></tr>
+          <tr><td>첨부/문서 카드</td><td><code>AttachmentBlock</code></td><td>"다음에서 열기" 메뉴</td><td><span class="badge b-soon">곧</span></td></tr>
+          <tr><td>상태 배너</td><td><code>StatusBlock</code></td><td>중단/오류/compact</td><td><span class="badge b-soon">곧</span></td></tr>
+          <tr><td>이미지 그리드 · mermaid · 웹 미리보기 · todo · 수식</td><td>신규 Block + Renderer</td><td>레지스트리에 등록만</td><td><span class="badge b-fut">미래</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 08 PATTERNS -->
+  <section id="patterns">
+    <h2><span class="secn">08</span> Claude Code / Codex 참고 패턴 <span class="star">스샷</span></h2>
+    <p class="lede">제시하신 스크린샷의 화면 요소를 그대로 블록으로 흡수합니다. 공통 원칙: <b>버블 금지·풀폭 + 거터, 도구는 접히는 한 줄, 한눈에 훑기 우선.</b></p>
+    <div class="grid2">
+      <div>
+        <h3 style="margin-top:0">도구 액션 묶음 (스캔 가독성)</h3>
+        <div class="mock"><div class="body" style="padding:14px">
+          <div class="chip">▸ 📖 <span class="tw">읽기 파일 3개</span> <span class="dim">›</span></div>
+          <div class="chip">▸ ⌘ <span class="tw">실행됨 명령 2개</span> <span class="dim">›</span></div>
+          <div style="font-size:10.5px;color:var(--text-faint);margin-top:6px">연속 동종 도구를 한 줄로 묶고 접음 → 펼치면 개별 호출</div>
+        </div></div>
+        <h3>문서 / 첨부 카드</h3>
+        <div class="mock"><div class="body" style="padding:14px">
+          <div class="doccard"><div class="ic">📄</div><div><div style="color:var(--text);font-size:11.5px">SDUI_namespace_refactor_plan.md</div><div class="dim" style="font-size:10px">문서 · MD</div></div><div class="open">다음에서 열기 ⌄</div></div>
+        </div></div>
+      </div>
+      <div>
+        <h3 style="margin-top:0">파일 편집 diff 카드</h3>
+        <div class="mock"><div class="body" style="padding:14px">
+          <div class="diffcard">
+            <div class="dh">✏️ <span style="color:var(--text)">SidebarCell.swift</span> <span class="pls">+26</span> <span class="mns">−23</span></div>
+            <div class="dl del">- costLabel.textColor = .systemBlue</div>
+            <div class="dl add">+ costLabel.textColor = .systemOrange</div>
+          </div>
+          <div style="font-size:10.5px;color:var(--text-faint);margin-top:6px">"파일 N개 편집함" 그룹 헤더 아래 파일별 diff (스샷의 +26 −23 패턴)</div>
+        </div></div>
+        <h3>본문 테이블 (리치 렌더)</h3>
+        <div class="mock"><div class="body" style="padding:14px">
+          <div class="gridtbl">
+            <div class="tr head"><div class="td">라이브러리</div><div class="td">버전</div><div class="td">용도</div></div>
+            <div class="tr"><div class="td">GRDB.swift</div><div class="td">7.11.0</div><div class="td">SQLite 인덱스</div></div>
+            <div class="tr"><div class="td">Sparkle</div><div class="td">2.9.1</div><div class="td">자동 업데이트</div></div>
+          </div>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 09 -->
+  <section id="curation">
+    <h2><span class="secn">09</span> 큐레이션 — 3-Tier 점진 공개</h2>
+    <p class="lede">"한눈에 훑기" = 기본은 압축(스캔 라인), 펼침은 on-demand.</p>
+    <div class="card">
+      <table>
+        <thead><tr><th style="width:20%">Tier</th><th style="width:34%">대상</th><th>표시 방식</th></tr></thead>
+        <tbody>
+          <tr><td><span class="t1">Tier 1 · 항상 펼침</span></td><td>내 프롬프트 · 모델 최종 답변 · 오류/중단/압축</td><td>강조 카드 + 마크다운(테이블 포함) + 첨부 칩 / 사유 배너</td></tr>
+          <tr><td><span class="t2">Tier 2 · 기본 접힘</span></td><td>도구 묶음 · 사고 · 서브에이전트 · 파일 diff · 문서 카드</td><td>아이콘 + 한 줄 요약 → 펼치면 상세</td></tr>
+          <tr><td><span class="t3">Tier 3 · 숨김/토글</span></td><td>전체 도구 입출력 JSON · 시스템 메타 · compact 원문</td><td>헤더 토글 또는 Raw 탭 escape</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout"><span class="tag acc">통제감 · 배치</span><p>헤더에 <b>전역 토글 바</b>(도구 · thinking · 시스템) + Compact↔Full(영속). 기본 Compact로 전체 흐름을 5초에 훑게.</p></div>
+  </section>
+
+  <!-- 10 -->
+  <section id="tech">
+    <h2><span class="secn">10</span> 렌더링 기술 결정</h2>
+    <p class="lede"><b>NSStackView 카드 + selectable NSTextView 본문</b> 하이브리드로 수렴.</p>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table style="margin:0">
+        <thead><tr><th>옵션</th><th>장점</th><th>약점</th><th style="width:13%">판정</th></tr></thead>
+        <tbody>
+          <tr class="pick"><td><b>NSStackView 카드<br>+ NSTextView 본문</b></td><td>카드/접기/배지 레이아웃 자유 + 선택·복사·검색 네이티브. Tokens 탭 검증 패턴.</td><td>카드뷰 다종 → 공통 컨테이너로 추상화</td><td><span class="badge b-pick">채택</span></td></tr>
+          <tr><td>순수 NSTextView</td><td>의존성 0, 전체 선택</td><td>카드/버블 자유도 낮음</td><td><span class="badge b-no">대안</span></td></tr>
+          <tr><td>SwiftUI</td><td>사내 표준, List 가상화</td><td>블록 넘는 선택 불가 → 데이터 표면 가치와 충돌</td><td><span class="badge b-no">부분 흡수</span></td></tr>
+          <tr><td>WKWebView</td><td>마크다운/하이라이팅 쉬움</td><td><b>제로 네트워크 위반 가능</b>, 네이티브 톤·메모리 불리</td><td><span class="badge b-no">배제</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="callout good" style="margin:0"><span class="tag">마크다운/테이블</span><p><code>AttributedString(markdown:)</code>(의존성 0) 인라인 시작 → 블록(테이블/코드/리스트)은 자체 노드 렌더러. 표 정확도가 더 필요하면 Apple <code>swift-markdown</code> AST로 확장.</p></div>
+      <div class="callout" style="margin:0"><span class="tag acc">코드 하이라이팅</span><p>최후순위. 단색 모노 폴백 우선, 필요 시 <code>Splash</code>(순수 Swift) 1개만.</p></div>
+    </div>
+  </section>
+
+  <!-- 11 -->
+  <section id="proposals">
+    <h2><span class="secn">11</span> 관점별 안 요약</h2>
+    <p class="lede">각 서브에이전트의 독립 리서치. 전문은 같은 폴더의 마크다운 파일.</p>
+    <div class="grid2">
+      <div class="pcard"><div class="pn">제안 1 · 현재 구현 분석</div><h4>병목은 표현 레이어</h4><p>결함 지점 라인 단위 특정. nil 버그, 마크다운 0건, 모델은 이미 rich.</p><span class="link">proposal-1-current-implementation.md</span></div>
+      <div class="pcard"><div class="pn">제안 2 · 전용 앱 벤치마크</div><h4>버블 금지·풀폭·접히는 도구 카드</h4><p>Cursor/Zed/Cline 공통 패턴. Lupen은 큐레이션·비용 동행에 집중.</p><span class="link">proposal-2-competitor-benchmark.md</span></div>
+      <div class="pcard"><div class="pn">제안 3 · 가독성 & 큐레이션</div><h4>읽기폭·점진적 공개</h4><p>도구/사고 1줄 요약 후 접기, 연속 도구 묶기, 빈 상태 배너.</p><span class="link">proposal-3-readability-ux.md</span></div>
+      <div class="pcard"><div class="pn">제안 4 · 렌더링 기술</div><h4>카드 셸 + NSTextView 본문</h4><p>4후보 × 11기준 비교. 선택·복사 보존, 의존성 최소화.</p><span class="link">proposal-4-rendering-tech.md</span></div>
+      <div class="pcard"><div class="pn">제안 5 · 콘텐츠/정보 설계</div><h4>3-Tier + 도구 호출·결과 병합</h4><p>StoryBuilder 순수 헬퍼, 서브에이전트 인라인, 케이스별 빈 상태.</p><span class="link">proposal-5-content-curation.md</span></div>
+      <div class="pcard" style="border-color:var(--accent)"><div class="pn" style="color:var(--user)">+ 확장성 아키텍처</div><h4>렌더러 레지스트리 · 2단계 파이프라인</h4><p>표시 대상 추가를 "타입+등록"으로. 안전 폴백.</p><span class="link">extensibility-architecture.md</span></div>
+    </div>
+  </section>
+
+  <!-- 12 -->
+  <section id="roadmap">
+    <h2><span class="secn">12</span> 우선순위 로드맵</h2>
+    <p class="lede">체감 가치 큰 것부터, 리스크를 단계로 분산. 확장 골격(레지스트리)은 P2에서 함께 도입.</p>
+    <div class="card road">
+      <div class="step"><div class="pno">P0<small>응급</small></div><div><h4>showTurn nil 버그 수정</h4><p><code>turn.steps</code>의 <code>.reply</code>를 조립해 전달 → "(no response available)" 즉시 제거.</p><div class="effort">난이도 <b>낮음</b> · 체감 <b>최고</b></div></div></div>
+      <div class="step"><div class="pno">P0.5<small>토대</small></div><div><h4>StoryBuilder + ConversationBlock(protocol) + 테스트</h4><p>UI 무변경. 순수 변환·병합·상태 판정 + <b>블록 모델/확장 골격</b>을 corpus로 검증.</p><div class="effort">난이도 <b>중간</b> · UI 영향 <b>없음</b></div></div></div>
+      <div class="step"><div class="pno">P2<small>도약</small></div><div><h4>카드 스택 + 렌더러 레지스트리 (Tier1 우선)</h4><p>사용자 핵심 요구 충족. User/Assistant/도구 묶음/빈상태 + 본문 selectable + <b>레지스트리·폴백</b> 도입.</p><div class="effort">난이도 <b>상</b> · 임팩트 <b>최대</b></div></div></div>
+      <div class="step"><div class="pno">P3<small>rich</small></div><div><h4>마크다운 + 테이블 노드 렌더러 (의존성 0)</h4><p><code>AttributedString(markdown:)</code> + <code>TableNodeRenderer</code>(NSGridView) + 코드/리스트. 미지원은 평문 폴백.</p><div class="effort">난이도 <b>중간</b></div></div></div>
+      <div class="step"><div class="pno">P4–P5<small>확장</small></div><div><h4>diff 카드 · 문서 카드 · 서브에이전트 · 메타 동행 → 신택스/그 외 표시 대상</h4><p>각각 Extractor+Renderer 추가로 누적(기존 불변). Lupen 차별점인 비용 메타 동행 포함.</p><div class="effort">난이도 <b>상</b> · 점진</div></div></div>
+    </div>
+    <div class="callout good"><span class="tag">빠른 승리</span><p><b>P0만으로도</b> Turn 선택 시 빈 화면이 사라지고 전체 흐름이 보입니다 — "전용 앱 같다"의 절반.</p></div>
+  </section>
+
+  <!-- 13 -->
+  <section id="risks">
+    <h2><span class="secn">13</span> 리스크 & 열린 질문</h2>
+    <h3>주요 리스크와 완화</h3>
+    <div class="card" style="padding:8px 24px">
+      <ul class="clean">
+        <li><b>카드 스택 전환 복잡도.</b> → 동일선택 re-render 스킵(<span class="filepath">:537-545</span>) 유지 + 스크롤 앵커 보존.</li>
+        <li><b>전체 선택·복사 상실.</b> → 본문 selectable NSTextView + 헤더 "Copy as Markdown".</li>
+        <li><b>긴 Turn 성능.</b> → 접힌 블록 본문 lazy 생성 + Show more, 필요 시 가상화.</li>
+        <li><b>마크다운 오판(로그/JSON).</b> → 도구 출력은 마크다운 미적용, 답변 본문만.</li>
+        <li><b>확장이 성능/안정성 깨지 않게.</b> → 폴백 불변식(렌더러 없어도 평문), 뷰 풀링.</li>
+      </ul>
+    </div>
+    <h3>사용자 결정이 필요한 열린 질문</h3>
+    <div class="card" style="padding:8px 24px">
+      <div class="q"><span class="qn">Q1</span><div><b>Step 단독 선택 스코프</b> — 해당 Step만 vs Turn 전체+하이라이트? (의도는 Turn 중심을 시사)</div></div>
+      <div class="q"><span class="qn">Q2</span><div><b>P1 경유 여부</b> — 단일 TextView 유지한 중간 개선을 거칠지, P0 직후 바로 P2 카드 스택으로.</div></div>
+      <div class="q"><span class="qn">Q3</span><div><b>코드 신택스 하이라이팅</b> — <code>Splash</code> 의존성 추가 vs 단색 폴백. (현재 deps 3개)</div></div>
+      <div class="q"><span class="qn">Q4</span><div><b>읽기폭 클램프(~620pt)</b>가 한국어(CJK)에 적절한지 실측 조정.</div></div>
+    </div>
+  </section>
+
+  <footer>
+    Lupen · Conversation 탭 재설계 제안서 &nbsp;·&nbsp; 메인세션 + 5개 서브에이전트 병렬 리서치 종합<br>
+    전문: <code>docs/design/conversation-redesign/</code> (proposal-0~5 · synthesis · extensibility-architecture) &nbsp;·&nbsp; 작성: jaden
+  </footer>
+
+</div>
+</body>
+</html>
