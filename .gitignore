@@ -43,6 +43,7 @@ test-artifacts/
 /plan.md
 /plan-*.md
 /research-*.md
+/research-*.html
 
 # Internal research docs — not for the public repo
 docs/Research/

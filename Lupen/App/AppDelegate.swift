@@ -187,6 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var reportsWindowController: ReportsWindowController?
     private var verifyCostsWindowController: VerifyCostsWindowController?
     private var preferencesWindowController: PreferencesWindowController?
+    private var manageSessionsWindowController: ManageSessionsWindowController?
+    /// Store cache the manage window uses to read an inactive provider's index.
+    private var managedReadStores: [ProviderKind: ProviderStore] = [:]
     private var verifyUsageMenuItem: NSMenuItem?
     private lazy var logWindowController = LogWindowController(logger: LoggerService.shared)
     private let smokeTest = LaunchSmokeTestConfig.current()
@@ -911,6 +914,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         verifyUsageMenuItem = verifyItem
         windowMenu.addItem(verifyItem)
 
+        let manageItem = NSMenuItem(
+            title: "Manage Sessions & Storage…",
+            action: #selector(openManageSessions(_:)),
+            keyEquivalent: "m"
+        )
+        manageItem.keyEquivalentModifierMask = [.command, .shift]
+        manageItem.target = self
+        windowMenu.addItem(manageItem)
+
         // The log window is a maintainer-only diagnostic; its entry points
         // (this menu item and the dashboard toolbar button) ship in DEBUG
         // builds only.
@@ -997,6 +1009,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             verifyCostsWindowController = VerifyCostsWindowController(store: store)
         }
         verifyCostsWindowController?.show()
+    }
+
+    // MARK: - Manage Sessions & Storage window
+
+    @objc func openManageSessions(_ sender: Any?) {
+        if manageSessionsWindowController == nil {
+            manageSessionsWindowController = ManageSessionsWindowController(
+                provider: settings.activeProvider,
+                isIndexingProvider: { [weak self] in self?.store.isIndexing ?? false },
+                storeProvider: { [weak self] provider in self?.manageProviderStore(for: provider) },
+                contextProvider: { [weak self] provider in self?.manageContext(for: provider) },
+                requestRescan: { [weak self] provider in self?.sqliteFirstStartups[provider]?.coordinator.requestRescan() },
+                rebuildIndex: { [weak self] provider in self?.sqliteFirstStartups[provider]?.rebuildIndex() }
+            )
+        }
+        manageSessionsWindowController?.show()
+    }
+
+    /// Provides the indexing store for the active provider, or opens that
+    /// provider's index DB directly (for read/delete consistency) when
+    /// inactive. Lets the manage window show Claude Code tab sessions even
+    /// when started on codex.
+    private func manageProviderStore(for provider: ProviderKind) -> ProviderStore? {
+        if let startup = sqliteFirstStartups[provider] {
+            // Prefer the active store, and release any read-only pool opened
+            // while inactive (avoids file-handle/WAL leaks — a GRDB pool closes
+            // when its ref is released).
+            managedReadStores[provider] = nil
+            return startup.coordinator.store
+        }
+        if let cached = managedReadStores[provider] {
+            return cached
+        }
+        let url = LupenPaths.indexDatabaseURL(for: provider)
+        guard FileManager.default.fileExists(atPath: url.path),
+              let database = try? ProviderDatabase.open(at: url) else { return nil }
+        let store = ProviderStore(database: database)
+        managedReadStores[provider] = store
+        return store
+    }
+
+    private func manageContext(for provider: ProviderKind) -> ManageProviderContext? {
+        switch provider {
+        case .claudeCode:
+            return .claude(projectsDirectory: FileDiscovery().projectsDirectory)
+        case .codex:
+            return .codex(codexHome: CodexSessionDiscovery(codexHome: codexHomeURLFromSettings()).codexHome)
+        }
     }
 
     // MARK: - Preferences window
