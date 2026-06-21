@@ -70,6 +70,38 @@ enum ConversationInlineText {
         }
         return result
     }
+
+    /// 마크다운 인라인(볼드/기울임/인라인코드/링크)을 base 폰트에 반영한
+    /// attributed 문자열. 블록 구조(테이블/코드블록/리스트)는 호출부가 이미
+    /// `MarkdownParser`로 노드 분리했으므로 여기서는 인라인만 처리한다.
+    /// 파싱 실패 시 평문(`body`)으로 폴백한다.
+    static func markdownInline(_ text: String, font: NSFont, color: NSColor) -> NSAttributedString {
+        var options = AttributedString.MarkdownParsingOptions()
+        options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+        options.failurePolicy = .returnPartiallyParsedIfPossible
+        guard let parsed = try? AttributedString(markdown: text, options: options) else {
+            return body(text, font: font, color: color)
+        }
+        let result = NSMutableAttributedString(parsed)
+        let full = NSRange(location: 0, length: result.length)
+        result.addAttribute(.foregroundColor, value: color, range: full)
+        result.enumerateAttribute(.inlinePresentationIntent, in: full) { value, range, _ in
+            var resolved = font
+            if let intent = value as? InlinePresentationIntent {
+                if intent.contains(.stronglyEmphasized) {
+                    resolved = NSFontManager.shared.convert(resolved, toHaveTrait: .boldFontMask)
+                }
+                if intent.contains(.emphasized) {
+                    resolved = NSFontManager.shared.convert(resolved, toHaveTrait: .italicFontMask)
+                }
+                if intent.contains(.code) {
+                    resolved = .monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+                }
+            }
+            result.addAttribute(.font, value: resolved, range: range)
+        }
+        return result
+    }
 }
 
 /// 카드 상단의 역할/메타 헤더("You", "✦ Assistant · opus-4-8 · $0.37").

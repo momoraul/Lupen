@@ -229,11 +229,11 @@ final class BlockRendererRegistry {
 
 ### Phase C — 리치 콘텐츠 노드 렌더러
 **진행 방식**: 표시 대상별 렌더러를 레지스트리에 "등록만"으로 추가 — 확장 골격이 실제로 동작하는지 검증되는 페이즈. 마크다운 오판(로그/JSON을 표로) 방지: 도구 출력엔 마크다운 미적용.
-- [ ] C1. `TableNodeRenderer`(NSGridView) — 본문 테이블.
-- [ ] C2. `CodeBlockNodeRenderer` — 단색 모노 + Copy 버튼 (Q3, 신택스는 인터페이스만).
-- [ ] C3. List/Quote 노드 렌더러. 미지원 노드는 평문 폴백.
-- [ ] C4. 읽기폭 620pt clamp + 줄간격 1.45 토큰(`DetailStyles+Conversation`).
-- [ ] C5. 파서/노드 매핑 테스트(테이블 셀 파싱, 펜스, 미지원 폴백) → 피드백 루프 클린 → 커밋.
+- [x] C1. `MarkdownTableView`(NSGridView) — 본문 테이블(헤더 강조).
+- [x] C2. `CodeBlockView` — 단색 모노 + 옅은 배경 + Copy 버튼 (Q3, 신택스는 인터페이스만).
+- [x] C3. List/Quote/Heading/Paragraph 노드 렌더(`ConversationMarkdownView`). 미지원 노드는 문단 폴백. 인라인 강조는 best-effort(`markdownInline`).
+- [~] C4. 읽기폭 620pt clamp → **Phase E로 이관**(레이아웃 회귀 위험, 노드별 폭 정책 동반 필요).
+- [x] C5. 파서 100% + 노드 렌더 스모크(테이블/코드/리스트/heading/인용) 통과. 마크다운 오판 방지: 도구 출력엔 미적용(AssistantText 본문만).
 **게이트**: 파서 커버리지, 폴백 동작, 마크다운 오판 없음.
 
 ### Phase D — 도구/구조 카드 + 큐레이션 컨트롤

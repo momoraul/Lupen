@@ -23,10 +23,7 @@ struct AssistantTextCardRenderer: BlockRenderer {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(ConversationCardHeader.make(headerText(for: block), color: .controlAccentColor))
 
-        let font = NSFont.systemFont(ofSize: 13)
-        let body = ConversationBodyTextView.make()
-        body.onRevealFile = context.revealInFinder
-        body.setBody(ConversationInlineText.body(block.markdown, font: font, color: .labelColor))
+        let body = ConversationMarkdownView(markdown: block.markdown, onRevealFile: context.revealInFinder)
         stack.addArrangedSubview(body)
         body.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
