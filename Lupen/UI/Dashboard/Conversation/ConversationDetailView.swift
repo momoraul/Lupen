@@ -19,6 +19,10 @@ final class ConversationDetailView: NSView {
     private let stack = NSStackView()
     private let registry = BlockRendererRegistry()
     private let renderContext = RenderContext()
+    /// 현재 렌더된 카드들의 leading/trailing 제약 — 재구성 시 일괄 비활성(A1).
+    /// 추적 없이 매번 activate만 하면 빠른 Turn 전환 때 dangling 제약이 쌓여
+    /// 레이아웃이 꼬인다.
+    private var cardConstraints: [NSLayoutConstraint] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -63,15 +67,10 @@ final class ConversationDetailView: NSView {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // 문서 뷰를 클립 뷰에 leading/trailing/top/width/height까지 완전히
-            // 고정한다. width만 묶으면 documentView의 위치(leading/top)가
-            // ambiguous해져 레이아웃이 깨지고 패널 너비 리사이즈가 막히는
-            // 원인이 된다(이전 너비 고정 버그의 진짜 원인 — work_3 검증 패턴).
-            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            // 문서 뷰는 스크롤 뷰포트 폭을 따라간다(세로 스크롤) — TokensDetailView와
+            // 동일한 검증된 패턴. 너비 고정의 진짜 원인은 이 제약이 아니라 본문
+            // NSTextView의 가로 밀어냄이었으므로, 본문을 NSTextField로 교체해 해결한다.
             documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            documentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
 
             stack.topAnchor.constraint(equalTo: documentView.topAnchor),
             stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
@@ -105,6 +104,9 @@ final class ConversationDetailView: NSView {
     /// `DetailViewController`가 동일 Step 재바인드에서 처리하므로 — 회귀
     /// 유지 — 여기서는 매 호출 재구성한다.)
     func configure(blocks: [ConversationBlock]) {
+        // 카드 제약을 명시적으로 비활성·정리(A1): 누적 dangling 제약 방지.
+        NSLayoutConstraint.deactivate(cardConstraints)
+        cardConstraints.removeAll()
         for view in stack.arrangedSubviews {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -113,8 +115,10 @@ final class ConversationDetailView: NSView {
         for block in blocks {
             let view = registry.view(for: block, context: renderContext)
             stack.addArrangedSubview(view)
-            view.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
-            view.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
+            let leading = view.leadingAnchor.constraint(equalTo: stack.leadingAnchor)
+            let trailing = view.trailingAnchor.constraint(equalTo: stack.trailingAnchor)
+            cardConstraints.append(contentsOf: [leading, trailing])
+            NSLayoutConstraint.activate([leading, trailing])
             if block.isHighlighted, highlightedView == nil { highlightedView = view }
         }
         layoutSubtreeIfNeeded()
