@@ -16,7 +16,14 @@ import Foundation
 ///      parse, so cache-hit cold launches render without flashing the
 ///      slug while the parse runs.
 ///   4. `session.slug` — Claude Code's human-readable slug.
-///   5. Session id prefix — last-resort stub so the row is never empty.
+///   5. `session.firstPrompt` — the cleaned first user prompt
+///      (importer-derived, `sessions.first_prompt`). Codex sessions have
+///      no `slug` and may lack a `cachedTitle` when `session_index.jsonl`
+///      carries no thread name; this is what keeps them from falling all
+///      the way to the id prefix. Deliberately placed *below* `slug` so
+///      Claude sessions keep their existing slug label — only sessions
+///      with neither a cached title nor a slug reach it.
+///   6. Session id prefix — last-resort stub so the row is never empty.
 ///
 /// Kept pure (no `store` / no UI framework) so regressions in the
 /// priority order surface as unit test failures rather than manual
@@ -37,6 +44,7 @@ enum SessionTitleResolver {
         case firstTurn    // live `firstTurnPreview`
         case cached       // `session.cachedTitle`
         case slug         // `session.slug`
+        case firstPrompt  // `session.firstPrompt` — importer-derived
         case idPrefix     // fallback
     }
 
@@ -50,7 +58,9 @@ enum SessionTitleResolver {
     /// already trims leading/trailing whitespace before storing, so
     /// `session.customTitle` with only outer whitespace cannot reach here;
     /// but internal spacing ("plan  7") is preserved exactly as typed by
-    /// the user. Same for `firstTurnPreview` / `cachedTitle`.
+    /// the user. Same for `firstTurnPreview` / `cachedTitle`. `firstPrompt`
+    /// is the exception: it is importer-extracted (not user-authored), so its
+    /// outer whitespace is trimmed before display (inner spacing preserved).
     static func resolve(
         session: Session,
         firstTurnPreview: String?
@@ -68,6 +78,16 @@ enum SessionTitleResolver {
         }
         if let slug = session.slug, !slug.isEmpty {
             return Resolved(text: slug, origin: .slug)
+        }
+        if let firstPrompt = session.firstPrompt {
+            // Unlike customTitle / firstTurnPreview (user-authored, kept
+            // verbatim), firstPrompt is importer-extracted message text — trim
+            // outer whitespace so a prompt that starts with blank lines or
+            // pasted indentation doesn't render as an empty/indented row.
+            let trimmed = firstPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return Resolved(text: trimmed, origin: .firstPrompt)
+            }
         }
         return Resolved(text: String(session.rawSessionId.prefix(8)), origin: .idPrefix)
     }
