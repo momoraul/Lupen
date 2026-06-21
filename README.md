@@ -183,6 +183,21 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.6.0 — _2026-06-21_
+
+Reimagines the Conversation tab as a rich Turn reader.
+
+- **Conversation rich reader** — a selected Turn now renders as a card stack
+  (prompt → thinking → tools → reply) instead of two plain-text blocks, with
+  rich markdown (headings, lists, code blocks with copy, tables, quotes) and
+  multi-line selection.
+- **Curation** — thinking and tool calls collapse into one-line disclosures you
+  can expand; interrupted / API-error / compacted turns show a clear status
+  banner instead of "(no response available)".
+- **Readability** — prompts and replies stand out as cards while side content
+  (thinking, tools) fades into indented lines; the selected step is highlighted
+  and scrolled into view.
+
 ### v0.5.0 — _2026-06-21_
 
 Adds a storage manager and sharpens the Codex sidebar.
