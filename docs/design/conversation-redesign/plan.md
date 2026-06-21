@@ -209,12 +209,12 @@ final class BlockRendererRegistry {
 
 ### Phase A — 빌더 + 모델 + 테스트 (UI 무변경, 안전 머지)
 **진행 방식**: 순수 로직만. UI를 건드리지 않으므로 회귀 위험이 가장 낮다 → 여기서 **커버리지 ~100%를 확보**해 이후 페이즈의 토대를 굳힌다. 도메인 모델 변경 없음(기존 `Step`/`Turn` 읽기만).
-- [ ] A1. `ConversationBlock` protocol + `Tier`/`Role` enum + 구체 블록 타입 정의.
-- [ ] A2. `MarkdownNode` + `MarkdownParser`(인라인 AttributedString + 블록 분리: 테이블/코드펜스/리스트).
-- [ ] A3. `ConversationStoryBuilder.build(...)` + extractor 체인(Prompt/Reply, ToolGroup 병합, Thinking, Status). SubAgent/Diff는 스텁.
-- [ ] A4. 단위 테스트(LupenTests): 7절 케이스 전부 + 엣지/실패 경로. **Builder/Parser/Extractor 커버리지 ~100%.**
-- [ ] A5. 피드백 루프(0.5의 5) 클린 → 커밋.
-**게이트**: 커버리지 ~100%(핵심), 설계 분리(순수/뷰).
+- [x] A1. `ConversationBlock` protocol + `Tier`/`Role` enum + 구체 블록 타입 정의.
+- [x] A2. `MarkdownNode` + `MarkdownParser`(블록 분리: 테이블/코드펜스/리스트/인용/헤딩).
+- [x] A3. `ConversationStoryBuilder.build(turn:neighbor:highlight:)` 단일 패스(Prompt/Reply, ToolGroup 병합·동종 묶음, Thinking, Status). SubAgent/Diff는 Phase D.
+- [x] A4. 단위 테스트(LupenTests/Domain/Conversation/Story): 36 케이스 + 엣지. **Builder/Parser/Block 커버리지 100% 측정 확인.**
+- [x] A5. 피드백 루프 클린 → 커밋.
+**게이트**: 커버리지 100%(달성), 설계 분리(순수/뷰), 신규 경고 0.
 
 ### Phase B — 카드 스택 렌더러 골격 (Tier1 우선, 최종 구조)
 **진행 방식**: 표현 레이어를 처음 바꾸는 페이즈 → **회귀 게이트가 최우선.** 기존 `ConversationDetailView`를 교체하기 전에 이식할 동작(0.6 회귀 목록)을 테스트/체크리스트로 고정한 뒤 교체한다. 교체 후 **앱 실행 육안 확인** 필수.
@@ -292,3 +292,8 @@ final class BlockRendererRegistry {
 ## 결정 로그 (자율 진행 중 채택한 기본값을 여기 누적)
 
 - _2026-06-21_: 초기 계획 확정(Q1~Q4 반영). 이후 구현 중 선택은 이 아래에 한 줄씩 추가.
+- _Phase A_: 빌더는 `BlockExtractor` 프로토콜 체인 대신 **단일 패스 + 내부 헬퍼**로 구현(과도한 추상화 회피). 확장은 렌더러 레지스트리(Phase B) + Phase D extractor로 달성.
+- _Phase A_: `build` 시그니처에서 서브에이전트 파라미터는 제외(`turn:neighbor:highlight:`만). 서브에이전트는 Phase D에서 파라미터·호출부 함께 도입.
+- _Phase A_: `.thought`의 텍스트/`thinkingText`는 둘 다 `ThinkingBlock`(secondary)으로. 중간 설명을 1급 답변과 구분.
+- _Phase A_: 커버리지 측정은 `xcrun xccov view --report <bundle>`(옵션 없이) 사용 — `--files-for-target`는 새 xcresult에서 빈 출력.
+- _Phase A_: 무관한 pre-existing 실패 `SessionCostLabelTests.testNormalCostTextAndColor`(사이드바 색 재설계 #11 이후 미갱신) 1건을 현재 프로덕션 동작에 맞춰 별도 커밋으로 수정(사용자 승인). 전체 그린은 Phase E 최종에서 재검증.
