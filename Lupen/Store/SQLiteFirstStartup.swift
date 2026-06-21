@@ -42,7 +42,8 @@ enum SessionShellProjection {
                 shellStartTime: row.startTime,
                 shellEndTime: row.endTime,
                 shellSlug: row.slug,
-                shellGitBranch: row.lastGitBranch
+                shellGitBranch: row.lastGitBranch,
+                shellFirstPrompt: row.firstPrompt
             )
         }
     }

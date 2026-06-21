@@ -127,6 +127,11 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// the value; we intentionally keep the window after a collapse so the
     /// user's explicit expand isn't silently thrown away.
     private var visibleCountByProject: [String: Int] = [:]
+    /// Per-project "is the zero-cost hidden bucket currently expanded".
+    /// Missing ⇒ collapsed (default). In-memory only: hidden sessions start
+    /// collapsed on every launch, mirroring the pagination window's first
+    /// page. Part of `RenderSnapshot` so a toggle invalidates the guard.
+    private var expandedHiddenByProject: Set<String> = []
     /// Page size for the per-group paginated list. Five keeps the sidebar
     /// compact — a "heavy" project day (50+ sessions) doesn't dominate the
     /// pane just because one group got unlucky activity bursts.
@@ -171,6 +176,10 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         /// Pagination window per project key. Required so "Show N more"
         /// clicks invalidate the snapshot automatically.
         var visibleCounts: [String: Int]
+        /// Per-project "is the zero-cost hidden bucket expanded". Must be in
+        /// the fingerprint so toggling it invalidates the guard and rebuilds
+        /// the tree (otherwise the show/hide click would silently no-op).
+        var hiddenExpanded: Set<String>
         /// Current filter applied to the session list. Must be in the
         /// fingerprint so a query change (or any other filter tweak)
         /// automatically invalidates the guard and forces a rebuild.
@@ -225,6 +234,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     private var lastRenderSnapshot: RenderSnapshot = RenderSnapshot(
         sessionFingerprints: [],
         visibleCounts: [:],
+        hiddenExpanded: [],
         filter: SessionFilter(),
         layoutMode: .grouped,
         activeProvider: .claudeCode,
@@ -279,6 +289,9 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         }
         outlineView.onShowLessClicked = { [weak self] projectKey in
             self?.collapseToFirstPage(for: projectKey)
+        }
+        outlineView.onHiddenToggleClicked = { [weak self] projectKey in
+            self?.toggleHiddenSessions(for: projectKey)
         }
         // Context menu on session rows: the outline view subclass handles
         // locating the row under the cursor; we build the menu here so all
@@ -574,7 +587,14 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     private static func providerModeAccentColor(for kind: ProviderKind) -> NSColor {
         switch kind {
         case .claudeCode:
-            return NSColor(srgbRed: 0.98, green: 0.74, blue: 0.38, alpha: 1.0)
+            return NSColor(name: "ClaudeProviderAccent") { appearance in
+                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                // Dark keeps the bright amber; light deepens it so the tinted
+                // background / border / icon don't wash out on a white sidebar.
+                return isDark
+                    ? NSColor(srgbRed: 0.98, green: 0.74, blue: 0.38, alpha: 1.0)
+                    : NSColor(srgbRed: 0.812, green: 0.478, blue: 0.071, alpha: 1.0)
+            }
         case .codex:
             return NSColor(srgbRed: 0.22, green: 0.78, blue: 0.58, alpha: 1.0)
         }
@@ -789,34 +809,58 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// detail pane even though nothing was actually deleted.
     private func buildGroupedTree(
         from sessions: [Session],
-        previousSelectionId: String?
+        previousSelectionId: String?,
+        now: Date
     ) -> TreeBuild {
         let groups = SessionGrouping.groupByProject(sessions)
 
-        if let prevId = previousSelectionId {
-            for group in groups {
-                if let idx = group.sessions.firstIndex(where: { $0.id == prevId }) {
-                    let projectKey = providerProjectKey(group.key)
-                    let current = visibleCountByProject[projectKey] ?? Self.pageSize
-                    if idx >= current {
-                        // Round up to the next page boundary so the window
-                        // doesn't settle on an awkward "off-by-one" size.
-                        let needed = idx + 1
-                        let rounded = ((needed + Self.pageSize - 1) / Self.pageSize) * Self.pageSize
-                        visibleCountByProject[projectKey] = rounded
-                    }
-                    break
-                }
-            }
-        }
+        // Hiding is suppressed while a search/filter is active — the user is
+        // looking for something and must see every match. The current
+        // selection is always kept visible so a reload never drops the row
+        // being viewed (it stays in the `shown` bucket via `keepShown`).
+        let hidingEnabled = currentFilter.isEmpty
+        let keepShown: Set<String> = previousSelectionId.map { [$0] } ?? []
 
         var roots: [SessionListNode] = []
         var nodesById: [String: SessionListNode] = [:]
         for group in groups {
             let projectKey = providerProjectKey(group.key)
+            let partition = SessionListHiddenPartition.partition(
+                sessions: group.sessions,
+                hidingEnabled: hidingEnabled,
+                keepShown: keepShown,
+                isLowSignal: { self.isLowSignalSession($0, now: now) }
+            )
+            let hiddenCount = partition.hidden.count
+            let expanded = expandedHiddenByProject.contains(projectKey)
+
+            // Collapsed → only the non-hidden sessions. Expanded → low-signal
+            // sessions rejoin the list in their natural endTime order (mixed
+            // back in, not a separate section). Either way pagination applies
+            // to the resulting list.
+            let displaySessions = (hiddenCount == 0 || expanded)
+                ? group.sessions
+                : partition.shown
+
+            // Pagination window auto-grow: if the previously selected session
+            // is in this group's displayed list but past the visible window
+            // (a few fresh sessions streamed in while the user was idle),
+            // bump the window so the selection stays in view.
+            if let prevId = previousSelectionId,
+               let idx = displaySessions.firstIndex(where: { $0.id == prevId }) {
+                let current = visibleCountByProject[projectKey] ?? Self.pageSize
+                if idx >= current {
+                    // Round up to the next page boundary so the window
+                    // doesn't settle on an awkward "off-by-one" size.
+                    let needed = idx + 1
+                    let rounded = ((needed + Self.pageSize - 1) / Self.pageSize) * Self.pageSize
+                    visibleCountByProject[projectKey] = rounded
+                }
+            }
+
             let windowSize = visibleCountByProject[projectKey] ?? Self.pageSize
             let win = SessionPagination.window(
-                sessions: group.sessions,
+                sessions: displaySessions,
                 visibleCount: windowSize,
                 pageSize: Self.pageSize
             )
@@ -835,10 +879,15 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
                 )))
             }
 
+            // The hidden (zero-cost) sessions are toggled from a small button
+            // in the group header (which carries `hiddenCount` / `expanded`),
+            // not a separate row — so nothing extra is appended for them here.
             let header = SessionListNode(kind: .projectGroup(
                 key: projectKey,
                 label: group.label,
-                count: group.sessions.count
+                count: group.sessions.count,
+                hiddenCount: hiddenCount,
+                expanded: expanded
             ))
             header.children = children
             roots.append(header)
@@ -947,6 +996,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             lastRenderSnapshot = RenderSnapshot(
                 sessionFingerprints: [],
                 visibleCounts: [:],
+                hiddenExpanded: [],
                 filter: currentFilter,
                 layoutMode: layoutMode,
                 activeProvider: store.activeProvider,
@@ -1000,6 +1050,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
                 )
             },
             visibleCounts: visibleCountByProject,
+            hiddenExpanded: expandedHiddenByProject,
             filter: currentFilter,
             layoutMode: layoutMode,
             activeProvider: activeProvider,
@@ -1049,7 +1100,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         case .grouped:
             let built = buildGroupedTree(
                 from: sessionsForGrouping,
-                previousSelectionId: selectionToRestore
+                previousSelectionId: selectionToRestore,
+                now: now
             )
             newRoots = built.roots
             newSessionNodes = built.nodesById
@@ -1345,8 +1397,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? SessionListNode else { return nil }
         switch node.kind {
-        case .projectGroup(_, let label, let count):
-            return headerCell(label: label, count: count)
+        case .projectGroup(_, let label, let count, let hiddenCount, let expanded):
+            return headerCell(label: label, count: count, hiddenCount: hiddenCount, expanded: expanded)
         case .session(let session):
             return sessionCell(for: session)
         case .loadMore(_, let nextStep, let remainingAfterStep, let canCollapse):
@@ -1424,6 +1476,32 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// the detail pane.
     private func collapseToFirstPage(for projectKey: String) {
         visibleCountByProject.removeValue(forKey: projectKey)
+        reloadData()
+    }
+
+    /// Store-backed wrapper over `SessionListHiddenPartition.isLowSignal` —
+    /// supplies the session's cost aggregate and active state. Only sessions
+    /// that ran requests with no billable cost (Codex auto-review threads,
+    /// unpriced models) and are idle get hidden; active sessions and sessions
+    /// with no aggregate (cold load / no requests, e.g. empty `/clear` shells)
+    /// stay visible. `now` is the reload's shared timestamp so this active
+    /// check matches the render fingerprint's `isActive` exactly.
+    private func isLowSignalSession(_ session: Session, now: Date) -> Bool {
+        SessionListHiddenPartition.isLowSignal(
+            costUSD: store.sessionListAggregates[session.id]?.costUSD,
+            isActive: store.isSessionActive(session, now: now)
+        )
+    }
+
+    /// Flip this group's hidden (zero-cost) bucket open/closed and rebuild.
+    /// `expandedHiddenByProject` is part of `RenderSnapshot`, so mutating it
+    /// is enough — the snapshot guard inside `reloadData` detects the change.
+    private func toggleHiddenSessions(for projectKey: String) {
+        if expandedHiddenByProject.contains(projectKey) {
+            expandedHiddenByProject.remove(projectKey)
+        } else {
+            expandedHiddenByProject.insert(projectKey)
+        }
         reloadData()
     }
 
@@ -1576,7 +1654,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
 
     // MARK: - Cell factories
 
-    private func headerCell(label: String, count: Int) -> NSView {
+    private func headerCell(label: String, count: Int, hiddenCount: Int, expanded: Bool) -> NSView {
         let id = NSUserInterfaceItemIdentifier("SessionGroupHeaderCell")
         let cell: SessionListGroupHeaderView
         if let reused = outlineView.makeView(withIdentifier: id, owner: nil) as? SessionListGroupHeaderView {
@@ -1585,7 +1663,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             cell = SessionListGroupHeaderView()
             cell.identifier = id
         }
-        cell.configure(label: label, count: count)
+        cell.configure(label: label, count: count, hiddenCount: hiddenCount, expanded: expanded)
         return cell
     }
 
@@ -1679,9 +1757,12 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// to call it per-session on every reload; the heavy lifting is in
     /// the pure helper so the priority order is unit-tested.
     private func sessionTitleResolved(for session: Session) -> SessionTitleResolver.Resolved {
-        // SQLite-first shells carry the live first-prompt derivation in
-        // `cachedTitle` (importer-updated); the legacy in-memory Turn
-        // preview died with the graphs (5.3).
+        // The legacy in-memory Turn preview died with the graphs (5.3), so
+        // `firstTurnPreview` stays nil here. The first-prompt fallback now
+        // rides on the session shell (`session.firstPrompt`, from
+        // `sessions.first_prompt`) and is applied inside the resolver's
+        // ladder, below `slug` — so Codex sessions with no thread-name
+        // index entry show their first prompt instead of the id prefix.
         SessionTitleResolver.resolve(session: session, firstTurnPreview: nil)
     }
 
@@ -2087,7 +2168,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
 private final class SessionListNode: NSObject {
 
     enum Kind {
-        case projectGroup(key: String, label: String, count: Int)
+        case projectGroup(key: String, label: String, count: Int, hiddenCount: Int, expanded: Bool)
         case session(Session)
         /// "Show N more" / "Show less" action row at the bottom of a
         /// paginated group. Clicking the main area bumps the group's
@@ -2111,7 +2192,7 @@ private final class SessionListNode: NSObject {
 
     var identityKey: String {
         switch kind {
-        case .projectGroup(let key, _, _): return "group:\(key)"
+        case .projectGroup(let key, _, _, _, _): return "group:\(key)"
         case .session(let s):                return "session:\(s.id)"
         case .loadMore(let key, _, _, _):    return "loadMore:\(key)"
         }
@@ -2119,7 +2200,7 @@ private final class SessionListNode: NSObject {
 
     /// Project key iff this node is a group header.
     var projectKey: String? {
-        if case .projectGroup(let k, _, _) = kind { return k }
+        if case .projectGroup(let k, _, _, _, _) = kind { return k }
         return nil
     }
 
@@ -2184,6 +2265,24 @@ final class SessionCellView: NSTableCellView {
     /// title truncates first (lower compression resistance), the price
     /// stays. Mirrors the turn outline's Cost column tinting via CostColor.
     private let costLabel = NSTextField(labelWithString: "")
+    /// The cost label's non-selected color (from `CostColor`). Stored so the
+    /// selection handler can restore it after the row deselects.
+    private var costBaseColor: NSColor = .labelColor
+
+    /// NSTableCellView repaints system-colored labels (title, branch, meta)
+    /// white when the row is selected, but the cost label uses a custom
+    /// accent the automatic path leaves untouched — which read as a bug on
+    /// the highlight. Mirror the title: a selected row shows the cost in the
+    /// selection text color so the two match; otherwise the accent/dim color.
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { applyCostLabelColor() }
+    }
+
+    private func applyCostLabelColor() {
+        costLabel.textColor = backgroundStyle == .emphasized
+            ? .alternateSelectedControlTextColor
+            : costBaseColor
+    }
     private let activeDot = NSView()
     /// `person.2.fill` glyph + small count rendered as a paired view in the
     /// trailing edge of the meta row when the session has spawned at least
@@ -2287,7 +2386,8 @@ final class SessionCellView: NSTableCellView {
         costLabel.alignment = .right
         costLabel.lineBreakMode = .byClipping
         costLabel.maximumNumberOfLines = 1
-        // 비용은 핵심 지표 — 절대 안 잘리고 폭도 안 늘어남. 제목이 먼저 …로 양보.
+        // Cost is the key metric — never clipped, never grows the column; the
+        // title yields to a … truncation first.
         costLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         costLabel.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -2458,10 +2558,14 @@ final class SessionCellView: NSTableCellView {
         }
 
         // Dedicated cost label on the title row.
-        let costDisplay = CostColor.display(cost: totalCost, confidence: costConfidence)
+        let costDisplay = CostColor.display(
+            cost: totalCost, confidence: costConfidence, accentColor: CostColor.accent
+        )
         costLabel.stringValue = costDisplay.text
-        costLabel.textColor = costDisplay.color
-        // Codex 신뢰도 설명 툴팁은 비용 라벨로 이동(이전엔 metaLabel에 붙였음).
+        costBaseColor = costDisplay.color
+        applyCostLabelColor()
+        // The Codex confidence tooltip now lives on the cost label (it was on
+        // metaLabel before).
         costLabel.toolTip = Self.costTooltip(provider: provider, confidence: costConfidence)
 
         // Format numbers tersely. "·" is a middle-dot separator — more compact
@@ -2569,7 +2673,9 @@ final class SessionCellView: NSTableCellView {
     // MARK: - Test seams
 
     func costDisplayForTesting(totalCost: Double, confidence: CostConfidence) -> (text: String, color: NSColor) {
-        let d = CostColor.display(cost: totalCost, confidence: confidence)
+        let d = CostColor.display(
+            cost: totalCost, confidence: confidence, accentColor: CostColor.accent
+        )
         return (d.text, d.color)
     }
     var costLabelCompressionResistanceForTesting: Float {
@@ -2592,6 +2698,17 @@ private final class SessionListGroupHeaderView: NSTableCellView {
     private let iconView = NSImageView()
     private let labelField = NSTextField(labelWithString: "")
     private let countField = NSTextField(labelWithString: "")
+    /// Right-aligned [count][hiddenToggle] row. The stack drops the toggle
+    /// from layout when hidden, so the count sits flush right when a group
+    /// has no low-signal sessions.
+    private let rightStack = NSStackView()
+
+    /// To the RIGHT of the count: "(N)" — how many low-signal (zero-cost)
+    /// sessions are collapsed; clicking toggles them in place. Detached from
+    /// the stack (isHidden) when the group has none.
+    /// `SessionListOutlineView.mouseDown` hit-tests `isHiddenToggleHit(at:)`
+    /// to route a click here instead of expand/collapse.
+    private let hiddenToggle = NSTextField(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -2618,7 +2735,18 @@ private final class SessionListGroupHeaderView: NSTableCellView {
         countField.textColor = .tertiaryLabelColor
         countField.alignment = .right
 
-        for v in [iconView, labelField, countField] {
+        hiddenToggle.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        hiddenToggle.alignment = .right
+
+        rightStack.orientation = .horizontal
+        rightStack.spacing = 5
+        rightStack.alignment = .centerY
+        rightStack.addArrangedSubview(countField)
+        rightStack.addArrangedSubview(hiddenToggle)
+        rightStack.setContentHuggingPriority(.required, for: .horizontal)
+        rightStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        for v in [iconView, labelField, rightStack] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -2631,20 +2759,46 @@ private final class SessionListGroupHeaderView: NSTableCellView {
 
             labelField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             labelField.centerYAnchor.constraint(equalTo: centerYAnchor),
-            labelField.trailingAnchor.constraint(lessThanOrEqualTo: countField.leadingAnchor, constant: -6),
+            labelField.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -6),
 
-            countField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            countField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            rightStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            rightStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
-    func configure(label: String, count: Int) {
+    func configure(label: String, count: Int, hiddenCount: Int, expanded: Bool) {
         labelField.stringValue = label.uppercased()
         countField.stringValue = "\(count)"
-        // VoiceOver: announce "PROJECT, 12 sessions, disclosure triangle"
-        // so users can tell what they're toggling without reading screen.
-        setAccessibilityLabel("\(label), \(count) sessions")
+
+        if hiddenCount > 0 {
+            hiddenToggle.isHidden = false
+            // Brighter when expanded (sessions shown), dimmer when collapsed.
+            // Parenthesised so it reads apart from the group's session count.
+            hiddenToggle.textColor = expanded ? .secondaryLabelColor : .tertiaryLabelColor
+            hiddenToggle.stringValue = "(\(hiddenCount))"
+            let action = expanded ? "Hide" : "Show"
+            setAccessibilityLabel("\(label), \(count) sessions, \(action) \(hiddenCount) hidden")
+        } else {
+            hiddenToggle.isHidden = true
+            hiddenToggle.stringValue = ""
+            setAccessibilityLabel("\(label), \(count) sessions")
+        }
         setAccessibilityRole(.disclosureTriangle)
+    }
+
+    /// True when `point` (in this cell's coordinate space) lands on the
+    /// hidden-toggle. `SessionListOutlineView.mouseDown` uses this to route
+    /// the click to the toggle instead of expanding/collapsing.
+    func isHiddenToggleHit(at point: NSPoint) -> Bool {
+        guard !hiddenToggle.isHidden else { return false }
+        // Convert the toggle's bounds into cell coordinates (it lives inside
+        // `rightStack`), plus a few points of horizontal grace.
+        // Accept a click inside the toggle's bounds (in cell coordinates;
+        // it lives inside `rightStack`) plus a small grace margin on both
+        // axes, so the compact pill is comfortable to hit without claiming
+        // the full-height header band the way an x-only test did.
+        let rect = convert(hiddenToggle.bounds, from: hiddenToggle).insetBy(dx: -4, dy: -4)
+        return rect.contains(point)
     }
 }
 
@@ -3049,6 +3203,10 @@ final class SessionListOutlineView: NSOutlineView {
     /// `SessionListViewController.viewDidLoad`.
     var onShowLessClicked: ((String) -> Void)?
 
+    /// Invoked when the user clicks a `.hiddenToggle` row. Argument is the
+    /// owning project key. Wired up by `SessionListViewController.viewDidLoad`.
+    var onHiddenToggleClicked: ((String) -> Void)?
+
     /// Builds the right-click context menu for a session leaf. Wired up by
     /// `SessionListViewController.viewDidLoad` — returning `nil` from the
     /// closure (or leaving it unset) suppresses the menu for that row.
@@ -3084,8 +3242,16 @@ final class SessionListOutlineView: NSOutlineView {
         let row = self.row(at: point)
         if row >= 0, let node = self.item(atRow: row) as? SessionListNode {
             switch node.kind {
-            case .projectGroup:
-                if isItemExpanded(node) {
+            case .projectGroup(let key, _, _, let hiddenCount, _):
+                // A click on the header's hidden-toggle button flips the
+                // group's zero-cost bucket; clicks elsewhere on the header
+                // expand/collapse the group as usual.
+                if hiddenCount > 0,
+                   let cell = view(atColumn: 0, row: row, makeIfNecessary: false)
+                    as? SessionListGroupHeaderView,
+                   cell.isHiddenToggleHit(at: cell.convert(point, from: self)) {
+                    onHiddenToggleClicked?(key)
+                } else if isItemExpanded(node) {
                     animator().collapseItem(node)
                 } else {
                     animator().expandItem(node)

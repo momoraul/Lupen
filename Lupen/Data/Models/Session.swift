@@ -59,6 +59,16 @@ struct Session: Sendable, Codable, Identifiable, Equatable {
     /// when `requests` is empty so the sidebar branch row renders.
     var shellGitBranch: String? = nil
 
+    /// Importer-extracted `sessions.first_prompt` (the cleaned first user
+    /// message) carried by the shell projection. Unlike `slug` /
+    /// `lastGitBranch` there is no request-level source for it, so it is
+    /// surfaced directly through the `firstPrompt` computed property and
+    /// consumed by `SessionTitleResolver` as the sidebar title fallback
+    /// below `slug`. This lets Codex sessions that have no
+    /// `session_index.jsonl` thread name show their first prompt instead
+    /// of the raw id prefix; Claude sessions keep their `slug` ordering.
+    var shellFirstPrompt: String? = nil
+
     var scopedId: String {
         ProviderScopedID(provider: provider, rawSessionId: rawSessionId).value
     }
@@ -75,7 +85,8 @@ struct Session: Sendable, Codable, Identifiable, Equatable {
         shellStartTime: Date? = nil,
         shellEndTime: Date? = nil,
         shellSlug: String? = nil,
-        shellGitBranch: String? = nil
+        shellGitBranch: String? = nil,
+        shellFirstPrompt: String? = nil
     ) {
         let parsed = ProviderScopedID(value: id)
         self.id = id
@@ -90,6 +101,7 @@ struct Session: Sendable, Codable, Identifiable, Equatable {
         self.shellEndTime = shellEndTime
         self.shellSlug = shellSlug
         self.shellGitBranch = shellGitBranch
+        self.shellFirstPrompt = shellFirstPrompt
     }
 
     init(from decoder: Decoder) throws {
@@ -112,11 +124,12 @@ struct Session: Sendable, Codable, Identifiable, Equatable {
         self.shellEndTime = try c.decodeIfPresent(Date.self, forKey: .shellEndTime)
         self.shellSlug = try c.decodeIfPresent(String.self, forKey: .shellSlug)
         self.shellGitBranch = try c.decodeIfPresent(String.self, forKey: .shellGitBranch)
+        self.shellFirstPrompt = try c.decodeIfPresent(String.self, forKey: .shellFirstPrompt)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, provider, rawSessionId, requests, projectPath, isVisibleInSessionList, cachedTitle, customTitle
-        case shellStartTime, shellEndTime, shellSlug, shellGitBranch
+        case shellStartTime, shellEndTime, shellSlug, shellGitBranch, shellFirstPrompt
     }
 
     var startTime: Date? { requests.first?.timestamp ?? shellStartTime }
@@ -138,6 +151,12 @@ struct Session: Sendable, Codable, Identifiable, Equatable {
     var slug: String? {
         requests.first(where: { $0.slug != nil })?.slug ?? shellSlug
     }
+
+    /// The cleaned first user prompt for this session, carried by the
+    /// SQLite-first shell projection. No request-level source exists, so
+    /// this simply exposes `shellFirstPrompt`; legacy in-memory sessions
+    /// leave it nil. Used only as a sidebar title fallback below `slug`.
+    var firstPrompt: String? { shellFirstPrompt }
 
     func withProviderScopedIdentity() -> Session {
         let provider = ProviderScopedID(value: id)?.provider ?? self.provider
@@ -165,7 +184,8 @@ struct Session: Sendable, Codable, Identifiable, Equatable {
             shellStartTime: shellStartTime,
             shellEndTime: shellEndTime,
             shellSlug: shellSlug,
-            shellGitBranch: shellGitBranch
+            shellGitBranch: shellGitBranch,
+            shellFirstPrompt: shellFirstPrompt
         )
     }
 }

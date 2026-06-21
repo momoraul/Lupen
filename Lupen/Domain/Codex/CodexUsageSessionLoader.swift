@@ -362,7 +362,7 @@ enum CodexUsageSessionLoader {
             )
         }
 
-        let merged = mergeSessionPieces(pieces, titleIndex: titleIndex)
+        let merged = mergeSessionPieces(pieces)
 
         let result = CodexUsageSessionLoadResult(
             codexHome: discovery.codexHome,
@@ -1019,10 +1019,7 @@ enum CodexUsageSessionLoader {
         return decodedLines.isEmpty ? nil : decodedLines
     }
 
-    static func mergeSessionPieces(
-        _ pieces: [LoadedSessionPiece],
-        titleIndex: CodexSessionTitleIndex
-    ) -> MergedSessions {
+    static func mergeSessionPieces(_ pieces: [LoadedSessionPiece]) -> MergedSessions {
         guard !pieces.isEmpty else {
             return MergedSessions(
                 sessions: [],
