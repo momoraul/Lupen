@@ -170,6 +170,61 @@ enum ConversationStoryBuilder {
             ), at: 0)
         }
 
-        return blocks
+        return Self.collapsedIfTooLarge(blocks)
+    }
+
+    // MARK: - Curation cap for very large turns
+
+    /// Above this many blocks, fold the bulk of the turn.
+    private static let maxBlocksBeforeCollapse = 200
+    /// Keep the first block (usually the prompt) as an individual card.
+    private static let keepHead = 1
+    /// Keep the last few blocks (the final answer / status) as individual cards.
+    private static let keepTail = 3
+
+    /// Curation cap for very large turns. Folding only the secondary (tool/
+    /// thinking) runs was not enough — codex turns interleave *thousands* of
+    /// `AssistantTextBlock` replies (primary), which kept exploding the card/
+    /// view count and froze the UI. So above the cap we keep the first block and
+    /// the last few (the final answer/status) as individual cards, and fold
+    /// EVERYTHING in between — tools, thinking, and intermediate replies — into
+    /// one `ActivityGroupBlock` (a collapsed summary, expandable to one text
+    /// view). Full per-step detail stays available in the Raw / Usage tabs.
+    private static func collapsedIfTooLarge(_ blocks: [ConversationBlock]) -> [ConversationBlock] {
+        guard blocks.count > max(maxBlocksBeforeCollapse, keepHead + keepTail + 1) else {
+            return blocks
+        }
+        let head = Array(blocks.prefix(keepHead))
+        let tail = Array(blocks.suffix(keepTail))
+        let middle = Array(blocks[keepHead..<(blocks.count - keepTail)])
+        let group = ActivityGroupBlock(
+            id: "ag:\(middle.first?.id ?? blocks[0].id)",
+            summaryLines: middle.map { summaryLine(for: $0) },
+            isHighlighted: middle.contains { $0.isHighlighted }
+        )
+        return head + [group] + tail
+    }
+
+    private static func summaryLine(for block: ConversationBlock) -> String {
+        switch block {
+        case let group as ToolGroupBlock:
+            let head = group.count == 1 ? group.toolName : "\(group.toolName) ×\(group.count)"
+            let first = group.calls.first?.inputSummary ?? ""
+            return first.isEmpty ? head : "\(head)  \(first)"
+        case let thinking as ThinkingBlock:
+            return "[thinking] \(firstLine(thinking.text))"
+        case let reply as AssistantTextBlock:
+            return "[reply] \(firstLine(reply.markdown))"
+        case let prompt as UserPromptBlock:
+            return "[you] \(prompt.text.map(firstLine) ?? "")"
+        case let status as StatusBlock:
+            return status.kind.message
+        default:
+            return block.plainTextFallback
+        }
+    }
+
+    private static func firstLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
     }
 }

@@ -11,8 +11,6 @@ import AppKit
 /// add a value here when a new renderer needs one.
 @MainActor
 struct RenderContext {
-    /// Max reading-column width for the body (Q4). Used by Phase C node rendering.
-    var readingWidth: CGFloat = 620
     /// Reveal a file path (image/attachment) in Finder on click. Ported for parity.
     var revealInFinder: (URL) -> Void = { url in
         let path = url.path
