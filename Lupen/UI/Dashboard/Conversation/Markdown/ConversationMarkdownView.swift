@@ -86,13 +86,22 @@ final class ConversationMarkdownView: NSStackView {
     }
 
     private static func list(_ items: [(marker: String, text: String)]) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.35
+        paragraph.headIndent = 16        // 줄바꿈된 둘째 줄은 마커 너비만큼 들여쓰기(행잉 인덴트)
+        paragraph.firstLineHeadIndent = 0
         let result = NSMutableAttributedString()
         for (index, item) in items.enumerated() {
             if index > 0 { result.append(NSAttributedString(string: "\n")) }
-            result.append(NSAttributedString(string: item.marker, attributes: [
+            let line = NSMutableAttributedString(string: item.marker, attributes: [
                 .font: bodyFont, .foregroundColor: NSColor.secondaryLabelColor,
-            ]))
-            result.append(ConversationInlineText.markdownInline(item.text, font: bodyFont, color: .labelColor))
+            ])
+            line.append(ConversationInlineText.markdownInline(item.text, font: bodyFont, color: .labelColor))
+            line.addAttribute(
+                .paragraphStyle, value: paragraph,
+                range: NSRange(location: 0, length: line.length)
+            )
+            result.append(line)
         }
         return result
     }
