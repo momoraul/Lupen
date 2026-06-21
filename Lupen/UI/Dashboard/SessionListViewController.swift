@@ -587,7 +587,14 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     private static func providerModeAccentColor(for kind: ProviderKind) -> NSColor {
         switch kind {
         case .claudeCode:
-            return NSColor(srgbRed: 0.98, green: 0.74, blue: 0.38, alpha: 1.0)
+            return NSColor(name: "ClaudeProviderAccent") { appearance in
+                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                // Dark keeps the bright amber; light deepens it so the tinted
+                // background / border / icon don't wash out on a white sidebar.
+                return isDark
+                    ? NSColor(srgbRed: 0.98, green: 0.74, blue: 0.38, alpha: 1.0)
+                    : NSColor(srgbRed: 0.812, green: 0.478, blue: 0.071, alpha: 1.0)
+            }
         case .codex:
             return NSColor(srgbRed: 0.22, green: 0.78, blue: 0.58, alpha: 1.0)
         }

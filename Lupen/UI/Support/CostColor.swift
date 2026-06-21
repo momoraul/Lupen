@@ -13,17 +13,27 @@ struct CostDisplay {
 /// exactly — extracted here so the sidebar can reuse them without
 /// duplicating the ladder. Pure function; no AppKit state beyond `NSColor`.
 enum CostColor {
-    /// Accent for "real" amounts (>= $1): a warm gold that reads a touch
-    /// apart from the title's `labelColor` without clashing, so the title /
-    /// cost boundary stays legible even when they nearly touch. Dynamic per
-    /// appearance — soft gold on dark, deep amber on light (the light dollar
-    /// has to darken since yellow washes out on a white row). Amounts under
-    /// $1 stay dim (`tertiaryLabelColor`); N/A and warnings keep their orange.
+    /// Accent for "real" amounts (>= $1) on the sidebar. Light mode uses the
+    /// systemOrange value (clear on white). Dark mode uses a softer tan that
+    /// sits closer to the title's near-white label color, so on a dark row the
+    /// cost reads as a gentle highlight rather than a hot orange. Same warm
+    /// family as the partial/warning orange; N/A is the slate `unavailable`.
     nonisolated(unsafe) static let accent = NSColor(name: "CostAccent") { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         return isDark
-            ? NSColor(srgbRed: 230.0 / 255, green: 206.0 / 255, blue: 130.0 / 255, alpha: 1)
-            : NSColor(srgbRed: 176.0 / 255, green: 122.0 / 255, blue: 10.0 / 255, alpha: 1)
+            ? NSColor(srgbRed: 232.0 / 255, green: 185.0 / 255, blue: 126.0 / 255, alpha: 1)
+            : NSColor(srgbRed: 255.0 / 255, green: 149.0 / 255, blue: 0.0, alpha: 1)
+    }
+
+    /// Unavailable cost (N/A): a calm slate that reads as "not measured"
+    /// rather than competing with the orange cost figures, and distinct from
+    /// the plain dim gray used for sub-$1 amounts. Dynamic per appearance —
+    /// lighter slate on dark, deeper slate on light.
+    nonisolated(unsafe) static let unavailable = NSColor(name: "CostUnavailable") { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(srgbRed: 144.0 / 255, green: 160.0 / 255, blue: 180.0 / 255, alpha: 1)
+            : NSColor(srgbRed: 94.0 / 255, green: 110.0 / 255, blue: 130.0 / 255, alpha: 1)
     }
 
     static func display(
@@ -35,7 +45,7 @@ enum CostColor {
         accentColor: NSColor? = nil
     ) -> CostDisplay {
         if confidence == .unavailable {
-            return CostDisplay(text: "\(prefix)N/A", color: .systemOrange)
+            return CostDisplay(text: "\(prefix)N/A", color: unavailable)
         }
         guard cost > 0 else {
             return CostDisplay(text: "\(prefix)\(CostFormatter.emDash)", color: .quaternaryLabelColor)
