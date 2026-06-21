@@ -7,11 +7,11 @@
 
 import AppKit
 
-/// 마크다운 본문을 블록 노드별 전용 뷰로 렌더하는 수직 스택.
-///
-/// `MarkdownParser.parse`로 블록을 분리한 뒤 노드 종류마다 뷰를 만든다
-/// (테이블=NSGridView, 코드블록=모노+Copy, 리스트/헤딩/인용/문단). 새 노드
-/// 종류가 생기면 `view(for:)`에 case를 더하고, 미지원 노드는 문단으로 폴백한다.
+/// 마크다운 본문 렌더 — 연속된 텍스트 계열 노드(헤딩/문단/리스트/인용)는 하나의
+/// attributed 문자열로 합쳐 **단일 `NSTextView`** 로 그린다. 노드마다 별도
+/// NSTextView로 쪼개면 노드 경계를 넘는 드래그 선택이 불가했던 문제(한 step 안의
+/// 여러 줄 선택 안 됨)를 해결한다. 테이블/코드블록만 전용 뷰(NSGridView / Copy
+/// 버튼 코드 카드)로 분리해 리치 렌더를 유지한다.
 @MainActor
 final class ConversationMarkdownView: NSStackView {
 
@@ -24,92 +24,78 @@ final class ConversationMarkdownView: NSStackView {
         alignment = .leading
         spacing = 8
         translatesAutoresizingMaskIntoConstraints = false
-        for node in MarkdownParser.parse(markdown) {
-            let view = makeView(for: node)
-            addArrangedSubview(view)
-            view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
-        }
+        build(markdown: markdown)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    private func makeView(for node: MarkdownNode) -> NSView {
+    private func build(markdown: String) {
+        var run = NSMutableAttributedString()
+
+        func flushRun() {
+            guard run.length > 0 else { return }
+            let textView = ConversationBodyTextView.make()
+            textView.onRevealFile = onRevealFile
+            textView.setBody(run)
+            addArranged(textView)
+            run = NSMutableAttributedString()
+        }
+
+        for node in MarkdownParser.parse(markdown) {
+            switch node {
+            case .codeBlock(_, let code):
+                flushRun()
+                addArranged(CodeBlockView(code: code))
+            case .table(let headers, let rows):
+                flushRun()
+                addArranged(MarkdownTableView(headers: headers, rows: rows))
+            default:
+                // 텍스트 계열 노드는 누적해 하나의 NSTextView로 → 통째 드래그 선택.
+                if run.length > 0 { run.append(NSAttributedString(string: "\n\n")) }
+                run.append(Self.attributed(for: node))
+            }
+        }
+        flushRun()
+    }
+
+    private func addArranged(_ view: NSView) {
+        addArrangedSubview(view)
+        view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+    }
+
+    // MARK: - 텍스트 노드 → attributed
+
+    private static func attributed(for node: MarkdownNode) -> NSAttributedString {
         switch node {
-        case .paragraph(let text):
-            return paragraphView(text, font: Self.bodyFont)
-
         case .heading(let level, let text):
-            return paragraphView(text, font: Self.headingFont(level: level))
-
+            return ConversationInlineText.markdownInline(text, font: headingFont(level: level), color: .labelColor)
+        case .paragraph(let text):
+            return ConversationInlineText.markdownInline(text, font: bodyFont, color: .labelColor)
         case .bulletList(let items):
-            return listView(items.map { "•  \($0)" })
-
+            return list(items.map { (marker: "•  ", text: $0) })
         case .orderedList(let items):
-            return listView(items.enumerated().map { "\($0.offset + 1).  \($0.element)" })
-
-        case .codeBlock(_, let code):
-            return CodeBlockView(code: code)
-
-        case .table(let headers, let rows):
-            return MarkdownTableView(headers: headers, rows: rows)
-
+            return list(items.enumerated().map { (marker: "\($0.offset + 1).  ", text: $0.element) })
         case .quote(let lines):
-            return quoteView(lines.joined(separator: "\n"))
+            return ConversationInlineText.markdownInline(
+                lines.joined(separator: "\n"), font: bodyFont, color: .secondaryLabelColor
+            )
+        case .codeBlock, .table:
+            return NSAttributedString() // 별도 뷰로 처리되어 여기 도달하지 않음
         }
     }
 
-    // MARK: - Node views
-
-    private func paragraphView(_ text: String, font: NSFont) -> NSView {
-        let body = ConversationBodyTextView.make()
-        body.onRevealFile = onRevealFile
-        body.setBody(ConversationInlineText.markdownInline(text, font: font, color: .labelColor))
-        return body
-    }
-
-    private func listView(_ lines: [String]) -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 3
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        for line in lines {
-            let item = ConversationBodyTextView.make()
-            item.onRevealFile = onRevealFile
-            item.setBody(ConversationInlineText.markdownInline(line, font: Self.bodyFont, color: .labelColor))
-            stack.addArrangedSubview(item)
-            item.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    private static func list(_ items: [(marker: String, text: String)]) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        for (index, item) in items.enumerated() {
+            if index > 0 { result.append(NSAttributedString(string: "\n")) }
+            result.append(NSAttributedString(string: item.marker, attributes: [
+                .font: bodyFont, .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+            result.append(ConversationInlineText.markdownInline(item.text, font: bodyFont, color: .labelColor))
         }
-        return stack
+        return result
     }
-
-    private func quoteView(_ text: String) -> NSView {
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        let bar = NSView()
-        bar.wantsLayer = true
-        bar.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(bar)
-        let body = ConversationBodyTextView.make()
-        body.onRevealFile = onRevealFile
-        body.setBody(ConversationInlineText.markdownInline(text, font: Self.bodyFont, color: .secondaryLabelColor))
-        container.addSubview(body)
-        NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            bar.topAnchor.constraint(equalTo: container.topAnchor),
-            bar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            bar.widthAnchor.constraint(equalToConstant: 3),
-            body.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 8),
-            body.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            body.topAnchor.constraint(equalTo: container.topAnchor),
-            body.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        return container
-    }
-
-    // MARK: - Fonts
 
     static let bodyFont: NSFont = .systemFont(ofSize: 13)
 
@@ -126,7 +112,6 @@ final class ConversationMarkdownView: NSStackView {
 }
 
 /// 코드블록 — 모노 텍스트 + 옅은 배경 + 좌측 accent 바 + 우상단 Copy 버튼.
-/// 신택스 하이라이팅은 범위 밖(Q3, 단색); 노드 렌더 인터페이스만 열어둔다.
 @MainActor
 final class CodeBlockView: NSView {
 
@@ -168,7 +153,6 @@ final class CodeBlockView: NSView {
         NSLayoutConstraint.activate([
             text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            // 본문은 Copy 버튼 아래에서 시작 — 우상단 버튼과 코드 첫 줄이 겹치던 문제 해소.
             text.topAnchor.constraint(equalTo: copyButton.bottomAnchor, constant: 2),
             text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             copyButton.topAnchor.constraint(equalTo: topAnchor, constant: 6),
@@ -211,7 +195,6 @@ final class MarkdownTableView: NSView {
                 color: bold ? .labelColor : .secondaryLabelColor,
                 alignment: .left
             )
-            // 넓은 표가 카드/패널 폭을 밀어내지 않도록 셀도 말줄임 + 낮은 compression.
             label.lineBreakMode = .byTruncatingTail
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             return label
