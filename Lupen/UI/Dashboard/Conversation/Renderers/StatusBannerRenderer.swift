@@ -21,7 +21,7 @@ struct StatusBannerRenderer: BlockRenderer {
         label.maximumNumberOfLines = 0
         label.lineBreakMode = .byWordWrapping
 
-        let card = CardContainerView(role: .system, highlighted: block.isHighlighted)
+        let card = CardContainerView(role: .system, tier: block.tier, highlighted: block.isHighlighted)
         card.setBody(label)
         return card
     }

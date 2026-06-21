@@ -76,7 +76,7 @@ struct PlainTextBlockRenderer {
         )
         label.maximumNumberOfLines = 0
         label.lineBreakMode = .byWordWrapping
-        let card = CardContainerView(role: block.role, highlighted: block.isHighlighted)
+        let card = CardContainerView(role: block.role, tier: block.tier, highlighted: block.isHighlighted)
         card.setBody(label)
         return card
     }

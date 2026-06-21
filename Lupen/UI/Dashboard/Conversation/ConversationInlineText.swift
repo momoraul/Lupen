@@ -23,7 +23,11 @@ enum ConversationInlineText {
         font: NSFont,
         color: NSColor
     ) -> NSAttributedString {
-        let baseAttrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.35
+        let baseAttrs: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: color, .paragraphStyle: paragraph,
+        ]
         let sources = ImageSourceFormatter.extractSources(from: text)
         let refs = ImageSourceFormatter.extractRefs(from: text)
 
@@ -85,6 +89,9 @@ enum ConversationInlineText {
         let result = NSMutableAttributedString(parsed)
         let full = NSRange(location: 0, length: result.length)
         result.addAttribute(.foregroundColor, value: color, range: full)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.35
+        result.addAttribute(.paragraphStyle, value: paragraph, range: full)
         result.enumerateAttribute(.inlinePresentationIntent, in: full) { value, range, _ in
             var resolved = font
             if let intent = value as? InlinePresentationIntent {

@@ -22,7 +22,7 @@ struct ThinkingCardRenderer: BlockRenderer {
             ))
             return body
         }
-        let card = CardContainerView(role: .assistant, highlighted: block.isHighlighted)
+        let card = CardContainerView(role: .assistant, tier: block.tier, highlighted: block.isHighlighted)
         card.setBody(disclosure)
         return card
     }

@@ -48,7 +48,7 @@ struct UserPromptCardRenderer: BlockRenderer {
         stack.addArrangedSubview(body)
         body.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        let card = CardContainerView(role: .user, highlighted: block.isHighlighted)
+        let card = CardContainerView(role: .user, tier: block.tier, highlighted: block.isHighlighted)
         card.setBody(stack)
         return card
     }

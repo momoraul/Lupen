@@ -7,22 +7,25 @@
 
 import AppKit
 
-/// 모든 대화 카드의 공통 셸: 역할 거터 + 옅은 표면(배경 틴트 + 보더) + 본문 슬롯.
+/// 모든 대화 카드의 공통 셸: 역할 거터 + tier별 표면(배경/보더/거터폭) + 본문 슬롯.
 ///
-/// 역할(user/assistant/system/subAgent)별로 거터색·표면 틴트를 분기해 카드가
-/// 한 덩어리로 뭉치지 않고 시각적으로 분리되게 한다(버블 금지·풀폭 + 좌측 거터).
-/// 선택된 Step 카드는 accent 보더로 강조. 다크↔라이트 전환 시
-/// `viewDidChangeEffectiveAppearance`로 layer 색을 재계산한다.
+/// 역할(user/assistant/system/subAgent)로 색을, tier(primary/secondary)로 강도를
+/// 나눠 중요한 대화(프롬프트·최종 답변=primary)가 보조(도구·사고=secondary)보다
+/// 또렷하게 읽히도록 한다. 선택된 Step 카드는 accent 보더로 강조.
+/// 표면색은 전경(labelColor 등) 저알파 오버레이라 다크/라이트 모두 배경보다 대비를
+/// 유지한다(이전 textBackgroundColor 방식의 다크모드 함몰 수정).
 @MainActor
 final class CardContainerView: NSView {
 
     private let gutter = NSView()
     private let bodyContainer = NSView()
     private let role: BlockRole
+    private let tier: BlockTier
     private let highlighted: Bool
 
-    init(role: BlockRole, highlighted: Bool) {
+    init(role: BlockRole, tier: BlockTier, highlighted: Bool) {
         self.role = role
+        self.tier = tier
         self.highlighted = highlighted
         super.init(frame: .zero)
         wantsLayer = true
@@ -36,7 +39,7 @@ final class CardContainerView: NSView {
 
     private func setup() {
         layer?.cornerRadius = 8
-        layer?.borderWidth = highlighted ? 1.5 : 0.5
+        layer?.borderWidth = highlighted ? 1.5 : (tier == .primary ? 0.75 : 0.4)
 
         gutter.wantsLayer = true
         gutter.layer?.cornerRadius = 1.5
@@ -46,16 +49,17 @@ final class CardContainerView: NSView {
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bodyContainer)
 
+        let gutterWidth: CGFloat = tier == .primary ? 4 : 3
         NSLayoutConstraint.activate([
-            gutter.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            gutter.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            gutter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            gutter.widthAnchor.constraint(equalToConstant: 3),
+            gutter.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            gutter.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            gutter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            gutter.widthAnchor.constraint(equalToConstant: gutterWidth),
 
             bodyContainer.leadingAnchor.constraint(equalTo: gutter.trailingAnchor, constant: 10),
             bodyContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            bodyContainer.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            bodyContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            bodyContainer.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            bodyContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
         ])
     }
 
@@ -64,11 +68,10 @@ final class CardContainerView: NSView {
         applyColors()
     }
 
-    /// 현재 외관(다크/라이트) 기준으로 layer 색을 재계산. `cgColor`는 정적이라
-    /// 외관 전환 시 자동 갱신되지 않으므로 명시적으로 다시 칠한다.
+    /// 현재 외관(다크/라이트) 기준으로 layer 색 재계산.
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = Self.surfaceColor(role: role, highlighted: highlighted).cgColor
+            layer?.backgroundColor = Self.surfaceColor(role: role, tier: tier, highlighted: highlighted).cgColor
             layer?.borderColor = (highlighted
                 ? Self.accentColor(for: role).withAlphaComponent(0.7)
                 : NSColor.separatorColor.withAlphaComponent(0.5)).cgColor
@@ -76,7 +79,6 @@ final class CardContainerView: NSView {
         }
     }
 
-    /// 본문 뷰를 슬롯에 채운다(기존 본문은 교체).
     func setBody(_ view: NSView) {
         bodyContainer.subviews.forEach { $0.removeFromSuperview() }
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -92,21 +94,24 @@ final class CardContainerView: NSView {
     /// 역할 강조색(거터 + 강조 보더). systemYellow는 다크 대비가 나빠 피한다.
     static func accentColor(for role: BlockRole) -> NSColor {
         switch role {
-        case .user:     return .systemTeal
+        case .user:      return .systemTeal
         case .assistant: return .controlAccentColor
-        case .system:   return .systemOrange
-        case .subAgent: return .systemPurple
+        case .system:    return .systemOrange
+        case .subAgent:  return .systemPurple
         }
     }
 
-    /// 역할별 옅은 표면 틴트. 선택 카드는 accent 틴트로 더 또렷하게.
-    static func surfaceColor(role: BlockRole, highlighted: Bool) -> NSColor {
+    /// 역할×tier 표면 틴트. 전경색 저알파 오버레이라 다크/라이트 모두 배경 대비 유지.
+    /// primary(프롬프트·답변)는 진하게, secondary(도구·사고)는 옅게 → 위계.
+    static func surfaceColor(role: BlockRole, tier: BlockTier, highlighted: Bool) -> NSColor {
         if highlighted { return accentColor(for: role).withAlphaComponent(0.12) }
+        let base: NSColor
         switch role {
-        case .user:      return NSColor.systemTeal.withAlphaComponent(0.06)
-        case .assistant: return NSColor.textBackgroundColor.withAlphaComponent(0.35)
-        case .system:    return NSColor.systemOrange.withAlphaComponent(0.06)
-        case .subAgent:  return NSColor.systemPurple.withAlphaComponent(0.06)
+        case .user:      base = .systemTeal
+        case .assistant: base = .labelColor   // 중립 전경 — 다크=흰 저알파, 라이트=검정 저알파
+        case .system:    base = .systemOrange
+        case .subAgent:  base = .systemPurple
         }
+        return base.withAlphaComponent(tier == .primary ? 0.06 : 0.03)
     }
 }

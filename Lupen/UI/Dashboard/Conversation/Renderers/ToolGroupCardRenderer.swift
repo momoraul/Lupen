@@ -15,7 +15,7 @@ struct ToolGroupCardRenderer: BlockRenderer {
         let disclosure = DisclosureCardView(summary: summary(block)) {
             detail(block)
         }
-        let card = CardContainerView(role: .assistant, highlighted: block.isHighlighted)
+        let card = CardContainerView(role: .assistant, tier: block.tier, highlighted: block.isHighlighted)
         card.setBody(disclosure)
         return card
     }
