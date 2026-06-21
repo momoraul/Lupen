@@ -67,11 +67,28 @@ final class ConversationDetailView: NSView {
             documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
 
             stack.topAnchor.constraint(equalTo: documentView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+            // 읽기 컬럼(Q4): 좁으면 패널 폭을 따라가고(좌우 inset), 넓으면 620pt에서
+            // 멈춰 가운데 정렬 — 와이드 모니터에서 본문이 '읽히지 않는 벽'이 되는 것 방지.
+            stack.centerXAnchor.constraint(equalTo: documentView.centerXAnchor),
+            stack.leadingAnchor.constraint(
+                greaterThanOrEqualTo: documentView.leadingAnchor,
+                constant: DetailStyles.horizontalInset
+            ),
+            stack.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maxReadingWidth),
         ])
+        // 좁을 때 패널 폭(−좌우 inset)을 선호하되, 위 `<= 620`이 우선이라
+        // 넓어지면 620에서 멈춘다.
+        let preferredWidth = stack.widthAnchor.constraint(
+            equalTo: documentView.widthAnchor,
+            constant: -DetailStyles.horizontalInset * 2
+        )
+        preferredWidth.priority = .defaultHigh
+        preferredWidth.isActive = true
     }
+
+    /// 읽기 컬럼 최대 폭(Q4). 본문은 이 폭 안에서 줄바꿈/말줄임한다.
+    private static let maxReadingWidth: CGFloat = 620
 
     /// 큐레이션된 블록들로 카드 스택을 다시 그린다. (선택 스킵은 상위
     /// `DetailViewController`가 동일 Step 재바인드에서 처리하므로 — 회귀
