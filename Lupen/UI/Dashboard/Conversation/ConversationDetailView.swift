@@ -48,7 +48,7 @@ final class ConversationDetailView: NSView {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 16, right: 0)
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 0, bottom: 24, right: 0)
         stack.translatesAutoresizingMaskIntoConstraints = false
         documentView.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(stack)
@@ -78,12 +78,16 @@ final class ConversationDetailView: NSView {
 
             // stack은 documentView 폭을 그대로(==) 따른다. 읽기폭 클램프·centerX·
             // min/max 없음 — 카드는 스스로 폭 제약을 갖지 않고 컨테이너를 따른다.
-            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: DetailStyles.horizontalInset),
-            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -DetailStyles.horizontalInset),
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: Self.contentHorizontalInset),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -Self.contentHorizontalInset),
             stack.topAnchor.constraint(equalTo: documentView.topAnchor),
             stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
         ])
     }
+
+    /// Conversation 콘텐츠 좌우 여백 — 카드가 패널 가장자리에 붙어 답답해 보이지
+    /// 않도록 공용 inset(16)보다 넉넉히 준다.
+    private static let contentHorizontalInset: CGFloat = 24
 
     /// 큐레이션된 블록들로 카드 스택을 다시 그린다. (선택 스킵은 상위
     /// `DetailViewController`가 동일 Step 재바인드에서 처리하므로 — 회귀
