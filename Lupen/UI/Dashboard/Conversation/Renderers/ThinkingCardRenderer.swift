@@ -32,10 +32,12 @@ struct ThinkingCardRenderer: BlockRenderer {
             .split(whereSeparator: \.isNewline)
             .first
             .map(String.init) ?? ""
-        let result = NSMutableAttributedString(string: "💭 Thinking", attributes: [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ])
+        let result = NSMutableAttributedString(attributedString:
+            ConversationInlineText.symbolPrefixed(
+                "brain", text: "Thinking",
+                font: .systemFont(ofSize: 12, weight: .medium), color: .secondaryLabelColor
+            )
+        )
         if !firstLine.isEmpty {
             result.append(NSAttributedString(string: "  \(firstLine)", attributes: [
                 .font: NSFont.systemFont(ofSize: 12),

@@ -22,11 +22,13 @@ struct ToolGroupCardRenderer: BlockRenderer {
 
     private func summary(_ block: ToolGroupBlock) -> NSAttributedString {
         let name = StepKindStyle.displayName(forToolName: block.toolName)
-        let head = block.count == 1 ? "🔧 \(name)" : "🔧 \(name) · \(block.count)개"
-        let result = NSMutableAttributedString(string: head, attributes: [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ])
+        let head = block.count == 1 ? name : "\(name) · \(block.count)개"
+        let result = NSMutableAttributedString(attributedString:
+            ConversationInlineText.symbolPrefixed(
+                "wrench.adjustable.fill", text: head,
+                font: .systemFont(ofSize: 12, weight: .medium), color: .secondaryLabelColor
+            )
+        )
         if let first = block.calls.first, !first.inputSummary.isEmpty {
             result.append(NSAttributedString(string: "  \(first.inputSummary)", attributes: [
                 .font: NSFont.systemFont(ofSize: 12),

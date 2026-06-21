@@ -16,7 +16,7 @@ struct UserPromptCardRenderer: BlockRenderer {
         stack.alignment = .leading
         stack.spacing = 4
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(ConversationCardHeader.make("You", color: .systemTeal))
+        stack.addArrangedSubview(ConversationCardHeader.make("You", color: .systemTeal, symbol: "bubble.left.fill"))
 
         let font = NSFont.systemFont(ofSize: 13)
         let body = ConversationBodyTextView.make()

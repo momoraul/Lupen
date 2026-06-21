@@ -102,18 +102,41 @@ enum ConversationInlineText {
         }
         return result
     }
+
+    /// SF Symbol(이모지 아님 — 시스템 틴트·다크모드·VoiceOver 정상)을 텍스트
+    /// 앞에 붙인 attributed 문자열. 카드 헤더/요약 글리프에 쓴다.
+    static func symbolPrefixed(
+        _ symbolName: String, text: String, font: NSFont, color: NSColor
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .medium)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config) {
+            let attachment = NSTextAttachment()
+            attachment.image = image
+            attachment.bounds = CGRect(
+                x: 0, y: font.descender + 1, width: image.size.width, height: image.size.height
+            )
+            result.append(NSAttributedString(attachment: attachment))
+            result.append(NSAttributedString(string: "  ", attributes: [.font: font]))
+        }
+        result.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color]))
+        return result
+    }
 }
 
-/// 카드 상단의 역할/메타 헤더("You", "✦ Assistant · opus-4-8 · $0.37").
+/// 카드 상단의 역할/메타 헤더("You", "Assistant · opus-4-8 · $0.37").
 @MainActor
 enum ConversationCardHeader {
-    static func make(_ text: String, color: NSColor) -> NSTextField {
-        let label = DetailStyles.makeChromeLabel(
-            text,
-            font: .systemFont(ofSize: 11, weight: .semibold),
-            color: color,
-            alignment: .left
-        )
+    static func make(_ text: String, color: NSColor, symbol: String? = nil) -> NSTextField {
+        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let label = DetailStyles.makeChromeLabel(text, font: font, color: color, alignment: .left)
+        if let symbol {
+            label.attributedStringValue = ConversationInlineText.symbolPrefixed(
+                symbol, text: text, font: font, color: color
+            )
+        }
         // 모델·비용이 붙은 긴 헤더가 카드 폭을 밀어내지 않도록 말줄임 + 낮은 compression.
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
