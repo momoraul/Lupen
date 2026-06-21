@@ -217,10 +217,13 @@ struct SQLiteConversationSource: Sendable {
                 ordinalByUuid[locator.uuid] = ordinal
             }
         }
+        // Index locators by uuid once — attaching per step with first(where:)
+        // was O(n²) and froze the UI on multi-thousand-step turns.
+        let locatorByUuid = Dictionary(locators.map { ($0.uuid, $0) }, uniquingKeysWith: { first, _ in first })
         return assembled
             .filter { ordinalByUuid[$0.uuid] != nil }
             .sorted { (ordinalByUuid[$0.uuid] ?? 0) < (ordinalByUuid[$1.uuid] ?? 0) }
-            .map { attachLocator(to: $0, from: locators) }
+            .map { attachLocator(to: $0, using: locatorByUuid) }
     }
 
     /// Steps-table projection: display-grade rows (Codex default; Claude
@@ -233,6 +236,8 @@ struct SQLiteConversationSource: Sendable {
         let payloads = provider == .codex
             ? codexToolPayloads(rows: rows, locators: locators)
             : [:]
+        // Index locators by uuid once — O(1) attach instead of O(n²) first(where:).
+        let locatorByUuid = Dictionary(locators.map { ($0.uuid, $0) }, uniquingKeysWith: { first, _ in first })
         return rows.map { row in
             let payload = payloads[row.uuid]
             var toolCalls: [ToolUseInfo] = []
@@ -268,7 +273,7 @@ struct SQLiteConversationSource: Sendable {
                 requestId: row.requestId,
                 model: row.model
             )
-            return attachLocator(to: step, from: locators)
+            return attachLocator(to: step, using: locatorByUuid)
         }
     }
 
@@ -392,9 +397,9 @@ struct SQLiteConversationSource: Sendable {
     /// through `step.rawJSONLocator` — attach it from the DB locator so
     /// `AppStateStore.rawJSON(for:)` resolves without the legacy
     /// project-path scan (which SQLite mode cannot serve).
-    private func attachLocator(to step: Step, from locators: [StoreTurnLineLocator]) -> Step {
+    private func attachLocator(to step: Step, using locatorByUuid: [String: StoreTurnLineLocator]) -> Step {
         guard step.rawJSONLocator == nil,
-              let locator = locators.first(where: { $0.uuid == step.uuid }),
+              let locator = locatorByUuid[step.uuid],
               let byteOffset = locator.byteOffset
         else { return step }
         // Fingerprint carries size only: DATETIME storage truncates

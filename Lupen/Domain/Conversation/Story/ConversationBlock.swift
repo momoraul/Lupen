@@ -162,3 +162,20 @@ struct StatusBlock: ConversationBlock, Equatable {
     var role: BlockRole { .system }
     var plainTextFallback: String { kind.message }
 }
+
+/// Curation cap for very large turns. When a turn has so many blocks that
+/// rendering each as its own card would freeze the UI (multi-thousand-step
+/// codex turns), consecutive runs of supporting (secondary) blocks are folded
+/// into one of these: a collapsed one-line summary that expands to the
+/// per-activity summary lines rendered as a single text view — so the card
+/// count stays in the dozens regardless of step count.
+struct ActivityGroupBlock: ConversationBlock, Equatable {
+    let id: String
+    /// One summary line per folded activity (tool group / thinking).
+    let summaryLines: [String]
+    let isHighlighted: Bool
+    var tier: BlockTier { .secondary }
+    var role: BlockRole { .assistant }
+    var count: Int { summaryLines.count }
+    var plainTextFallback: String { summaryLines.joined(separator: "\n") }
+}
