@@ -54,7 +54,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     private let launchProgressContainer = NSView()
 
     // Selection callbacks
-    var onStepSelected: ((Step) -> Void)?
+    var onStepSelected: ((Step, Turn) -> Void)?
     /// Fired when a user clicks a Turn header row (as opposed to an individual
     /// Step row). The detail pane displays a Turn-level summary (aggregate
     /// tokens/cost + the prompt Step's text and attachments).
@@ -3685,8 +3685,14 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
 
     private func notifySelection(for node: TurnOutlineNode) {
         switch node.kind {
-        case .step(let step, _):
-            onStepSelected?(step)
+        case .step(let step, let parentTurnId):
+            // Q1: Step 클릭 시 소속 Turn 전체를 detail에 넘긴다(해당 Step은
+            // 빌더가 highlight). SQLite-first 환경에선 stub일 수 있어
+            // materialize하고, 못 찾으면 그 Step만의 단일-Step Turn으로 폴백.
+            let parent = turns.first { $0.id == parentTurnId }
+            let resolved = parent.map { materializedTurn(for: $0) }
+                ?? Turn(id: parentTurnId, sessionId: step.sessionId, steps: [step], isInterrupted: false)
+            onStepSelected?(step, resolved)
         case .turn(let turn):
             // Turn header row clicked — show Turn-level summary in the
             // detail pane. SQLite-first materializes on demand so the

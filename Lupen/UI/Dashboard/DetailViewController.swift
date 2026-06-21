@@ -508,10 +508,7 @@ final class DetailViewController: NSViewController {
             model: request.model,
             provider: request.provider
         )
-        conversationView.configure(
-            humanPrompt: nil,
-            assistantContent: nil
-        )
+        conversationView.configure(blocks: [])
         // Legacy request path (`ParsedRequest`) has no Step-scoped
         // attachment manifest — it predates the Turn/Step model. Leave
         // the tab empty; any user viewing this path is on an old code
@@ -534,7 +531,7 @@ final class DetailViewController: NSViewController {
     /// Skips the re-render when the same Step is bound consecutively
     /// so streaming updates don't yank the user's scroll position
     /// or cause a flicker.
-    func showStep(_ step: Step) {
+    func showStep(_ step: Step, in turn: Turn) {
         let identity = DetailSelectionID.step(sessionId: step.sessionId, uuid: step.uuid)
         if currentSelection == identity {
             // Same Step re-bound. Skip the full re-render so that
@@ -560,71 +557,9 @@ final class DetailViewController: NSViewController {
             provider: ProviderScopedID(value: step.sessionId)?.provider ?? .claudeCode
         )
 
-        let humanPrompt: String?
-        let assistantContent: String?
-        switch step.kind {
-        case .prompt:
-            humanPrompt = step.text
-            assistantContent = nil
-        case .toolResult:
-            let tr = step.toolResult
-            let rawName = tr.flatMap { result in
-                result.toolUseId.contains(":patch:") ? "patch_apply_end" : nil
-            } ?? "tool"
-            let name = StepKindStyle.displayName(forToolName: rawName)
-            humanPrompt = "↪ \(name) result\n\n\(tr?.content ?? "")"
-            assistantContent = nil
-        case .toolCall, .thought:
-            humanPrompt = nil
-            var parts: [String] = []
-            if let t = step.text, !t.isEmpty { parts.append(t) }
-            for call in step.toolCalls {
-                let name = StepKindStyle.displayName(forToolName: call.name)
-                let input = ToolInputFormatter.format(call: call, limit: 400)
-                parts.append("→ \(name)\n\(input)")
-            }
-            assistantContent = parts.joined(separator: "\n\n")
-        case .reply:
-            humanPrompt = nil
-            var parts: [String] = []
-            let hasThinking = (step.thinkingText?.isEmpty == false)
-            if let th = step.thinkingText, !th.isEmpty {
-                parts.append("— thinking —\n\(th)")
-            }
-            if let t = step.text, !t.isEmpty {
-                parts.append(hasThinking ? "— reply —\n\(t)" : t)
-            }
-            assistantContent = parts.joined(separator: "\n\n")
-        case .stop:
-            humanPrompt = nil
-            // Synthetic API-error placeholders carry the actual user-
-            // facing failure text in `step.text` ("API Error: 529
-            // Overloaded…", "You've hit your limit · resets 6pm…").
-            // The legacy `(stopped: stop_sequence)` wrapper threw that
-            // away — surface the message verbatim instead, prefixed
-            // with a warning glyph so the detail pane still reads as
-            // "this Turn ended abnormally". Genuine non-end_turn
-            // assistant stops (max_tokens / refusal / a real custom-
-            // stop-sequence match) keep the wrapper because they
-            // typically have no useful body text.
-            if step.isSyntheticApiError, let body = step.text, !body.isEmpty {
-                assistantContent = "⚠ \(body)"
-            } else {
-                assistantContent = "(stopped: \(step.stopReason ?? "unknown"))"
-            }
-        case .interruption:
-            humanPrompt = "✋ User cancelled this request"
-            assistantContent = nil
-        }
-        // Inline image count flows to the Conversation tab so it can
-        // prepend 🖼 glyphs when the user's prompt had attachments —
-        // Claude Code no longer emits `[Image #N]` text markers, so
-        // without this the Conversation tab gave no visual cue.
-        let promptInlineImageCount = (step.kind == .prompt) ? step.images.count : 0
+        // Q1: Step 선택 시에도 Turn 전체 흐름을 그리고 해당 Step만 강조한다.
         conversationView.configure(
-            humanPrompt: humanPrompt,
-            assistantContent: assistantContent,
-            promptInlineImageCount: promptInlineImageCount
+            blocks: ConversationStoryBuilder.build(turn: turn, highlight: step.uuid)
         )
 
         // Attachments tab — read the unified manifest produced by
@@ -722,12 +657,7 @@ final class DetailViewController: NSViewController {
             provider: ProviderScopedID(value: turn.sessionId)?.provider ?? .claudeCode
         )
 
-        let promptText = promptStep?.text
-        conversationView.configure(
-            humanPrompt: promptText,
-            assistantContent: nil,
-            promptInlineImageCount: promptStep?.images.count ?? 0
-        )
+        conversationView.configure(blocks: ConversationStoryBuilder.build(turn: turn))
 
         // Step selection uses `Step.attachments`; Turn selection
         // aggregates via `Turn.allAttachments` so the tab shows every
@@ -782,9 +712,14 @@ final class DetailViewController: NSViewController {
         )
 
         conversationView.configure(
-            humanPrompt: group.label,
-            assistantContent: Self.skillGroupConversationSummary(for: group),
-            promptInlineImageCount: 0
+            blocks: ConversationStoryBuilder.build(
+                turn: Turn(
+                    id: group.id,
+                    sessionId: sessionId ?? group.id,
+                    steps: group.steps,
+                    isInterrupted: false
+                )
+            )
         )
 
         attachmentsView.configure(
@@ -986,46 +921,6 @@ final class DetailViewController: NSViewController {
         return order.compactMap { byLocator[$0] }
     }
 
-    private static func skillGroupConversationSummary(for group: SkillGroupBuilder.SkillGroup) -> String {
-        let lines = group.steps.map { step in
-            "• " + stepSummaryLine(step)
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private static func stepSummaryLine(_ step: Step) -> String {
-        let kind = StepKindStyle.label(for: step.kind)
-        let text = step.text?.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch step.kind {
-        case .toolCall, .thought:
-            var parts: [String] = []
-            if let text, !text.isEmpty {
-                parts.append(text)
-            }
-            for call in step.toolCalls {
-                let name = StepKindStyle.displayName(forToolName: call.name)
-                let input = ToolInputFormatter.format(call: call, limit: 120)
-                parts.append("\(name) \(input)")
-            }
-            return "\(kind): \(truncateDetailLine(parts.joined(separator: "  →  ")))"
-        case .toolResult:
-            let content = step.toolResult?.content ?? text ?? ""
-            return "\(kind): \(truncateDetailLine(content))"
-        case .prompt, .reply, .stop, .interruption:
-            return "\(kind): \(truncateDetailLine(text ?? ""))"
-        }
-    }
-
-    private static func truncateDetailLine(_ value: String, limit: Int = 240) -> String {
-        let normalized = value
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .split(separator: " ", omittingEmptySubsequences: true)
-            .joined(separator: " ")
-        guard normalized.count > limit else { return normalized }
-        let endIndex = normalized.index(normalized.startIndex, offsetBy: limit)
-        return String(normalized[..<endIndex]) + "…"
-    }
 }
 
 // MARK: - Tokens Detail View
@@ -1457,224 +1352,6 @@ final class TokensDetailView: NSView {
         formatter.numberStyle = .decimal
         formatter.groupingSeparator = ","
         return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
-    }
-}
-
-// MARK: - Conversation Detail View
-
-final class ConversationDetailView: NSView, NSTextViewDelegate {
-
-    private let scrollView = NSScrollView()
-    private let textView = NSTextView()
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        setup()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    private func setup() {
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = true
-        textView.drawsBackground = false
-        // `DetailStyles.horizontalInset` (16) horizontally so the text
-        // column lines up with the Tokens tab; vertical 12 keeps the
-        // familiar breathing room around the first USER header.
-        textView.textContainerInset = NSSize(width: DetailStyles.horizontalInset, height: 12)
-        textView.font = .systemFont(ofSize: 12)
-        textView.textColor = .labelColor
-        textView.isAutomaticLinkDetectionEnabled = false
-        textView.delegate = self
-        textView.linkTextAttributes = [
-            .foregroundColor: NSColor.systemBlue,
-            .cursor: NSCursor.pointingHand,
-        ]
-
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(scrollView)
-
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    func configure(
-        humanPrompt: String?,
-        assistantContent: String?,
-        promptInlineImageCount: Int = 0
-    ) {
-        let attributed = NSMutableAttributedString()
-
-        // Match the `DetailStyles.sectionHeaderFont` tone used by the
-        // Tokens / Usage tabs so USER / ASSISTANT reads as the same
-        // kind of section divider across the detail pane.
-        let headerAttrs: [NSAttributedString.Key: Any] = [
-            .font: DetailStyles.sectionHeaderFont,
-            .foregroundColor: DetailStyles.sectionHeaderColor,
-        ]
-        let bodyAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12),
-            .foregroundColor: NSColor.labelColor,
-        ]
-
-        if let prompt = humanPrompt, !prompt.isEmpty {
-            attributed.append(NSAttributedString(string: "USER\n", attributes: headerAttrs))
-            // Prepend one inline 🖼 glyph per inline image block attached
-            // to the prompt. Current Claude Code emits images as base64
-            // blocks inside `message.content` with no `[Image #N]` text
-            // marker, so without this the Conversation tab gave no hint
-            // that an image was attached.
-            for _ in 0..<promptInlineImageCount {
-                let symbolStr = InlineImageSymbol.attachment(
-                    font: (bodyAttrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 12),
-                    color: NSColor.labelColor,
-                    linkURL: nil
-                )
-                attributed.append(symbolStr)
-                attributed.append(NSAttributedString(string: " ", attributes: bodyAttrs))
-            }
-            attributed.append(buildBodyWithImageLinks(prompt, baseAttrs: bodyAttrs))
-        } else if promptInlineImageCount > 0 {
-            // Image-only prompt (no text). Render the glyphs alone so the
-            // user still sees that something was attached.
-            attributed.append(NSAttributedString(string: "USER\n", attributes: headerAttrs))
-            for i in 0..<promptInlineImageCount {
-                let symbolStr = InlineImageSymbol.attachment(
-                    font: (bodyAttrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 12),
-                    color: NSColor.labelColor,
-                    linkURL: nil
-                )
-                attributed.append(symbolStr)
-                if i < promptInlineImageCount - 1 {
-                    attributed.append(NSAttributedString(string: " ", attributes: bodyAttrs))
-                }
-            }
-        } else {
-            attributed.append(NSAttributedString(string: "USER\n", attributes: headerAttrs))
-            attributed.append(NSAttributedString(string: "(no prompt available)", attributes: [
-                .font: NSFont.systemFont(ofSize: 12),
-                .foregroundColor: NSColor.tertiaryLabelColor,
-            ]))
-        }
-
-        attributed.append(NSAttributedString(string: "\n\n", attributes: bodyAttrs))
-
-        if let response = assistantContent, !response.isEmpty {
-            attributed.append(NSAttributedString(string: "ASSISTANT\n", attributes: headerAttrs))
-            attributed.append(NSAttributedString(string: response, attributes: bodyAttrs))
-        } else {
-            attributed.append(NSAttributedString(string: "ASSISTANT\n", attributes: headerAttrs))
-            attributed.append(NSAttributedString(string: "(no response available)", attributes: [
-                .font: NSFont.systemFont(ofSize: 12),
-                .foregroundColor: NSColor.tertiaryLabelColor,
-            ]))
-        }
-
-        textView.textStorage?.setAttributedString(attributed)
-        textView.scrollToBeginningOfDocument(nil)
-    }
-
-    /// Builds an attributed string that replaces `[Image source: /path]` and
-    /// `[Image #N]` markers with inline SF `photo` symbol attachments (not
-    /// the legacy Apple Color Emoji placeholder). `[Image source:]` markers
-    /// keep their clickable `file://` link so NSTextViewDelegate can reveal
-    /// the file in Finder.
-    ///
-    /// Using the same `InlineImageSymbol.attachment(…)` helper as the Turn
-    /// outline guarantees the glyph weight/tone matches between the
-    /// Conversation tab and the outline rows; previously the tab used the
-    /// colored emoji while the outline used a monochrome system symbol.
-    private func buildBodyWithImageLinks(_ text: String, baseAttrs: [NSAttributedString.Key: Any]) -> NSAttributedString {
-        let sources = ImageSourceFormatter.extractSources(from: text)
-        let refs = ImageSourceFormatter.extractRefs(from: text)
-
-        struct Replacement: Comparable {
-            let range: NSRange
-            let fileURL: URL?
-            static func < (lhs: Self, rhs: Self) -> Bool { lhs.range.location < rhs.range.location }
-        }
-
-        var replacements: [Replacement] = []
-        for source in sources {
-            replacements.append(Replacement(
-                range: source.range,
-                fileURL: URL(fileURLWithPath: source.path)
-            ))
-        }
-        for refRange in refs {
-            // Skip if overlaps with an image source (shouldn't happen, but be safe)
-            let overlaps = sources.contains { NSIntersectionRange($0.range, refRange).length > 0 }
-            if !overlaps {
-                replacements.append(Replacement(range: refRange, fileURL: nil))
-            }
-        }
-
-        guard !replacements.isEmpty else {
-            return NSAttributedString(string: text, attributes: baseAttrs)
-        }
-
-        let result = NSMutableAttributedString(string: text, attributes: baseAttrs)
-
-        // Derive symbol font / color from the body attributes so the glyph
-        // scales with whatever point size the detail tab is rendering at.
-        let font = (baseAttrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 12)
-        // Clickable path markers get a subtle blue tint (matches macOS link
-        // convention); non-clickable `[Image #N]` refs stay neutral.
-        let linkColor = NSColor.systemBlue
-        let plainColor = (baseAttrs[.foregroundColor] as? NSColor) ?? .labelColor
-
-        // Apply replacements from end to start to preserve ranges.
-        for rep in replacements.sorted().reversed() {
-            let symbolStr = InlineImageSymbol.attachment(
-                font: font,
-                color: rep.fileURL != nil ? linkColor : plainColor,
-                linkURL: rep.fileURL
-            )
-            result.replaceCharacters(in: rep.range, with: symbolStr)
-        }
-
-        return result
-    }
-
-    // MARK: - NSTextViewDelegate — intercept link clicks to reveal in Finder
-
-    func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-        let url: URL?
-        if let fileURL = link as? URL {
-            url = fileURL
-        } else if let str = link as? String {
-            url = URL(fileURLWithPath: str)
-        } else {
-            return false
-        }
-
-        guard let fileURL = url else { return false }
-
-        // Use `open -R` to reveal in Finder — avoids sandbox extension issues
-        // with temp directory paths.
-        let path = fileURL.path
-        if FileManager.default.fileExists(atPath: path) {
-            Process.launchedProcess(launchPath: "/usr/bin/open", arguments: ["-R", path])
-        } else {
-            // File deleted (temp screenshots) — open parent folder
-            let parent = fileURL.deletingLastPathComponent().path
-            if FileManager.default.fileExists(atPath: parent) {
-                Process.launchedProcess(launchPath: "/usr/bin/open", arguments: [parent])
-            }
-        }
-        return true
     }
 }
 

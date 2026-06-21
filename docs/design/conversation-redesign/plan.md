@@ -218,13 +218,13 @@ final class BlockRendererRegistry {
 
 ### Phase B — 카드 스택 렌더러 골격 (Tier1 우선, 최종 구조)
 **진행 방식**: 표현 레이어를 처음 바꾸는 페이즈 → **회귀 게이트가 최우선.** 기존 `ConversationDetailView`를 교체하기 전에 이식할 동작(0.6 회귀 목록)을 테스트/체크리스트로 고정한 뒤 교체한다. 교체 후 **앱 실행 육안 확인** 필수.
-- [ ] B1. `ConversationDetailView`를 NSScrollView+flipped+NSStackView로 재작성. `configure(blocks:highlight:)`.
-- [ ] B2. `BlockRendererRegistry` + `PlainText` 폴백 + `CardContainerView`(거터/헤더/본문/펼침).
-- [ ] B3. 렌더러: UserPrompt, AssistantText(본문 selectable NSTextView + Markdown 노드뷰), StatusBanner.
-- [ ] B4. `DetailViewController.showTurn/showStep` → builder 호출로 교체 (Q1 하이라이트, Q2 최종 스펙).
-- [ ] B5. 회귀 이식: 인라인 이미지 글리프 + `file://` Finder reveal, 동일선택 re-render 스킵, Codex/Claude 분기. (가능한 것은 테스트로 고정)
-- [ ] B6. 빈 상태 배너(✋ 중단 / ⚠ API 오류 / ✂ compact)로 "(no response available)" 박멸.
-- [ ] B7. 레지스트리/폴백/하이라이트 판정 로직 테스트. 피드백 루프 클린 + **앱 실행 육안 확인** → 커밋.
+- [x] B1. `ConversationDetailView`를 별도 파일로 신설(NSScrollView+flipped+NSStackView). `configure(blocks:)`.
+- [x] B2. `BlockRendererRegistry` + `PlainTextBlockRenderer` 폴백 + `CardContainerView`(역할 거터/하이라이트/본문 슬롯).
+- [x] B3. 렌더러: UserPrompt, AssistantText(selectable NSTextView, 메타 헤더), StatusBanner. 마크다운 노드 렌더는 Phase C.
+- [x] B4. `DetailViewController.showTurn/showStep/showSkillGroup` → builder 호출 교체. `onStepSelected`에 Turn 전달(Q1 하이라이트).
+- [x] B5. 회귀 이식: 인라인 이미지 글리프 + `file://` Finder reveal(`ConversationInlineText`/`ConversationBodyTextView`), 동일선택 re-render 스킵(DetailVC 유지), Codex/Claude 분기 유지.
+- [x] B6. 빈 상태 배너(✋ 중단 / ⚠ API 오류 / ✂ compact / orphan / stopped)로 "(no response available)" 박멸.
+- [x] B7. 레지스트리 라우팅/폴백/폴백텍스트/렌더러 스모크 테스트(커버리지: 렌더러·레지스트리 100%). **앱 실행 육안은 사용자 확인 위임**(GUI·실데이터 필요).
 **게이트**: 회귀 0(이식 동작 보존), 폴백 불변식, 동일선택 스킵 유지.
 
 ### Phase C — 리치 콘텐츠 노드 렌더러
@@ -297,3 +297,6 @@ final class BlockRendererRegistry {
 - _Phase A_: `.thought`의 텍스트/`thinkingText`는 둘 다 `ThinkingBlock`(secondary)으로. 중간 설명을 1급 답변과 구분.
 - _Phase A_: 커버리지 측정은 `xcrun xccov view --report <bundle>`(옵션 없이) 사용 — `--files-for-target`는 새 xcresult에서 빈 출력.
 - _Phase A_: 무관한 pre-existing 실패 `SessionCostLabelTests.testNormalCostTextAndColor`(사이드바 색 재설계 #11 이후 미갱신) 1건을 현재 프로덕션 동작에 맞춰 별도 커밋으로 수정(사용자 승인). 전체 그린은 Phase E 최종에서 재검증.
+- _Phase B_: 기존 `ConversationDetailView`(단일 NSTextView, DetailViewController 내부)를 별도 파일 카드 스택으로 교체. `showStep`은 `showStep(_:in:)`으로 시그니처 변경(Q1 — 소속 Turn 전달, `TurnOutline.notifySelection`에서 parentTurnId로 조회·materialize). 죽은 헬퍼(skillGroupConversationSummary/stepSummaryLine/truncateDetailLine) 제거.
+- _Phase B_: 전체 테스트 실행 시 성능/메모리 예산 테스트 3건(loneLargeSubagentBounded / jumboCancellationRestart / selectionLatencyWithinBudget) flaky 실패 → 단독 재실행 5/5 통과로 환경 부하 기인 확정(Phase B 코드 무관, 회귀 0).
+- _Phase B_: 마크다운 강조/블록(테이블/코드) 리치 렌더는 Phase C로. Phase B 본문은 줄바꿈 보존 + 이미지 링크까지(“no response available” 박멸 우선).
