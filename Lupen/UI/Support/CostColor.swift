@@ -18,7 +18,7 @@ enum CostColor {
     /// sits closer to the title's near-white label color, so on a dark row the
     /// cost reads as a gentle highlight rather than a hot orange. Same warm
     /// family as the partial/warning orange; N/A is the slate `unavailable`.
-    nonisolated(unsafe) static let accent = NSColor(name: "CostAccent") { appearance in
+    static let accent = NSColor(name: "CostAccent") { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         return isDark
             ? NSColor(srgbRed: 232.0 / 255, green: 185.0 / 255, blue: 126.0 / 255, alpha: 1)
@@ -29,7 +29,7 @@ enum CostColor {
     /// rather than competing with the orange cost figures, and distinct from
     /// the plain dim gray used for sub-$1 amounts. Dynamic per appearance —
     /// lighter slate on dark, deeper slate on light.
-    nonisolated(unsafe) static let unavailable = NSColor(name: "CostUnavailable") { appearance in
+    static let unavailable = NSColor(name: "CostUnavailable") { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         return isDark
             ? NSColor(srgbRed: 144.0 / 255, green: 160.0 / 255, blue: 180.0 / 255, alpha: 1)
