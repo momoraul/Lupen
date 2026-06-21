@@ -7,21 +7,21 @@
 
 import Foundation
 
-/// 한 provider에 대한 관리 화면 컨텍스트 — 분류기 영역과 FS 스캔 루트.
-/// AppDelegate가 활성 provider의 소스 경로(Claude `projects/`, Codex 홈)로
-/// 구성해 `ManageStore`에 넘긴다.
+/// The management-screen context for a single provider — the classifier scope
+/// and FS scan roots. AppDelegate constructs it from the active provider's
+/// source paths (Claude `projects/`, Codex home) and passes it to `ManageStore`.
 struct ManageProviderContext: Sendable, Equatable {
     let provider: ProviderKind
-    /// provider 홈 (`~/.claude` 또는 `~/.codex`) — 전체 디스크 탭의 스캔 루트.
+    /// The provider home (`~/.claude` or `~/.codex`) — the scan root of the All Disk tab.
     let providerHome: URL
-    /// 정리 가능한 세션영역 루트 (`projects/` 또는 `sessions/`).
+    /// The cleanable session-area roots (`projects/` or `sessions/`).
     let sessionAreaRoots: [URL]
 
     var classifierScope: StorageClassifier.Scope {
         StorageClassifier.Scope(providerHome: providerHome, sessionAreaRoots: sessionAreaRoots)
     }
 
-    /// Claude: `~/.claude/projects`가 세션영역, 그 부모가 홈.
+    /// Claude: `~/.claude/projects` is the session area, its parent is the home.
     static func claude(projectsDirectory: URL) -> ManageProviderContext {
         ManageProviderContext(
             provider: .claudeCode,
@@ -30,7 +30,7 @@ struct ManageProviderContext: Sendable, Equatable {
         )
     }
 
-    /// Codex: `~/.codex`가 홈, `sessions/`가 세션영역.
+    /// Codex: `~/.codex` is the home, `sessions/` is the session area.
     static func codex(codexHome: URL) -> ManageProviderContext {
         ManageProviderContext(
             provider: .codex,

@@ -7,9 +7,10 @@
 
 import SwiftUI
 
-/// 우측 인스펙터 — 단일 선택 행의 상세, 또는 다중 선택 요약. Sessions 탭에서만
-/// 노출(ViewController가 제어). 분류는 표시하지 않고 상태(비정상)만 박스로
-/// 안내. UI 문자열은 영어(앱 전역 정책).
+/// Right inspector — detail of the single selected row, or a multi-selection
+/// summary. Shown only on the Sessions tab (controlled by the ViewController).
+/// Doesn't show classification; surfaces only the status (abnormal) in a box.
+/// UI strings are English (app-wide policy).
 struct ManageInspectorView: View {
     let store: ManageStore
     let actions: ManageRowActions

@@ -7,12 +7,14 @@
 
 import Foundation
 
-/// 세션 행의 1차 제목을 만든다. 첫 프롬프트를 식별자로 쓰되, 사용자가
-/// 직접 붙인 이름(`/rename`)이 있으면 그게 가장 권위 있다(Session.swift 주석).
+/// Builds the primary title for a session row. The first prompt is used as the
+/// identifier, but a name the user set themselves (`/rename`) is the most
+/// authoritative if present (see Session.swift comments).
 ///
-/// 우선순위: `customTitle`(사용자 지정) → `firstPrompt`(내용) →
-/// `cachedTitle`(자동) → 폴백. (plan §2를 다듬음 — 식별력 우선.)
-/// 표시 문자열은 개행·코드펜스·연속 공백을 한 줄로 정규화한다(research §B-4).
+/// Priority: `customTitle` (user-set) → `firstPrompt` (content) →
+/// `cachedTitle` (automatic) → fallback. (Refines plan §2 — identifiability first.)
+/// The display string normalizes newlines, code fences, and runs of whitespace
+/// into a single line (research §B-4).
 enum ManageTitleFormatter {
 
     static let emptyFallback = "(Untitled session)"
@@ -31,7 +33,7 @@ enum ManageTitleFormatter {
         return cleaned.isEmpty ? emptyFallback : truncate(cleaned, maxLength: maxLength)
     }
 
-    /// 개행/탭/코드펜스를 공백으로 접고 연속 공백을 하나로 만든다.
+    /// Folds newlines/tabs/code fences into spaces and collapses runs of whitespace into one.
     static func clean(_ raw: String) -> String {
         let noFence = raw.replacingOccurrences(of: "```", with: " ")
         return noFence
@@ -39,7 +41,7 @@ enum ManageTitleFormatter {
             .joined(separator: " ")
     }
 
-    /// `maxLength`를 넘으면 말줄임(…)으로 자른다.
+    /// Truncates with an ellipsis (…) when it exceeds `maxLength`.
     static func truncate(_ s: String, maxLength: Int = 80) -> String {
         guard maxLength > 1, s.count > maxLength else { return s }
         let head = s.prefix(maxLength - 1).trimmingCharacters(in: .whitespaces)

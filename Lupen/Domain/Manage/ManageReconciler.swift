@@ -7,30 +7,33 @@
 
 import Foundation
 
-/// 인덱스(즉시) 데이터와 파일시스템 실측을 대조해 관리 리스트 행을 만든다.
-/// (research-ccmgr.md §1.6 — 추적/미추적/잔재 3상태)
+/// Builds the manage-list rows by cross-checking index (immediate) data
+/// against filesystem measurement.
+/// (research-ccmgr.md §1.6 — tracked/untracked/index-remnant three states)
 ///
-/// 순수 함수 — 이미 조회된 배열을 받아 계산만 한다(ProviderStore/FS 접근은
-/// 호출부 `ManageStore`/`ManageScanService`가 담당, 테스트 용이).
+/// Pure function — takes already-queried arrays and only computes
+/// (ProviderStore/FS access is the caller's job — `ManageStore`/
+/// `ManageScanService` — for testability).
 struct ManageReconciler {
 
-    /// 인덱스가 아는 한 세션의 입력 묶음.
+    /// The input bundle for one session as the index knows it.
     struct IndexedSession: Sendable {
         let row: StoreSessionRow
         let sourceFiles: [StoreSourceFile]
         let aggregate: StoreSessionListAggregate?
     }
 
-    /// 세션영역 스캔에서 발견한 디스크 파일.
+    /// A disk file found by the session-area scan.
     struct DiskFile: Sendable, Equatable {
         let path: String
         let sizeBytes: Int64
         let modifiedAt: Date?
     }
 
-    /// - Parameter scanned: 파일시스템 실측이 끝났는가. false면 1차(인덱스만)
-    ///   렌더 — 세션은 디스크에 있다고 가정(잔재 오판 방지)하고 orphan은 내지
-    ///   않는다. true면 diskFiles로 존재 확인·미추적 발견까지 한다.
+    /// - Parameter scanned: Whether filesystem measurement is done. If false,
+    ///   first-pass (index-only) render — sessions are assumed to exist on disk
+    ///   (avoids false index-remnant calls) and no orphans are produced. If
+    ///   true, also confirms existence via diskFiles and finds untracked files.
     static func reconcile(
         provider: ProviderKind,
         indexed: [IndexedSession],
@@ -44,7 +47,7 @@ struct ManageReconciler {
         var claimed = Set<String>()
         var rows: [ManageRowModel] = []
 
-        // 1) 인덱스 세션 — 추적 또는 잔재.
+        // 1) Indexed sessions — tracked or index remnant.
         for session in indexed {
             let allPaths = session.sourceFiles.map(\.path)
             claimed.formUnion(allPaths)
@@ -54,8 +57,8 @@ struct ManageReconciler {
             let indexSize = session.sourceFiles.reduce(Int64(0)) { $0 + $1.byteSize }
             let lastMod = session.sourceFiles.compactMap(\.modifiedAt).max() ?? session.row.endTime
 
-            // Claude 세션의 동반 디렉터리 `<sessionId>/`(서브에이전트 보관) —
-            // 휴지통 시 부모 jsonl과 함께 통째로 옮긴다.
+            // Claude session's companion directory `<sessionId>/` (holds
+            // subagents) — moved wholesale together with the parent jsonl on Trash.
             var companion: String?
             if provider == .claudeCode,
                session.sourceFiles.contains(where: { $0.isSubagent }),
@@ -67,7 +70,7 @@ struct ManageReconciler {
             let classification: StorageClassification
             let protection: StorageProtection
             if kind == .indexRemnant {
-                // 원본이 디스크에 없음 — 파일 삭제는 의미 없고 인덱스 prune 대상.
+                // Original is not on disk — file deletion is meaningless; this is an index-prune target.
                 classification = .unclassified
                 protection = .locked
             } else {
@@ -112,8 +115,9 @@ struct ManageReconciler {
             ))
         }
 
-        // 2) 미추적 orphan — 세션영역에 있으나 인덱스가 모르는 `.jsonl`.
-        //    실측 전(scanned=false)에는 디스크를 모르므로 만들지 않는다.
+        // 2) Untracked orphans — `.jsonl` in the session area that the index
+        //    doesn't know about. Not produced before measurement
+        //    (scanned=false), since disk state is unknown.
         if scanned {
             for file in diskFiles where !claimed.contains(file.path) && file.path.hasSuffix(".jsonl") {
                 let url = URL(fileURLWithPath: file.path)
@@ -159,8 +163,8 @@ struct ManageReconciler {
 
     // MARK: - Helpers
 
-    /// 행 상태(이모지 컬럼). 우선순위: 차단 > 에러(잔재/파싱실패) > 미추적 >
-    /// 인덱싱 중 > 최근 활동 > 정상.
+    /// Row status (emoji column). Priority: blocked > error (index remnant/
+    /// parse failure) > untracked > indexing > recently active > normal.
     static func status(
         isIndexing: Bool,
         isIndexed: Bool,
@@ -192,10 +196,10 @@ struct ManageReconciler {
         let raw = session.row.projectPath
         switch provider {
         case .claudeCode:
-            // Claude는 project_path가 인코딩된 디렉터리명 → 실제 경로로 디코드.
+            // For Claude, project_path is an encoded directory name → decode to the real path.
             return (title, raw.map { ProjectPathDecoder.decodeFullPath($0) }, raw)
         case .codex:
-            // Codex는 project_path가 이미 실제 cwd.
+            // For Codex, project_path is already the real cwd.
             return (title, raw, nil)
         }
     }

@@ -188,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var verifyCostsWindowController: VerifyCostsWindowController?
     private var preferencesWindowController: PreferencesWindowController?
     private var manageSessionsWindowController: ManageSessionsWindowController?
-    /// 관리 창이 비활성 provider의 인덱스를 읽을 때 쓰는 store 캐시.
+    /// Store cache the manage window uses to read an inactive provider's index.
     private var managedReadStores: [ProviderKind: ProviderStore] = [:]
     private var verifyUsageMenuItem: NSMenuItem?
     private lazy var logWindowController = LogWindowController(logger: LoggerService.shared)
@@ -1027,13 +1027,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         manageSessionsWindowController?.show()
     }
 
-    /// 활성 provider면 인덱싱 store를, 비활성이면 그 provider의 인덱스 DB를
-    /// 직접 열어(읽기/삭제 정합용) 제공한다. codex로 시작해도 관리 창에서
-    /// Claude Code 탭의 세션을 볼 수 있게 한다.
+    /// Provides the indexing store for the active provider, or opens that
+    /// provider's index DB directly (for read/delete consistency) when
+    /// inactive. Lets the manage window show Claude Code tab sessions even
+    /// when started on codex.
     private func manageProviderStore(for provider: ProviderKind) -> ProviderStore? {
         if let startup = sqliteFirstStartups[provider] {
-            // 활성 store를 우선 사용하고, 비활성 시절 열어 둔 읽기전용 풀이 있으면
-            // 해제한다(파일핸들/WAL 누수 방지 — GRDB 풀은 ref 해제 시 닫힘).
+            // Prefer the active store, and release any read-only pool opened
+            // while inactive (avoids file-handle/WAL leaks — a GRDB pool closes
+            // when its ref is released).
             managedReadStores[provider] = nil
             return startup.coordinator.store
         }

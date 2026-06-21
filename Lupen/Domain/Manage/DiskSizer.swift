@@ -7,15 +7,17 @@
 
 import Foundation
 
-/// 디렉터리/파일의 디스크 점유 크기를 계산하는 순수 헬퍼.
+/// A pure helper that computes the disk allocated size of a directory/file.
 ///
-/// 무거운 재귀 스캔이므로 호출부(`ManageScanService`)가 백그라운드에서
-/// 돌리고, `isCancelled`로 중도 취소한다(plan §3.1 — 메인스레드 블로킹 0).
-/// 크기는 `totalFileAllocatedSize`(실제 점유) 우선, 없으면 논리 크기.
+/// Because this is a heavy recursive scan, the caller (`ManageScanService`)
+/// runs it in the background and cancels mid-way via `isCancelled`
+/// (plan §3.1 — zero main-thread blocking).
+/// Size prefers `totalFileAllocatedSize` (actual allocated size), falling back
+/// to logical size.
 enum DiskSizer {
 
-    /// `url` 아래 모든 정규 파일의 allocated size 합. 디렉터리면 재귀,
-    /// 파일이면 자신의 크기. 존재하지 않으면 0.
+    /// The sum of the allocated size of every regular file under `url`. Recurses
+    /// for a directory; for a file, its own size. 0 if it does not exist.
     static func totalAllocatedSize(at url: URL, isCancelled: () -> Bool = { false }) -> Int64 {
         let fm = FileManager.default
         var isDir: ObjCBool = false
@@ -28,7 +30,7 @@ enum DiskSizer {
             at: url,
             includingPropertiesForKeys: keys,
             options: [],
-            errorHandler: { _, _ in true }   // 읽기 실패한 항목은 건너뛰고 계속
+            errorHandler: { _, _ in true }   // Skip items that fail to read and continue
         ) else { return 0 }
 
         var total: Int64 = 0
@@ -39,7 +41,7 @@ enum DiskSizer {
         return total
     }
 
-    /// 정규 파일 한 개의 allocated size. 디렉터리/심볼릭 등은 0.
+    /// The allocated size of a single regular file. 0 for directories/symlinks/etc.
     static func fileAllocatedSize(_ url: URL) -> Int64 {
         guard let vals = try? url.resourceValues(
             forKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
@@ -49,8 +51,9 @@ enum DiskSizer {
         return 0
     }
 
-    /// 한 디렉터리의 1-depth 자식 항목(전체 디스크 탭용): 각 자식의
-    /// 이름·총 크기·디렉터리 여부. 큰 점유물부터 정렬은 호출부에서.
+    /// The 1-depth child items of a directory (for the All Disk tab): each child's
+    /// name, total size, and whether it is a directory. Sorting largest-allocated-first
+    /// is done by the caller.
     struct Entry: Sendable, Equatable {
         let url: URL
         let name: String
@@ -63,7 +66,7 @@ enum DiskSizer {
         guard let children = try? fm.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [.isDirectoryKey],
-            options: []   // 숨김 포함 — 큰 dot 디렉터리도 보여줘야 정리에 의미
+            options: []   // Include hidden — large dot directories must show for cleanup to be meaningful
         ) else { return [] }
 
         var out: [Entry] = []

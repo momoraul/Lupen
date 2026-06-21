@@ -7,21 +7,21 @@
 
 import Foundation
 
-/// 삭제 확인 마찰 단계 (GitLab Pajamas 3단계, research §B-5).
+/// Deletion-confirmation friction tiers (GitLab Pajamas 3-tier, research §B-5).
 enum DeletionFriction: Sendable, Equatable {
-    case low     // 단건·가역·안전 → 모달 없이 휴지통 + Undo 스낵바
-    case medium  // 여러 개 또는 주의 → 확인 모달
-    case high    // 대량 또는 미추적 → 모달 + 타이핑 확인
+    case low     // Single, reversible, safe → trash without a modal + Undo snackbar
+    case medium  // Several or caution → confirmation modal
+    case high    // Bulk or untracked → modal + typing confirmation
 }
 
-/// 삭제 흐름의 순수 결정 로직(테스트 대상). 실제 휴지통/인덱스 조작은
-/// `ManageTrashService`/`ManageStore`가 담당.
+/// Pure decision logic for the deletion flow (test target). The actual
+/// Trash/index manipulation is handled by `ManageTrashService`/`ManageStore`.
 enum ManageDeletionPlanner {
     static let bulkCountThreshold = 20
     static let bulkByteThreshold: Int64 = 1_000_000_000   // 1 GB
 
-    /// 후보가 모두 휴지통 가능한가. blocked/locked가 하나라도 섞이면 false
-    /// (allowlist — 미분류·차단은 삭제 불가).
+    /// Whether all candidates are deletable. false if even one blocked/locked is mixed in
+    /// (allowlist — unclassified/blocked are not deletable).
     static func allDeletable(_ rows: [ManageRowModel]) -> Bool {
         !rows.isEmpty && rows.allSatisfy { $0.protection == .deletable }
     }

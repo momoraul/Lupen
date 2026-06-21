@@ -8,12 +8,14 @@
 import Foundation
 import Observation
 
-/// "Manage Sessions & Storage" 윈도우의 관찰 가능 상태. 인덱스에서 즉시
-/// 렌더하고(plan §3.1) 백그라운드 FS 실측으로 보정한다. 기존
-/// `AppStateStore`/인덱스는 건드리지 않는 창 전용 store(회귀 0).
+/// Observable state for the "Manage Sessions & Storage" window. Renders
+/// immediately from the index (plan §3.1) and refines via background FS
+/// measurement. A window-only store that never touches the existing
+/// `AppStateStore`/index (zero regression).
 ///
-/// provider별 `ProviderStore`·컨텍스트는 AppDelegate가 클로저로 주입한다
-/// (`sqliteFirstStartups`는 동적이라 스냅샷이 아닌 접근자로).
+/// Per-provider `ProviderStore`/context are injected by AppDelegate as
+/// closures (`sqliteFirstStartups` is dynamic, so accessors rather than a
+/// snapshot).
 @MainActor
 @Observable
 final class ManageStore {
@@ -26,9 +28,9 @@ final class ManageStore {
     var selectedIDs: Set<String> = []
     private(set) var isScanning = false
     private(set) var provider: ProviderKind
-    /// 현재 provider가 인덱싱 중인가(인덱싱 중엔 세션이 보호되어 blocked).
+    /// Whether the current provider is indexing (sessions are protected and blocked while indexing).
     var isIndexingNow: Bool { isIndexingProvider() }
-    /// 전체 디스크 탭(읽기전용) 항목 — 큰 점유물 내림차순.
+    /// All-disk tab (read-only) entries — largest occupants first.
     private(set) var diskItems: [DiskSizer.Entry] = []
 
     private let isIndexingProvider: @MainActor () -> Bool
@@ -36,12 +38,12 @@ final class ManageStore {
     private let contextProvider: @MainActor (ProviderKind) -> ManageProviderContext?
     private let requestRescan: @MainActor (ProviderKind) -> Void
     private let rebuildIndex: @MainActor (ProviderKind) -> Void
-    /// AppKit 뷰가 갱신을 받기 위한 콜백(@Observable 자동 추적 대신 명시적).
+    /// Callback for AppKit views to receive updates (explicit, instead of @Observable auto-tracking).
     @ObservationIgnored var onChange: (@MainActor () -> Void)?
     private let scanService = ManageScanService()
     private let trashService = ManageTrashService()
     private var scanGeneration = 0
-    /// 진행 중 스캔을 중단시키는 플래그(새 load마다 교체 — 토글 시 CPU 낭비 방지).
+    /// Flag that aborts an in-flight scan (replaced on each load — avoids wasted CPU when toggling).
     private var scanFlag: ScanCancellationFlag?
 
     init(
@@ -69,8 +71,9 @@ final class ManageStore {
     var selectedCount: Int { selectedIDs.count }
     var selectedReclaimBytes: Int64 { selectedRows.reduce(0) { $0 + $1.sizeBytes } }
 
-    /// 전체 디스크 탭(읽기전용) — provider 홈의 큰 점유물을 행으로. 세션영역
-    /// 밖이므로 전부 blocked(앱 내 삭제 차단 — Reveal만).
+    /// All-disk tab (read-only) — large occupants of the provider home as
+    /// rows. Outside the session area, so all blocked (in-app deletion
+    /// disabled — Reveal only).
     var allDiskRows: [ManageRowModel] {
         diskItems.map { entry in
             ManageRowModel(
@@ -94,16 +97,16 @@ final class ManageStore {
     // MARK: - Cache inspection
 
     struct CacheInfo: Sendable, Equatable {
-        var indexBytes: Int64      // index.sqlite3 (메인)
+        var indexBytes: Int64      // index.sqlite3 (main)
         var walBytes: Int64        // -wal
         var shmBytes: Int64        // -shm
         var snapshotBytes: Int64
         var coverage: StoreCoverage?
-        var lastIndexed: Date?     // index.sqlite3 마지막 수정 시각
+        var lastIndexed: Date?     // index.sqlite3 last-modified time
     }
     private(set) var cacheInfo: CacheInfo?
 
-    /// 관리 창에서 Reveal에 쓰는 provider별 저장 디렉터리.
+    /// Per-provider storage directory used by Reveal in the manage window.
     var providerSupportRoot: URL {
         LupenPaths.providerRoot(for: provider)
     }
@@ -123,14 +126,14 @@ final class ManageStore {
         )
     }
 
-    /// 인덱스 재빌드(원본 로그 불변) — 기존 rebuild 경로 재사용.
+    /// Rebuild the index (original logs untouched) — reuses the existing rebuild path.
     func rebuildCacheIndex() {
         rebuildIndex(provider)
         loadCacheInfo()
     }
 
-    /// 스냅샷 JSON 캐시만 삭제(Lupen 파생 데이터 — 재생성됨). 인덱스 DB는
-    /// 건드리지 않는다.
+    /// Delete only the snapshot JSON caches (Lupen-derived data — regenerated).
+    /// The index DB is left untouched.
     func clearSnapshots() {
         for url in snapshotURLs(root: LupenPaths.applicationSupportRoot()) {
             try? FileManager.default.removeItem(at: url)
@@ -146,15 +149,15 @@ final class ManageStore {
 
     // MARK: - Selection
 
-    /// 단일 선택 시 인스펙터에 표시할 행(여러 개면 nil → 요약).
+    /// Row to show in the inspector on single selection (nil if multiple → summary).
     var inspectedRow: ManageRowModel? {
         selectedIDs.count == 1 ? rows.first { selectedIDs.contains($0.id) } : nil
     }
 
     func clearSelection() { selectedIDs = []; onChange?() }
 
-    /// 테이블 행 선택을 반영(인스펙터 + collector). 삭제 가능 여부 게이트는
-    /// performTrash가 담당하므로 선택 자체는 모든 행을 허용한다.
+    /// Reflect table row selection (inspector + collector). The deletability
+    /// gate is performTrash's job, so selection itself allows every row.
     func setSelectedIDs(_ ids: Set<String>) {
         guard ids != selectedIDs else { return }
         selectedIDs = ids
@@ -165,8 +168,8 @@ final class ManageStore {
         guard newProvider != provider else { return }
         provider = newProvider
         selectedIDs = []
-        // 이전 provider 행을 즉시 비워, 비동기 load의 1차 렌더 전까지 잘못된
-        // provider 데이터가 보이는 깜빡임을 막는다.
+        // Clear the previous provider's rows immediately to avoid a flicker
+        // of wrong-provider data before the async load's first render.
         rows = []
         diskItems = []
         load()
@@ -186,9 +189,10 @@ final class ManageStore {
         let classifier = StorageClassifier(scope: context.classifierScope)
         let prov = provider
 
-        // 진행 중 스캔을 취소하고 새 세대를 시작한다. 인덱스 읽기(대량 세션의
-        // 동기 DB 조회)와 FS 실측을 모두 백그라운드에서 수행해 메인스레드
-        // 반응성을 보장한다(plan §3 — 메인 블로킹 0).
+        // Cancel any in-flight scan and start a new generation. Both the
+        // index read (synchronous DB queries over many sessions) and FS
+        // measurement run in the background to keep the main thread
+        // responsive (plan §3 — zero main-thread blocking).
         scanFlag?.cancel()
         let flag = ScanCancellationFlag()
         scanFlag = flag
@@ -198,8 +202,9 @@ final class ManageStore {
         onChange?()
 
         Task { @MainActor in
-            // 1차: 인덱스만(근사 크기) — 잔재/미추적 판정 보류. loadIndexed는
-            // detached로 돌려 메인을 막지 않고, 결과 반영 시 최신 load인지 확인.
+            // Pass 1: index only (approximate size) — defer index-remnant/
+            // untracked judgement. Run loadIndexed detached so it doesn't
+            // block main, and verify this is still the latest load before applying.
             let indexed = await Task.detached(priority: .userInitiated) {
                 Self.loadIndexed(from: store)
             }.value
@@ -211,14 +216,15 @@ final class ManageStore {
             self.loadCacheInfo()
             self.onChange?()
 
-            // 2차: 백그라운드 FS 실측 → 정확 크기·미추적·잔재 보정(취소 가능).
+            // Pass 2: background FS measurement → refine exact size, untracked,
+            // and index remnants (cancellable).
             let disk = await self.scanService.scanSessionArea(
                 roots: context.sessionAreaRoots, isCancelled: { flag.isCancelled })
             let items = await self.scanService.scanDiskItems(
                 home: context.providerHome, isCancelled: { flag.isCancelled })
-            // 더 새로운 load가 시작됐으면 이 결과는 버린다.
+            // Discard this result if a newer load has started.
             guard generation == self.scanGeneration else { return }
-            // 스캔 중 인덱싱 상태가 바뀔 수 있으니 보정 시점에 재평가.
+            // Indexing state may change during the scan, so re-evaluate at refine time.
             self.rows = ManageReconciler.reconcile(
                 provider: prov, indexed: indexed, diskFiles: disk,
                 classifier: classifier, isIndexing: self.isIndexingProvider(), scanned: true
@@ -231,18 +237,20 @@ final class ManageStore {
 
     // MARK: - Deletion (trash + index reconcile + Undo)
 
-    /// 행들을 휴지통으로 보내고 인덱스를 정합시킨다. 실제로 옮겨진 행의
-    /// 세션 전체 소스를 인덱스에서 제거한다(동반 디렉터리의 서브에이전트
-    /// 포함). 반환된 Outcome으로 Undo 스낵바를 띄운다.
+    /// Send rows to the Trash and reconcile the index. Removes the entire
+    /// session's sources from the index for rows that actually moved
+    /// (including subagents in the companion directory). Use the returned
+    /// Outcome to show the Undo snackbar.
     @discardableResult
     func trash(rows: [ManageRowModel]) async -> ManageTrashService.Outcome {
         let outcome = await trashService.trash(rows.flatMap(\.trashTargets))
         let trashed = Set(outcome.trashedPaths)
         if let store = storeProvider(provider) {
             var indexPaths: [String] = []
-            // 부모 파일(jsonl)이 실제로 휴지통에 간 행만 세션 전체 인덱스를
-            // 정리한다. companion 디렉터리만 성공하고 부모가 실패한 경우엔
-            // 인덱스를 유지(부모가 디스크에 남아 정합 — 부분 실패 안전).
+            // Only prune the whole session's index for rows whose parent file
+            // (jsonl) actually went to the Trash. If only the companion
+            // directory succeeded and the parent failed, keep the index
+            // (the parent remains on disk, staying consistent — safe partial failure).
             for row in rows where row.filePaths.contains(where: { trashed.contains($0) }) {
                 if let raw = row.rawSessionId, let sources = try? store.sourceFiles(sessionRawId: raw) {
                     indexPaths.append(contentsOf: sources.map(\.path))
@@ -260,7 +268,7 @@ final class ManageStore {
         return outcome
     }
 
-    /// Undo — 휴지통에서 복원하고 인덱스 재등록을 트리거(rescan)한 뒤 재렌더.
+    /// Undo — restore from the Trash, trigger index re-registration (rescan), then re-render.
     func undoTrash(_ entries: [ManageTrashService.RestoreEntry]) async {
         await trashService.restore(entries)
         requestRescan(provider)
@@ -277,7 +285,7 @@ final class ManageStore {
             ManageReconciler.IndexedSession(
                 row: row,
                 sourceFiles: byRaw[row.rawId] ?? [],
-                aggregate: nil   // reconcile 미사용 — sessionListAggregates() GROUP BY 비용 회피.
+                aggregate: nil   // unused by reconcile — avoids sessionListAggregates() GROUP BY cost.
             )
         }
     }

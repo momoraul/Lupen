@@ -7,8 +7,9 @@
 
 import SwiftUI
 
-/// Lupen 캐시 점검 탭 — 인덱스/스냅샷 크기(파일별), 인덱싱 완료율·실패·마지막
-/// 시각을 보고하고 재빌드·정리·Reveal을 제공한다. UI 문자열은 영어(앱 전역 정책).
+/// Lupen cache inspection tab — reports index/snapshot size (per file), indexing
+/// completion rate/failures/last time, and offers rebuild/cleanup/Reveal. UI
+/// strings are English (app-wide policy).
 struct ManageCacheView: View {
     let store: ManageStore
     let onRebuild: () -> Void

@@ -7,7 +7,7 @@
 
 import Foundation
 
-/// 컬럼 정렬 키 — NSTableView 헤더 클릭과 1:1 대응.
+/// Column sort keys — a 1:1 mapping to NSTableView header clicks.
 enum ManageRowSort: String, Sendable {
     case status
     case project
@@ -18,8 +18,9 @@ enum ManageRowSort: String, Sendable {
     case files
 }
 
-/// 행 목록에 검색·정렬을 적용하는 순수 변환(테스트 대상). 정렬은 표시값이
-/// 아니라 raw 값으로 — 사전식 정렬 깨짐 방지(research §B-4).
+/// A pure transform that applies search/sort to a row list (test target). Sorting
+/// is on raw values rather than display values — to avoid broken lexicographic
+/// ordering (research §B-4).
 enum ManageRowFilter {
     static func apply(_ rows: [ManageRowModel], search: String, sort: ManageRowSort, ascending: Bool) -> [ManageRowModel] {
         var result = rows

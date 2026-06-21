@@ -7,8 +7,8 @@
 
 import AppKit
 
-/// 키보드 단축키(⌫=선택 항목 휴지통)를 위한 NSTableView 서브클래스.
-/// ↑↓ 행 이동·선택은 NSTableView 기본 동작.
+/// NSTableView subclass for a keyboard shortcut (⌫ = Trash selected items).
+/// ↑↓ row navigation/selection is NSTableView's default behavior.
 final class ManageTableView: NSTableView {
     var onDelete: (() -> Void)?
 

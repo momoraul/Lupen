@@ -7,8 +7,9 @@
 
 import Foundation
 
-/// 인스펙터·컨텍스트 메뉴 액션 묶음. `ManageViewController`가 구성해
-/// SwiftUI 인스펙터에 주입한다(뷰는 동작 구현을 모름 — 분리).
+/// Bundle of inspector/context-menu actions. `ManageViewController` builds it
+/// and injects it into the SwiftUI inspector (the view doesn't know the behavior
+/// implementation — separation).
 struct ManageRowActions {
     var resume: (ManageRowModel) -> Void
     var reveal: (ManageRowModel) -> Void
@@ -16,8 +17,8 @@ struct ManageRowActions {
     var openTerminal: (ManageRowModel) -> Void
     var copyCommand: (ManageRowModel) -> Void
     var export: (ManageRowModel) -> Void
-    /// 단일 행 휴지통(P4에서 마찰·Undo 연결).
+    /// Single-row Trash (friction/Undo wired in P4).
     var trashRow: (ManageRowModel) -> Void
-    /// 선택 묶음 휴지통(collector — P4).
+    /// Trash the selected batch (collector — P4).
     var trashSelected: () -> Void
 }

@@ -7,8 +7,8 @@
 
 import AppKit
 
-/// "Manage Sessions & Storage" 윈도우를 호스팅한다. AppDelegate가 lazy
-/// 싱글톤으로 생성·재사용 — Reports/Verify Costs와 동일 패턴.
+/// Hosts the "Manage Sessions & Storage" window. AppDelegate creates and reuses
+/// it as a lazy singleton — same pattern as Reports/Verify Costs.
 @MainActor
 final class ManageSessionsWindowController: NSWindowController, NSWindowDelegate {
 

@@ -7,9 +7,10 @@
 
 import Foundation
 
-/// 스캔 취소 플래그. `Task.detached`는 부모 Task의 취소를 전파받지 않으므로,
-/// 호출부(`ManageStore`)가 새 load를 시작할 때 이 플래그로 진행 중인 스캔을
-/// 명시적으로 중단시킨다(빠른 provider 토글 시 버려질 스캔의 CPU 낭비 방지).
+/// Scan cancellation flag. Because `Task.detached` does not inherit the parent
+/// Task's cancellation, the caller (`ManageStore`) uses this flag to explicitly
+/// stop an in-progress scan when it starts a new load (avoiding wasted CPU on
+/// scans that will be discarded during rapid provider toggling).
 final class ScanCancellationFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var _cancelled = false
@@ -17,13 +18,14 @@ final class ScanCancellationFlag: @unchecked Sendable {
     func cancel() { lock.lock(); _cancelled = true; lock.unlock() }
 }
 
-/// 세션영역/홈 디렉터리를 백그라운드(detached, utility QoS)에서 스캔한다.
-/// 메인스레드 블로킹 0 (plan §3.1). 오래된 결과의 폐기는 호출부 `ManageStore`가
-/// generation 토큰으로, 진행 중단은 `ScanCancellationFlag`로 처리한다.
+/// Scans the session area / home directory in the background (detached, utility
+/// QoS). Zero main-thread blocking (plan §3.1). Discarding stale results is
+/// handled by the caller `ManageStore` via a generation token; mid-way
+/// cancellation is handled by `ScanCancellationFlag`.
 struct ManageScanService: Sendable {
 
-    /// 세션영역의 모든 `.jsonl` 인벤토리 — `ManageReconciler`의 diskFiles
-    /// 입력(존재 확인 + 미추적 발견).
+    /// An inventory of every `.jsonl` in the session area — the diskFiles input
+    /// to `ManageReconciler` (existence check + untracked discovery).
     func scanSessionArea(roots: [URL], isCancelled: @escaping @Sendable () -> Bool = { false }) async -> [ManageReconciler.DiskFile] {
         await Task.detached(priority: .utility) {
             var out: [ManageReconciler.DiskFile] = []
@@ -35,7 +37,7 @@ struct ManageScanService: Sendable {
         }.value
     }
 
-    /// 전체 디스크 탭 — provider 홈의 1-depth 점유물(읽기전용).
+    /// The All Disk tab — the 1-depth allocated-size items of the provider home (read-only).
     func scanDiskItems(home: URL, isCancelled: @escaping @Sendable () -> Bool = { false }) async -> [DiskSizer.Entry] {
         await Task.detached(priority: .utility) {
             DiskSizer.childEntries(of: home, isCancelled: isCancelled)
