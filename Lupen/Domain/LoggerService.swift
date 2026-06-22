@@ -63,13 +63,30 @@ final class LoggerService {
 
     // MARK: - Singleton
 
-    nonisolated static let shared = { MainActor.assumeIsolated { LoggerService() } }()
+    nonisolated static let shared = LoggerService()
 
-    private init() {
+    /// Intentionally empty and `nonisolated` so the singleton can be created
+    /// from whatever thread first touches `shared`. Under the CLI that is a
+    /// background indexing queue, not the main actor — the previous
+    /// `MainActor.assumeIsolated` trapped there (`lupen summary` crashed
+    /// 100%). The main-actor-isolated stored properties (`@Observable` makes
+    /// even in-init assignment go through isolated setters) keep their
+    /// declared defaults here; persisted filter state and file logging are
+    /// restored lazily on the first `log()` via `bootstrapIfNeeded()`, which
+    /// always runs on the main actor.
+    nonisolated init() {}
+
+    /// One-time, main-actor restore of persisted filter state + file logging.
+    /// Deferred out of `init` because `init` must stay `nonisolated` for a
+    /// safe background first-touch. Every `log()` entry point is main-actor
+    /// isolated, so touching the isolated properties here is safe.
+    private var didBootstrap = false
+    private func bootstrapIfNeeded() {
+        guard !didBootstrap else { return }
+        didBootstrap = true
+        // `loadFilterState` sets `fileLoggingEnabled`, whose `didSet` starts
+        // file logging when enabled — no separate start call needed.
         loadFilterState()
-        if fileLoggingEnabled {
-            startFileLogging()
-        }
     }
 
     // MARK: - Nonisolated entry point for background threads
@@ -113,6 +130,7 @@ final class LoggerService {
         line: Int = #line,
         skipOSLog: Bool = false
     ) {
+        bootstrapIfNeeded()
         let source = URL(fileURLWithPath: file).lastPathComponent
         let entry = LogEntry(
             level: level,
@@ -286,6 +304,8 @@ final class LoggerService {
         UserDefaults.standard.set(searchText, forKey: Keys.searchText)
     }
 
+    /// Restores persisted filter state. Called once from `bootstrapIfNeeded()`
+    /// on the main actor (never from the `nonisolated init`).
     private func loadFilterState() {
         if let rawValues = UserDefaults.standard.stringArray(forKey: Keys.enabledLevels) {
             enabledLevels = Set(rawValues.compactMap { LogLevel(rawValue: $0) })
