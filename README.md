@@ -183,6 +183,16 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.6.1 — _2026-06-22_
+
+Fixes a freeze on very large turns and cold-launch selection.
+
+- **Large-turn performance** — the Conversation tab no longer freezes on
+  multi-thousand-step turns; long runs of supporting activity (tools, thinking)
+  fold into a collapsed group so the card count stays bounded.
+- **Cold-launch selection** — the first session is now auto-selected on a cold
+  launch with a proper focus ring, instead of opening with nothing selected.
+
 ### v0.6.0 — _2026-06-21_
 
 Reimagines the Conversation tab as a rich Turn reader.
