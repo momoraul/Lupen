@@ -183,6 +183,16 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.6.2 — _2026-06-23_
+
+Urgent CLI crash fix plus more accurate Codex usage verification.
+
+- **CLI crash fix** — the `lupen` CLI no longer crashes on launch (a SIGTRAP
+  that hit 100% of CLI runs); logging now bootstraps safely from any thread.
+- **Codex Verify Usage accuracy** — stops false-positive "missing usage"
+  reports, fixes generated-turn request-id matching, and adds error/warning
+  severity to the Verify Costs filter and the `verify` CLI gate.
+
 ### v0.6.1 — _2026-06-22_
 
 Fixes a freeze on very large turns and cold-launch selection.
