@@ -63,13 +63,30 @@ final class LoggerService {
 
     // MARK: - Singleton
 
-    nonisolated static let shared = { MainActor.assumeIsolated { LoggerService() } }()
+    nonisolated static let shared = LoggerService()
 
-    private init() {
+    /// Intentionally empty and `nonisolated` so the singleton can be created
+    /// from whatever thread first touches `shared`. Under the CLI that is a
+    /// background indexing queue, not the main actor — the previous
+    /// `MainActor.assumeIsolated` trapped there (`lupen summary` crashed
+    /// 100%). The main-actor-isolated stored properties (`@Observable` makes
+    /// even in-init assignment go through isolated setters) keep their
+    /// declared defaults here; persisted filter state and file logging are
+    /// restored lazily on the first `log()` via `bootstrapIfNeeded()`, which
+    /// always runs on the main actor.
+    nonisolated init() {}
+
+    /// One-time, main-actor restore of persisted filter state + file logging.
+    /// Deferred out of `init` because `init` must stay `nonisolated` for a
+    /// safe background first-touch. Every `log()` entry point is main-actor
+    /// isolated, so touching the isolated properties here is safe.
+    private var didBootstrap = false
+    private func bootstrapIfNeeded() {
+        guard !didBootstrap else { return }
+        didBootstrap = true
+        // `loadFilterState` sets `fileLoggingEnabled`, whose `didSet` starts
+        // file logging when enabled — no separate start call needed.
         loadFilterState()
-        if fileLoggingEnabled {
-            startFileLogging()
-        }
     }
 
     // MARK: - Nonisolated entry point for background threads
@@ -81,25 +98,20 @@ final class LoggerService {
         file: String = #file,
         line: Int = #line
     ) {
-        if Thread.isMainThread {
-            MainActor.assumeIsolated {
-                self.log(level, message, context: context, file: file, line: line)
-            }
-            return
-        }
-        // Background thread: emit OSLog synchronously so Console.app
-        // (`subsystem:com.momoraul.lupen`) shows the event without waiting
-        // for the main-queue hop. Then hop to main to store the entry
-        // in the in-app Logs window and file log. The main-queue
-        // `log()` call uses `skipOSLog: true` to avoid a second
-        // os_log emission — without that flag every background log
-        // showed up twice in Console.app (parse / cache / ParsePerf
-        // were the most visible victims).
+        // Build the entry once, here, so its timestamp reflects the call site
+        // and OSLog + the in-app store share the exact same record. Emit to
+        // OSLog synchronously (thread-safe) for immediate Console.app
+        // visibility, then hop to the main actor to record it in the Logs
+        // window / file. There is deliberately NO `MainActor.assumeIsolated`
+        // and no main-thread fast path: assuming "main thread == main actor
+        // executor" traps on the CLI's background index queue (and on any
+        // non-main executor), which was the root of the `lupen` SIGTRAP.
+        // This path is safe to call from any thread or executor.
         let source = URL(fileURLWithPath: file).lastPathComponent
         let entry = LogEntry(level: level, message: message, context: context, source: source, line: line)
         Self.emitToOSLog(entry: entry, context: context)
         DispatchQueue.main.async { [self] in
-            self.log(level, message, context: context, file: file, line: line, skipOSLog: true)
+            store(entry)
         }
     }
 
@@ -110,8 +122,7 @@ final class LoggerService {
         _ message: String,
         context: String? = nil,
         file: String = #file,
-        line: Int = #line,
-        skipOSLog: Bool = false
+        line: Int = #line
     ) {
         let source = URL(fileURLWithPath: file).lastPathComponent
         let entry = LogEntry(
@@ -121,24 +132,22 @@ final class LoggerService {
             source: source,
             line: line
         )
+        store(entry)
+        Self.emitToOSLog(entry: entry, context: context)
+    }
 
+    /// Records an already-built entry into the in-app log + file. Main-actor
+    /// isolated — the single sink shared by `log()` (direct main-thread calls)
+    /// and the main hop of `logFromAnyThread`. OSLog emission is the caller's
+    /// job, so the background path can emit synchronously off-main (for
+    /// immediate Console visibility) before hopping here, without a duplicate.
+    private func store(_ entry: LogEntry) {
+        bootstrapIfNeeded()
         entries.append(entry)
-
         if entries.count > Self.maxEntries {
             entries.removeFirst(entries.count - Self.maxEntries)
         }
-
         writeToFile(entry)
-
-        // Emit to OSLog (DEBUG + Release) unless the caller already
-        // did so (e.g. the background path in `logFromAnyThread`
-        // emits synchronously before hopping to main, then calls this
-        // with `skipOSLog = true` to avoid a duplicate emission).
-        // LoggerService is the single fan-out point — every consumer
-        // (in-app, file, OSLog) reads from it.
-        if !skipOSLog {
-            Self.emitToOSLog(entry: entry, context: context)
-        }
     }
 
     /// Shared OSLog fan-out — used by both `log()` (main-thread path)
@@ -286,6 +295,8 @@ final class LoggerService {
         UserDefaults.standard.set(searchText, forKey: Keys.searchText)
     }
 
+    /// Restores persisted filter state. Called once from `bootstrapIfNeeded()`
+    /// on the main actor (never from the `nonisolated init`).
     private func loadFilterState() {
         if let rawValues = UserDefaults.standard.stringArray(forKey: Keys.enabledLevels) {
             enabledLevels = Set(rawValues.compactMap { LogLevel(rawValue: $0) })

@@ -43,6 +43,32 @@ enum GroundTruthVerifier {
         let sessionId: String
         let kind: Kind
 
+        /// Maps each divergence kind to a severity — the single source of
+        /// truth for Verify Costs / `lupen verify`. Real cost / token /
+        /// coverage drift is an `error`; estimation limits (unknown pricing)
+        /// and informational notes (zero-usage events) are `warning`.
+        var severity: GroundTruth.Severity {
+            switch kind {
+            case .costMismatch,
+                 .inputTokenMismatch,
+                 .outputTokenMismatch,
+                 .reasoningOutputTokenMismatch,
+                 .cacheCreationInputMismatch,
+                 .cacheReadMismatch,
+                 .cacheCreation1hMismatch,
+                 .cacheCreation5mMismatch,
+                 .requestCountMismatch,
+                 .missingPickedRequestId,
+                 .sessionMissingInView,
+                 .sourceRejected,
+                 .parserRejectedLine:
+                return .error
+            case .missingUsageEvent,
+                 .unknownPricing:
+                return .warning
+            }
+        }
+
         var humanDescription: String {
             switch kind {
             case .costMismatch(let v, let t):

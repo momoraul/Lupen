@@ -270,7 +270,6 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
         var currentModel = metadata.model
         var currentTurnId: String?
         var generatedTurnOrdinal = 0
-        var skippedDuplicateCumulativeCount = 0
         var unknownPricingKeys: Set<String> = []
         var hasSeenLiveEventUserMessage = false
         let requestIdPrefix = sourceDiscriminator.map {
@@ -290,16 +289,20 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
 
             if entry.type == "response_item",
                payload.type == "message",
-               payload.role == "user",
-               payload.turnId == nil {
+               payload.role == "user" {
                 let text = normalized(payload.messageText)
-                if !eventUserMessages.isEmpty && !eventUserMessages.contains(text) {
+                if payload.turnId == nil,
+                   !eventUserMessages.isEmpty && !eventUserMessages.contains(text) {
                     continue
                 }
-                // Generated ids are a fallback for context-less files —
-                // a live `turn_context` id keeps owning the turn (the
-                // loader attributes usage to it across user messages).
-                if currentTurnId == nil {
+                // Mirror CodexUsageAggregator's turn tracking exactly so the
+                // verifier reproduces the importer's requestId for every line.
+                // A live turnId owns the turn; generated ids are the
+                // context-less fallback (the loader attributes usage to a
+                // live id across user messages).
+                if let turnId = Self.nonEmpty(payload.turnId) {
+                    currentTurnId = turnId
+                } else if currentTurnId == nil {
                     generatedTurnOrdinal += 1
                     currentTurnId = generatedTurnId(generatedTurnOrdinal)
                 }
@@ -316,22 +319,37 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
                 continue
             }
 
+            // Turn terminators reset the turn so the next user message opens a
+            // fresh generated turn — matches the importer (Aggregator). Without
+            // this, every line after the first turn collapses onto generated-1
+            // and reads as a spurious "missing billable requestId".
+            if Self.isTurnTerminator(entry, payload) {
+                currentTurnId = nil
+                continue
+            }
+
             guard entry.type == "event_msg", payload.type == "token_count" else {
                 continue
             }
 
-            let duplicateCountBefore = skippedDuplicateCumulativeCount
-            guard let usage = resolveUsage(
-                payload.info,
-                previousTotal: &previousTotal,
-                skippedDuplicates: &skippedDuplicateCumulativeCount
-            ) else {
-                if skippedDuplicateCumulativeCount == duplicateCountBefore {
-                    issues.append(GroundTruth.ReportIssue(
-                        sessionId: groupSessionId,
-                        kind: .missingUsageEvent(lineNumber: recordLineNumber)
-                    ))
-                }
+            let usage: CodexTokenUsage
+            switch resolveUsage(payload.info, previousTotal: &previousTotal) {
+            case .usable(let resolved):
+                usage = resolved
+            case .duplicate:
+                // total == previousTotal: an already-counted cumulative
+                // snapshot. Skip silently — not a divergence.
+                continue
+            case .zeroUsage:
+                // A zero-token token_count is a normal Codex artefact
+                // (session start / empty turn). It carries no cost and is
+                // not a defect — do not report it as a divergence.
+                continue
+            case .noUsage:
+                issues.append(GroundTruth.ReportIssue(
+                    sessionId: groupSessionId,
+                    kind: .missingUsageEvent(lineNumber: recordLineNumber)
+                ))
                 continue
             }
 
@@ -388,18 +406,31 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
         return lines
     }
 
+    /// Outcome of resolving one `token_count` event, distinguishing the
+    /// reasons usage may be absent so the caller can tell a normal artefact
+    /// (`zeroUsage`) from a genuine read failure (`noUsage`).
+    private enum UsageResolution {
+        /// Non-zero tokens to attribute to a billable line.
+        case usable(CodexTokenUsage)
+        /// `total == previousTotal`: an already-counted cumulative snapshot.
+        case duplicate
+        /// `info` present but all tokens are zero — a normal Codex artefact
+        /// (session start / empty turn), not a defect.
+        case zeroUsage
+        /// `info` missing or no usable token shape — a genuine read failure.
+        case noUsage
+    }
+
     private static func resolveUsage(
         _ info: CodexEntry.Info?,
-        previousTotal: inout CodexTokenUsage?,
-        skippedDuplicates: inout Int
-    ) -> CodexTokenUsage? {
-        guard let info else { return nil }
+        previousTotal: inout CodexTokenUsage?
+    ) -> UsageResolution {
+        guard let info else { return .noUsage }
 
         if let total = info.totalTokenUsage,
            let previousTotal,
            total == previousTotal {
-            skippedDuplicates += 1
-            return nil
+            return .duplicate
         }
 
         let usage: CodexTokenUsage?
@@ -429,8 +460,8 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
         if let total = info.totalTokenUsage {
             previousTotal = total
         }
-        guard let usage, !usage.isZero else { return nil }
-        return usage
+        guard let usage else { return .noUsage }
+        return usage.isZero ? .zeroUsage : .usable(usage)
     }
 
     private func computeCost(
@@ -529,6 +560,24 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
 
     private static func generatedTurnId(_ ordinal: Int) -> String {
         "generated-\(ordinal)"
+    }
+
+    /// Trimmed turnId or nil when empty — mirrors CodexUsageAggregator so a
+    /// live turnId on a user message owns the turn identically on both sides.
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    /// A turn boundary — resets the current turn so the next user message
+    /// opens a fresh generated turn. Copied from CodexUsageAggregator to keep
+    /// the verifier's requestId generation in lockstep with the importer.
+    private static func isTurnTerminator(_ entry: CodexEntry, _ payload: CodexEntry.Payload) -> Bool {
+        if entry.type == "turn_aborted" || entry.type == "task_complete" {
+            return true
+        }
+        return entry.type == "event_msg"
+            && (payload.type == "turn_aborted" || payload.type == "task_complete")
     }
 
     private static func eventUserMessageTexts(in entries: [CodexEntry]) -> Set<String> {
