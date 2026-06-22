@@ -15,6 +15,14 @@
 
     <!-- Newest release first. `Tools/release.sh` emits each <item>. -->
     <item>
+      <title>0.6.2</title>
+      <pubDate>Mon, 22 Jun 2026 22:40:14 +0000</pubDate>
+      <sparkle:version>7</sparkle:version>
+      <sparkle:shortVersionString>0.6.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/momoraul/Lupen/releases/download/v0.6.2/Lupen-0.6.2.dmg" type="application/octet-stream" sparkle:edSignature="yFksTMYjWwfRfgPIVPptA9swrpvIhdrXB7TWTDwuIO6xXizg3xk50nfX28oSaVbSRQJpC0c4BIpEhKvEdDrhBg==" length="9756535" />
+    </item>
+    <item>
       <title>0.6.1</title>
       <pubDate>Sun, 21 Jun 2026 17:42:29 +0000</pubDate>
       <sparkle:version>6</sparkle:version>
