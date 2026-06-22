@@ -4,6 +4,16 @@ import Foundation
 /// for the design rationale.
 enum GroundTruth {
 
+    /// Severity of a verification finding. `error` means real accounting
+    /// drift (cost / token / coverage); `warning` means an estimation
+    /// limit or informational note (unknown pricing, zero-usage events)
+    /// that does NOT undermine the numbers. The Verify Costs window and
+    /// `lupen verify` use this to separate "must fix" from "FYI".
+    enum Severity: Sendable, Equatable {
+        case warning
+        case error
+    }
+
     /// Raw record for one line carrying a `usage` block.
     ///
     /// To check whether the view dropped this line, look up by `uuid`:

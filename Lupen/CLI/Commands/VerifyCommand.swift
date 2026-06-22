@@ -82,6 +82,9 @@ struct CLIVerifyReport {
         let viewCostUSD: Double?
         let truthCostUSD: Double?
         let kinds: [String]
+        /// True when the session has at least one error-severity finding
+        /// (cost / token / coverage drift). Warning-only rows do not gate CI.
+        let hasError: Bool
 
         var delta: Double? {
             guard let view = viewCostUSD, let truth = truthCostUSD else { return nil }
@@ -91,19 +94,27 @@ struct CLIVerifyReport {
 
     let provider: ProviderKind
     let verifiedSessionCount: Int
-    /// Diverging sessions only.
+    /// Diverging sessions (error and warning severities both).
     let rows: [Row]
     let pendingCount: Int
     let issueCount: Int
 
-    var hasDrift: Bool { !rows.isEmpty }
+    /// Sessions with real accounting drift — what the table and exit code key on.
+    var errorRows: [Row] { rows.filter(\.hasError) }
+    /// Sessions whose only findings are warnings (unknown pricing / zero-usage).
+    var warningOnlyRows: [Row] { rows.filter { !$0.hasError } }
+
+    /// Exit-4 gate: only error-severity drift fails the build. Warnings
+    /// (estimation limits) are reported but do not break CI.
+    var hasDrift: Bool { !errorRows.isEmpty }
 
     /// Group divergences by session into mismatch rows (pure: no store).
     static func build(divergences: [GroundTruthVerifier.Divergence]) -> [Row] {
-        var bySession: [String: (view: Double?, truth: Double?, kinds: Set<String>)] = [:]
+        var bySession: [String: (view: Double?, truth: Double?, kinds: Set<String>, hasError: Bool)] = [:]
         for divergence in divergences {
-            var entry = bySession[divergence.sessionId] ?? (nil, nil, [])
+            var entry = bySession[divergence.sessionId] ?? (nil, nil, [], false)
             entry.kinds.insert(kindLabel(divergence.kind))
+            if divergence.severity == .error { entry.hasError = true }
             if case .costMismatch(let view, let truth) = divergence.kind {
                 entry.view = view
                 entry.truth = truth
@@ -111,7 +122,7 @@ struct CLIVerifyReport {
             bySession[divergence.sessionId] = entry
         }
         var rows = bySession.map { sessionId, entry in
-            Row(sessionId: sessionId, viewCostUSD: entry.view, truthCostUSD: entry.truth, kinds: entry.kinds.sorted())
+            Row(sessionId: sessionId, viewCostUSD: entry.view, truthCostUSD: entry.truth, kinds: entry.kinds.sorted(), hasError: entry.hasError)
         }
         rows.sort { lhs, rhs in
             let lhsDelta = abs(lhs.delta ?? 0), rhsDelta = abs(rhs.delta ?? 0)
@@ -155,7 +166,7 @@ struct CLIVerifyReport {
         CLIOutput.line("\(provider.cliLabel) · cost verification")
         CLIOutput.line()
 
-        if rows.isEmpty {
+        if errorRows.isEmpty {
             if verifiedSessionCount == 0 {
                 CLIOutput.line("No sessions found to verify.")
             } else {
@@ -170,7 +181,7 @@ struct CLIVerifyReport {
                     .init("Δ", align: .right),
                     .init("MISMATCH"),
                 ],
-                rows: rows.map { row in
+                rows: errorRows.map { row in
                     [
                         CLITopReport.shortID(row.sessionId),
                         row.viewCostUSD.map(CLIFormat.money) ?? "—",
@@ -182,9 +193,12 @@ struct CLIVerifyReport {
             )
             CLIOutput.line(table.render(color: color))
             CLIOutput.line()
-            CLIOutput.line("✗ \(rows.count) of \(verifiedSessionCount) session(s) diverge from the recomputed truth.")
+            CLIOutput.line("✗ \(errorRows.count) of \(verifiedSessionCount) session(s) diverge from the recomputed truth.")
         }
 
+        if !warningOnlyRows.isEmpty {
+            CLIOutput.note("\(warningOnlyRows.count) session(s) with warnings only (unknown pricing / zero-usage) — not counted as drift; open Verify Costs for detail.")
+        }
         if pendingCount > 0 {
             CLIOutput.note("\(pendingCount) session(s) still importing — rerun after indexing settles.")
         }
@@ -198,11 +212,14 @@ struct CLIVerifyReport {
             "provider": provider.rawValue,
             "verifiedSessions": verifiedSessionCount,
             "drift": hasDrift,
+            "errorSessions": errorRows.count,
+            "warningSessions": warningOnlyRows.count,
             "pending": pendingCount,
             "issues": issueCount,
             "mismatches": rows.map { row in
                 [
                     "sessionId": row.sessionId,
+                    "severity": row.hasError ? "error" : "warning",
                     "viewCostUsd": row.viewCostUSD as Any? ?? NSNull(),
                     "truthCostUsd": row.truthCostUSD as Any? ?? NSNull(),
                     "costDelta": row.delta as Any? ?? NSNull(),
@@ -214,10 +231,11 @@ struct CLIVerifyReport {
 
     var csv: String {
         CLICSV.render(
-            header: ["sessionId", "viewCostUsd", "truthCostUsd", "costDelta", "kinds"],
+            header: ["sessionId", "severity", "viewCostUsd", "truthCostUsd", "costDelta", "kinds"],
             rows: rows.map { row in
                 [
                     row.sessionId,
+                    row.hasError ? "error" : "warning",
                     row.viewCostUSD.map { String(format: "%.6f", $0) } ?? "",
                     row.truthCostUSD.map { String(format: "%.6f", $0) } ?? "",
                     row.delta.map { String(format: "%.6f", $0) } ?? "",

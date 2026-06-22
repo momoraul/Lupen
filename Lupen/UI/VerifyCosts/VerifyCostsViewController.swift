@@ -9,17 +9,51 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
 
     private let store: AppStateStore
 
+    /// Severity-based result filter for the table. `all` shows every row;
+    /// `warningsAndErrors` hides clean rows (the old "show only mismatches");
+    /// `errors` shows only accounting drift. Pending rows stay visible under
+    /// every filter — they're unresolved attention items, not clean rows.
+    enum FilterLevel: Int, CaseIterable {
+        case all
+        case warningsAndErrors
+        case errors
+
+        /// Short segment label. The "Warnings" tab also includes errors —
+        /// spelled out in `tooltip` to keep the control compact.
+        var label: String {
+            switch self {
+            case .all: return "All"
+            case .warningsAndErrors: return "Warnings"
+            case .errors: return "Errors"
+            }
+        }
+
+        /// Hover tooltip clarifying what each segment surfaces.
+        var tooltip: String {
+            switch self {
+            case .all: return "Show every session"
+            case .warningsAndErrors: return "Show sessions with warnings or errors"
+            case .errors: return "Show only sessions with errors"
+            }
+        }
+    }
+
     // State
     private var result: VerifyCostsResult?
     private var rollups: [VerifyCostsResult.SessionRollup] = []
     private var filtered: [VerifyCostsResult.SessionRollup] = []
-    private var showOnlyMismatches: Bool = false
+    private var filterLevel: FilterLevel = .all
     private var isRunning: Bool = false
 
     // UI
     private let runButton = NSButton(title: "Run", target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
-    private let mismatchFilterCheckbox = NSButton(checkboxWithTitle: "Show only mismatches", target: nil, action: nil)
+    private let filterControl = NSSegmentedControl(
+        labels: FilterLevel.allCases.map(\.label),
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
     private let summaryLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
@@ -56,9 +90,13 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
         copyButton.isEnabled = false
         copyButton.toolTip = "Copy visible results (Markdown) to clipboard"
 
-        mismatchFilterCheckbox.target = self
-        mismatchFilterCheckbox.action = #selector(mismatchFilterToggled)
-        mismatchFilterCheckbox.state = .off
+        filterControl.target = self
+        filterControl.action = #selector(filterLevelChanged)
+        filterControl.segmentStyle = .rounded
+        filterControl.selectedSegment = filterLevel.rawValue
+        for level in FilterLevel.allCases {
+            filterControl.setToolTip(level.tooltip, forSegment: level.rawValue)
+        }
 
         progressIndicator.style = .spinning
         progressIndicator.controlSize = .small
@@ -76,7 +114,7 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
         summaryLabel.lineBreakMode = .byTruncatingTail
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let toolbarStack = NSStackView(views: [runButton, copyButton, progressIndicator, statusLabel, NSView(), mismatchFilterCheckbox, summaryLabel])
+        let toolbarStack = NSStackView(views: [runButton, copyButton, progressIndicator, statusLabel, NSView(), filterControl, summaryLabel])
         toolbarStack.orientation = .horizontal
         toolbarStack.alignment = .centerY
         toolbarStack.spacing = 10
@@ -228,7 +266,7 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
         let markdown = Self.buildMarkdownReport(
             result: result,
             rollups: filtered,
-            showingOnlyMismatches: showOnlyMismatches
+            filterLevel: filterLevel
         )
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -243,8 +281,8 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
         }
     }
 
-    @objc private func mismatchFilterToggled() {
-        showOnlyMismatches = mismatchFilterCheckbox.state == .on
+    @objc private func filterLevelChanged() {
+        filterLevel = FilterLevel(rawValue: filterControl.selectedSegment) ?? .all
         applyFilter()
         tableView.reloadData()
         // Copy reflects the currently visible rollups, so its enabled
@@ -253,30 +291,39 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
     }
 
     private func applyFilter() {
-        if showOnlyMismatches {
-            // Pending rows stay visible under the filter — they're
-            // unresolved attention items, just not accounting failures.
-            filtered = rollups.filter { !$0.matchesView || $0.indexPending }
-        } else {
+        // Pending rows stay visible under every filter — they're unresolved
+        // attention items, not clean rows.
+        switch filterLevel {
+        case .all:
             filtered = rollups
+        case .warningsAndErrors:
+            filtered = rollups.filter { !$0.matchesView || $0.indexPending }
+        case .errors:
+            filtered = rollups.filter { $0.hasError || $0.indexPending }
         }
     }
 
     private func updateSummary(for result: VerifyCostsResult) {
         let pending = rollups.filter(\.indexPending).count
-        let failing = rollups.filter { !$0.matchesView && !$0.indexPending }.count
-        let clean = rollups.count - failing - pending
+        let errors = rollups.filter { $0.hasError && !$0.indexPending }.count
+        let warnings = rollups.filter { $0.hasWarningsOnly && !$0.indexPending }.count
+        let clean = rollups.count - errors - warnings - pending
         summaryLabel.stringValue = Self.summaryText(
-            clean: clean, failing: failing, pending: pending, result: result
+            clean: clean, warnings: warnings, errors: errors, pending: pending, result: result
         )
-        if failing == 0, pending == 0 {
-            statusLabel.stringValue = "All \(result.provider.descriptor.shortDisplayName) sessions match independent ground truth."
+        let shortName = result.provider.descriptor.shortDisplayName
+        if errors == 0, warnings == 0, pending == 0 {
+            statusLabel.stringValue = "All \(shortName) sessions match independent ground truth."
             statusLabel.textColor = .systemGreen
-        } else if failing == 0 {
-            statusLabel.stringValue = "No mismatches — \(pending) session(s) still indexing; re-run once the backfill settles."
+        } else if errors == 0 {
+            // Only warnings (estimation limits) and/or pending — nothing drifted.
+            var note = "No errors"
+            if warnings > 0 { note += " — \(warnings) warning(s)" }
+            if pending > 0 { note += "\(warnings > 0 ? "," : " —") \(pending) still indexing" }
+            statusLabel.stringValue = note + "."
             statusLabel.textColor = .secondaryLabelColor
         } else {
-            statusLabel.stringValue = "\(failing) \(result.provider.descriptor.shortDisplayName) session(s) differ from independent ground truth."
+            statusLabel.stringValue = "\(errors) \(shortName) session(s) differ from independent ground truth."
             statusLabel.textColor = .systemOrange
         }
     }
@@ -382,14 +429,19 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
             }
             label.alignment = .right
         case .match:
+            label.alignment = .center
             if rollup.indexPending {
                 label.stringValue = "⋯ indexing"
-                label.alignment = .center
                 label.textColor = .secondaryLabelColor
+            } else if rollup.hasError {
+                label.stringValue = "✗ \(rollup.errorCount)"
+                label.textColor = .systemRed
+            } else if rollup.hasWarningsOnly {
+                label.stringValue = "⚠ \(rollup.warningCount)"
+                label.textColor = .systemOrange
             } else {
-                label.stringValue = rollup.matchesView ? "✓" : "✗ \(rollup.divergenceCount)"
-                label.alignment = .center
-                label.textColor = rollup.matchesView ? .systemGreen : .systemOrange
+                label.stringValue = "✓"
+                label.textColor = .systemGreen
             }
         }
 
@@ -449,24 +501,25 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
     nonisolated static func buildMarkdownReport(
         result: VerifyCostsResult,
         rollups: [VerifyCostsResult.SessionRollup],
-        showingOnlyMismatches: Bool
+        filterLevel: FilterLevel
     ) -> String {
         let pending = rollups.filter(\.indexPending).count
-        let failing = rollups.filter { !$0.matchesView && !$0.indexPending }.count
-        let clean = rollups.count - failing - pending
+        let errors = rollups.filter { $0.hasError && !$0.indexPending }.count
+        let warnings = rollups.filter { $0.hasWarningsOnly && !$0.indexPending }.count
+        let clean = rollups.count - errors - warnings - pending
         var out: [String] = []
         out.append("# \(Self.reportTitle(for: result.provider))")
         out.append("")
         out.append("Provider: \(result.provider.descriptor.displayName)")
         out.append("")
-        out.append(Self.summaryText(clean: clean, failing: failing, pending: pending, result: result))
+        out.append(Self.summaryText(clean: clean, warnings: warnings, errors: errors, pending: pending, result: result))
         if result.provider == .codex {
             out.append("")
             out.append("Codex cost note: dollar totals are estimated from local token counts and Lupen's pricing table. Unknown-pricing usage remains visible, but its dollar cost is not included.")
         }
-        if showingOnlyMismatches {
+        if filterLevel != .all {
             out.append("")
-            out.append("_Filter: only mismatches shown below._")
+            out.append("_Filter: \(filterLevel.label) shown below._")
         }
         out.append("")
         if result.provider == .codex {
@@ -513,13 +566,15 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
 
     nonisolated static func summaryText(
         clean: Int,
-        failing: Int,
+        warnings: Int,
+        errors: Int,
         pending: Int = 0,
         result: VerifyCostsResult
     ) -> String {
-        let counts = pending > 0
-            ? String(format: "Clean %d · Pending %d · Mismatch %d", clean, pending, failing)
-            : String(format: "Clean %d · Mismatch %d", clean, failing)
+        var counts = "Clean \(clean)"
+        if warnings > 0 { counts += " · Warning \(warnings)" }
+        counts += " · Error \(errors)"
+        if pending > 0 { counts += " · Pending \(pending)" }
         var parts = [
             counts + String(
                 format: " · Scan %.1fs · Verify %.2fs",
@@ -553,9 +608,7 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
             let delta = Self.formatDeltaForDisplay(r.costDelta).text
             // Pending mirrors the table's "⋯ indexing" — a bare ✓ on a
             // skipped session read as "verified clean" in the export.
-            let match = r.indexPending
-                ? "⋯ indexing"
-                : (r.matchesView ? "✓" : "✗ \(r.divergenceCount)")
+            let match = Self.matchCell(for: r)
             out.append(
                 "| \(r.sessionId) | \(r.rawLineCount) | \(r.dedupedLineCount) | \(view) | "
                 + String(format: "$%.4f", r.truthCostUSD)
@@ -621,14 +674,28 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
         return value.map { String(format: "$%.4f", $0) } ?? "—"
     }
 
+    /// 3-state cell for the Markdown "Match" column (Claude). Mirrors the
+    /// table's ✓ / ⚠ / ✗ / pending rendering.
+    nonisolated private static func matchCell(
+        for rollup: VerifyCostsResult.SessionRollup
+    ) -> String {
+        if rollup.indexPending { return "⋯ indexing" }
+        if rollup.matchesView { return "✓" }
+        if rollup.hasError { return "✗ \(rollup.errorCount)" }
+        return "⚠ \(rollup.warningCount)"
+    }
+
     nonisolated private static func codexStatusText(
         for rollup: VerifyCostsResult.SessionRollup
     ) -> String {
+        if rollup.indexPending { return "⋯ indexing" }
         if rollup.matchesView { return "✓" }
+        if rollup.hasError { return "✗ \(rollup.errorCount)" }
+        // Warnings only — unknown pricing is the common Codex case.
         if rollup.hasUnknownPricing {
-            return "✗ \(rollup.divergenceCount) pricing"
+            return "⚠ \(rollup.warningCount) pricing"
         }
-        return "✗ \(rollup.divergenceCount)"
+        return "⚠ \(rollup.warningCount)"
     }
 
     private func idleStatusText(for provider: ProviderKind) -> String {

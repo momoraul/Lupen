@@ -105,12 +105,24 @@ struct ProviderVerificationResult: Sendable {
         let viewOutputTokens: Int?
         let viewReasoningOutputTokens: Int?
         let hasUnknownPricing: Bool
-        let matchesView: Bool   // false if any divergence for this session
-        let divergenceCount: Int
+        /// Findings that undermine the numbers (cost / token / coverage).
+        let errorCount: Int
+        /// Estimation/informational findings (unknown pricing, zero-usage).
+        let warningCount: Int
         let inViewAndTruth: Bool
         /// Index import incomplete (6.8) — comparisons skipped; shown
-        /// as "Pending" instead of ✓/✗.
+        /// as "Pending" instead of ✓/⚠/✗.
         var indexPending: Bool = false
+
+        /// Clean = no errors AND no warnings. Name kept for call sites that
+        /// only care whether the row is fully green.
+        var matchesView: Bool { errorCount == 0 && warningCount == 0 }
+        /// Total findings of any severity (for the detail pane / Markdown).
+        var divergenceCount: Int { errorCount + warningCount }
+        /// Accounting drift present — the ✗ (red) state.
+        var hasError: Bool { errorCount > 0 }
+        /// Only warnings present — the ⚠ (orange) state.
+        var hasWarningsOnly: Bool { errorCount == 0 && warningCount > 0 }
 
         var costMatchesExact: Bool {
             guard let delta = costDelta else { return false }
@@ -131,10 +143,15 @@ struct ProviderVerificationResult: Sendable {
             return Dictionary(uniqueKeysWithValues: rows.map { ($0.sessionId, $0) })
         }()
 
-        // Count divergences per sessionId across all kinds.
-        var divergenceCountBySession: [String: Int] = [:]
+        // Tally findings per sessionId, split by severity, so a row can be
+        // classified as clean / warning-only / error.
+        var errorCountBySession: [String: Int] = [:]
+        var warningCountBySession: [String: Int] = [:]
         for d in divergences {
-            divergenceCountBySession[d.sessionId, default: 0] += 1
+            switch d.severity {
+            case .error: errorCountBySession[d.sessionId, default: 0] += 1
+            case .warning: warningCountBySession[d.sessionId, default: 0] += 1
+            }
         }
         let unknownPricingSessionIds = Set(report.issues.compactMap { issue -> String? in
             if case .unknownPricing = issue.kind { return issue.sessionId }
@@ -150,8 +167,10 @@ struct ProviderVerificationResult: Sendable {
             let viewRequestCount = viewSession != nil ? (aggregate?.requestCount ?? 0) : nil
             let viewCost: Double? = viewSession != nil ? (aggregate?.costUSD ?? 0) : nil
             let costDelta = viewCost.map { $0 - truth.dedupedTotalCostUSD }
-            let divCount = divergenceCountBySession[rowSessionId, default: 0]
-                + (rowSessionId == sid ? 0 : divergenceCountBySession[sid, default: 0])
+            let errorCount = errorCountBySession[rowSessionId, default: 0]
+                + (rowSessionId == sid ? 0 : errorCountBySession[sid, default: 0])
+            let warningCount = warningCountBySession[rowSessionId, default: 0]
+                + (rowSessionId == sid ? 0 : warningCountBySession[sid, default: 0])
             rollups.append(SessionRollup(
                 sessionId: rowSessionId,
                 rawLineCount: truth.rawLineCount,
@@ -169,8 +188,8 @@ struct ProviderVerificationResult: Sendable {
                 viewOutputTokens: viewSession != nil ? (aggregate?.outputTokens ?? 0) : nil,
                 viewReasoningOutputTokens: viewSession != nil ? (aggregate?.reasoningOutputTokens ?? 0) : nil,
                 hasUnknownPricing: unknownPricingSessionIds.contains(sid) || unknownPricingSessionIds.contains(scopedSid),
-                matchesView: divCount == 0,
-                divergenceCount: divCount,
+                errorCount: errorCount,
+                warningCount: warningCount,
                 inViewAndTruth: viewSession != nil,
                 indexPending: pendingSessionIds.contains(rowSessionId)
                     || pendingSessionIds.contains(sid)
@@ -186,7 +205,10 @@ struct ProviderVerificationResult: Sendable {
         for session in store.sessions where !truthIds.contains(session.id) {
             let aggregate = aggregatesBySessionId[session.id]
             let viewCost = aggregate?.costUSD ?? 0
-            let divCount = divergenceCountBySession[session.id, default: 0]
+            // A view cost with no ground-truth counterpart is real drift → error.
+            let errorCount = errorCountBySession[session.id, default: 0]
+                + (viewCost == 0 ? 0 : 1)
+            let warningCount = warningCountBySession[session.id, default: 0]
             rollups.append(SessionRollup(
                 sessionId: session.id,
                 rawLineCount: 0,
@@ -204,8 +226,8 @@ struct ProviderVerificationResult: Sendable {
                 viewOutputTokens: aggregate?.outputTokens ?? 0,
                 viewReasoningOutputTokens: aggregate?.reasoningOutputTokens ?? 0,
                 hasUnknownPricing: unknownPricingSessionIds.contains(session.id),
-                matchesView: viewCost == 0 && divCount == 0,
-                divergenceCount: divCount + (viewCost == 0 ? 0 : 1),
+                errorCount: errorCount,
+                warningCount: warningCount,
                 inViewAndTruth: false,
                 indexPending: pendingSessionIds.contains(session.id)
             ))
