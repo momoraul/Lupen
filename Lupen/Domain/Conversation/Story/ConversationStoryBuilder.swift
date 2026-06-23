@@ -56,7 +56,7 @@ enum ConversationStoryBuilder {
             case let b as AssistantTextBlock: covered.insert(b.stepUuid)
             case let b as ThinkingBlock:      covered.insert(b.stepUuid)
             case let b as ToolGroupBlock:     b.calls.forEach { covered.insert($0.stepUuid) }
-            case let b as StatusBlock:        b.stepUuid.map { covered.insert($0) }
+            case let b as StatusBlock:        if let u = b.stepUuid { covered.insert(u) }
             default:                          break
             }
         }
