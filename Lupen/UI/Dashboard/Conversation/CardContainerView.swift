@@ -12,7 +12,7 @@ import AppKit
 /// but their chrome is turned down so the body text is the clear focal point:
 ///
 /// - Every primary block (prompt / reply / status) sits in a quiet card: a
-///   1-device-pixel hairline border (`DetailStyles.sectionBoxBorderColor`) + a
+///   1-device-pixel hairline border (`DetailStyles.conversationCardBorderColor`) + a
 ///   faint neutral fill, matching the grouped boxes used elsewhere in the pane.
 /// - The reply uses the lightest fill (`sectionBoxFillColor`); the prompt/status
 ///   a touch more (`conversationPromptFillColor`) so the speaker reads from a

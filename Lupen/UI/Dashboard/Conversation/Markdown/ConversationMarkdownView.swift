@@ -267,4 +267,13 @@ final class MarkdownTableView: NSView {
         super.viewDidChangeBackingProperties()
         layer?.borderWidth = DetailStyles.hairlineWidth(for: self)
     }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // Re-resolve the dynamic border color (cgColor snapshots the appearance
+        // at assignment) so a live dark/light switch updates without a rebuild.
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderColor = NSColor.separatorColor.cgColor
+        }
+    }
 }

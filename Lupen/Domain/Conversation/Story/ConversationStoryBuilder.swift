@@ -56,6 +56,7 @@ enum ConversationStoryBuilder {
             case let b as AssistantTextBlock: covered.insert(b.stepUuid)
             case let b as ThinkingBlock:      covered.insert(b.stepUuid)
             case let b as ToolGroupBlock:     b.calls.forEach { covered.insert($0.stepUuid) }
+            case let b as StatusBlock:        b.stepUuid.map { covered.insert($0) }
             default:                          break
             }
         }
@@ -194,12 +195,12 @@ enum ConversationStoryBuilder {
                 if step.isSyntheticApiError {
                     blocks.append(StatusBlock(
                         id: "st:\(step.uuid)", kind: .apiError(step.text),
-                        isHighlighted: isHL(step.uuid)
+                        isHighlighted: isHL(step.uuid), stepUuid: step.uuid
                     ))
                 } else {
                     blocks.append(StatusBlock(
                         id: "st:\(step.uuid)", kind: .stopped(step.stopReason),
-                        isHighlighted: isHL(step.uuid)
+                        isHighlighted: isHL(step.uuid), stepUuid: step.uuid
                     ))
                 }
 
@@ -207,7 +208,7 @@ enum ConversationStoryBuilder {
                 flushRun()
                 blocks.append(StatusBlock(
                     id: "st:\(step.uuid)", kind: .interrupted,
-                    isHighlighted: isHL(step.uuid)
+                    isHighlighted: isHL(step.uuid), stepUuid: step.uuid
                 ))
             }
         }
