@@ -24,6 +24,10 @@ final class ConversationDetailView: NSView {
     /// time leaves dangling constraints that pile up and break layout on fast
     /// Turn switching.
     private var cardConstraints: [NSLayoutConstraint] = []
+    /// Block ids of the currently rendered turn. Lets `configure` tell "same
+    /// turn, only the selected Step changed" (keep scroll if the target is
+    /// already visible) from "new content" (reveal the target).
+    private var renderedBlockIDs: [String] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -49,7 +53,7 @@ final class ConversationDetailView: NSView {
     private func setup() {
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 10
+        stack.spacing = 12
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 0, bottom: 24, right: 0)
         stack.translatesAutoresizingMaskIntoConstraints = false
         documentView.translatesAutoresizingMaskIntoConstraints = false
@@ -107,6 +111,9 @@ final class ConversationDetailView: NSView {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        let ids = blocks.map(\.id)
+        let sameContent = ids == renderedBlockIDs
+        renderedBlockIDs = ids
         var highlightedView: NSView?
         var previous: (view: NSView, tier: BlockTier)?
         for block in blocks {
@@ -117,11 +124,18 @@ final class ConversationDetailView: NSView {
             cardConstraints.append(contentsOf: [leading, trailing])
             NSLayoutConstraint.activate([leading, trailing])
             if let previous {
-                // Pack supporting (thinking·tools) cards tightly, and give
-                // breathing room when a body card is adjacent, so it reads as
-                // 'dialogue units' (spacing grouping).
-                let bothSecondary = previous.tier == .secondary && block.tier == .secondary
-                stack.setCustomSpacing(bothSecondary ? 2 : 14, after: previous.view)
+                // Cards carry the block boundaries, so the gaps stay modest: a new
+                // prompt opens a new round-trip (20), supporting lines (thinking·
+                // tools) pack tightly (2), everything else breathes (12).
+                let spacing: CGFloat
+                if block is UserPromptBlock {
+                    spacing = 20
+                } else if previous.tier == .secondary && block.tier == .secondary {
+                    spacing = 2
+                } else {
+                    spacing = 12
+                }
+                stack.setCustomSpacing(spacing, after: previous.view)
             }
             previous = (view, block.tier)
             if block.isHighlighted, highlightedView == nil { highlightedView = view }
@@ -131,18 +145,41 @@ final class ConversationDetailView: NSView {
         documentView.layoutSubtreeIfNeeded()
         stack.layoutSubtreeIfNeeded()
         if let highlightedView {
-            // Bring the selected card near the top (−12) even if partly visible.
-            // Clamp to maxY to avoid over-scroll. scrollToVisible is unsuitable
-            // ('doesn't move if already visible').
-            let rect = highlightedView.convert(highlightedView.bounds, to: documentView)
-            let visibleHeight = scrollView.contentView.bounds.height
-            let documentHeight = max(documentView.bounds.height, stack.fittingSize.height)
-            let maxY = max(0, documentHeight - visibleHeight)
-            let targetY = min(max(0, rect.minY - 12), maxY)
-            scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetY))
-        } else {
+            revealHighlighted(highlightedView, keepIfVisible: sameContent)
+        } else if !sameContent {
+            // New content with no highlighted Step (e.g. whole-Turn view) → top.
             scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
+    }
+
+    /// Scroll only as much as needed to reveal `view`. When `keepIfVisible` (the
+    /// same turn is on screen and only the selected Step changed), a fully
+    /// visible target is left untouched — no jump to the top. Otherwise the
+    /// target is brought into view: minimally for the same turn, or near the top
+    /// for new content.
+    private func revealHighlighted(_ view: NSView, keepIfVisible: Bool) {
+        let rect = view.convert(view.bounds, to: documentView)
+        let clip = scrollView.contentView.bounds
+        let topInset: CGFloat = 12
+        let visibleHeight = clip.height
+        let documentHeight = max(documentView.bounds.height, stack.fittingSize.height)
+        let maxY = max(0, documentHeight - visibleHeight)
+
+        let fullyVisible = rect.minY >= clip.minY && rect.maxY <= clip.maxY
+        if keepIfVisible && fullyVisible { return }
+
+        let targetY: CGFloat
+        if !keepIfVisible || rect.minY < clip.minY || rect.height + topInset >= visibleHeight {
+            // New content, target above the viewport, or taller than the viewport
+            // → align its top (with a small inset).
+            targetY = rect.minY - topInset
+        } else {
+            // Target below the viewport → bring its bottom just into view.
+            targetY = rect.maxY - visibleHeight + topInset
+        }
+        let clamped = min(max(0, targetY), maxY)
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: clamped))
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 }

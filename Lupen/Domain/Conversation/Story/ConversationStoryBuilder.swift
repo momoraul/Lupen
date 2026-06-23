@@ -30,6 +30,60 @@ enum ConversationStoryBuilder {
         neighbor: Turn? = nil,
         highlight highlightStepUuid: String? = nil
     ) -> [ConversationBlock] {
+        let raw = assemble(turn: turn, neighbor: neighbor, highlight: highlightStepUuid)
+        var blocks = collapsedIfTooLarge(raw)
+        // Tree selection can land on a Step that maps to no block (a tool result,
+        // a usage-only reply, …). Leaving nothing highlighted would scroll to the
+        // top; instead retarget to the nearest preceding Step that does map, so a
+        // related block lights up.
+        if let wanted = highlightStepUuid, !blocks.contains(where: { $0.isHighlighted }),
+           let fallback = nearestCoveredStep(
+               turn: turn, requested: wanted, covered: coveredSteps(in: raw)
+           ) {
+            blocks = collapsedIfTooLarge(
+                assemble(turn: turn, neighbor: neighbor, highlight: fallback)
+            )
+        }
+        return blocks
+    }
+
+    /// Step uuids that map to a block (so a highlight on them lands somewhere).
+    private static func coveredSteps(in blocks: [ConversationBlock]) -> Set<String> {
+        var covered: Set<String> = []
+        for block in blocks {
+            switch block {
+            case let b as UserPromptBlock:    covered.insert(b.stepUuid)
+            case let b as AssistantTextBlock: covered.insert(b.stepUuid)
+            case let b as ThinkingBlock:      covered.insert(b.stepUuid)
+            case let b as ToolGroupBlock:     b.calls.forEach { covered.insert($0.stepUuid) }
+            default:                          break
+            }
+        }
+        return covered
+    }
+
+    /// Nearest Step that maps to a block: the closest preceding one (the user's
+    /// "pick the nearest element above"), else the closest following, else nil.
+    private static func nearestCoveredStep(
+        turn: Turn, requested: String, covered: Set<String>
+    ) -> String? {
+        let steps = turn.steps
+        guard let idx = steps.firstIndex(where: { $0.uuid == requested }) else { return nil }
+        if let prev = steps[..<idx].last(where: { covered.contains($0.uuid) }) {
+            return prev.uuid
+        }
+        if idx + 1 < steps.count,
+           let next = steps[(idx + 1)...].first(where: { covered.contains($0.uuid) }) {
+            return next.uuid
+        }
+        return nil
+    }
+
+    private static func assemble(
+        turn: Turn,
+        neighbor: Turn?,
+        highlight highlightStepUuid: String?
+    ) -> [ConversationBlock] {
         var blocks: [ConversationBlock] = []
         func isHL(_ uuid: String) -> Bool { highlightStepUuid == uuid }
 
@@ -170,7 +224,7 @@ enum ConversationStoryBuilder {
             ), at: 0)
         }
 
-        return Self.collapsedIfTooLarge(blocks)
+        return blocks
     }
 
     // MARK: - Curation cap for very large turns
