@@ -33,8 +33,10 @@ struct UserPromptCardRenderer: BlockRenderer {
             ))
         } else {
             if block.inlineImageCount > 0 {
+                // One indicator regardless of count — the prompt body only signals
+                // "has attachment"; the actual images live in the Attachments tab.
                 attributed.append(ConversationInlineText.imageGlyphPrefix(
-                    count: block.inlineImageCount, font: font, color: .labelColor
+                    count: 1, font: font, color: .labelColor
                 ))
                 attributed.append(NSAttributedString(string: " ", attributes: [.font: font]))
             }
