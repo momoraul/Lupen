@@ -21,7 +21,10 @@ struct AssistantTextCardRenderer: BlockRenderer {
         stack.alignment = .leading
         stack.spacing = 4
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(ConversationCardHeader.make(headerText(for: block), color: .controlAccentColor, symbol: "sparkles"))
+        stack.addArrangedSubview(ConversationCardHeader.make(
+            headerText(for: block), color: .secondaryLabelColor, symbol: "sparkles",
+            iconColor: NSColor.controlAccentColor.withAlphaComponent(0.65)
+        ))
 
         let body = ConversationMarkdownView(markdown: block.markdown, onRevealFile: context.revealInFinder)
         stack.addArrangedSubview(body)

@@ -38,6 +38,7 @@ final class ConversationMarkdownView: NSStackView {
             guard run.length > 0 else { return }
             let textView = ConversationBodyTextView.make()
             textView.onRevealFile = onRevealFile
+            textView.maxReadingWidth = Self.maxReadingWidth
             textView.setBody(run)
             addArranged(textView)
             run = NSMutableAttributedString()
@@ -65,12 +66,26 @@ final class ConversationMarkdownView: NSStackView {
         view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
     }
 
+    /// Reading-width cap for body text (NOT code blocks / tables). Enforced
+    /// inside the text view's text container (`ConversationBodyTextView.
+    /// maxReadingWidth`), NEVER via an Auto Layout width constraint: a `<=` width
+    /// constraint on a child propagates up the equality chain and locks the whole
+    /// pane's max width. The text view still follows the container width via
+    /// `addArranged` (`== width`); only the glyph wrapping is capped, leaving
+    /// empty space on the right on very wide panels.
+    static let maxReadingWidth: CGFloat = 700
+
     // MARK: - Text node → attributed
 
     private static func attributed(for node: MarkdownNode) -> NSAttributedString {
         switch node {
         case .heading(let level, let text):
-            return ConversationInlineText.markdownInline(text, font: headingFont(level: level), color: .labelColor)
+            // Tighter line-height + extra space above (not below) so a heading
+            // reads as the head of the block that follows, not floating text.
+            return ConversationInlineText.markdownInline(
+                text, font: headingFont(level: level), color: .labelColor,
+                lineHeight: 1.25, spacingBefore: 8
+            )
         case .paragraph(let text):
             return ConversationInlineText.markdownInline(text, font: bodyFont, color: .labelColor)
         case .bulletList(let items):
@@ -78,8 +93,11 @@ final class ConversationMarkdownView: NSStackView {
         case .orderedList(let items):
             return list(items.enumerated().map { (marker: "\($0.offset + 1).  ", text: $0.element) })
         case .quote(let lines):
+            // No left bar (an earlier design decision); a left indent still keeps
+            // the quote identifiable once the surrounding cards are gone.
             return ConversationInlineText.markdownInline(
-                lines.joined(separator: "\n"), font: bodyFont, color: .secondaryLabelColor
+                lines.joined(separator: "\n"), font: bodyFont, color: .secondaryLabelColor,
+                lineHeight: 1.45, headIndent: 12
             )
         case .codeBlock, .table:
             return NSAttributedString() // handled by a dedicated view; never reached here
@@ -88,7 +106,7 @@ final class ConversationMarkdownView: NSStackView {
 
     private static func list(_ items: [(marker: String, text: String)]) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.35
+        paragraph.lineHeightMultiple = 1.45
         paragraph.headIndent = 16        // indent the wrapped second line by the marker width (hanging indent)
         paragraph.firstLineHeadIndent = 0
         let result = NSMutableAttributedString()
@@ -112,8 +130,8 @@ final class ConversationMarkdownView: NSStackView {
     static func headingFont(level: Int) -> NSFont {
         let size: CGFloat
         switch level {
-        case 1: size = 18
-        case 2: size = 16
+        case 1: size = 20
+        case 2: size = 17
         case 3: size = 15
         default: size = 14
         }
@@ -139,10 +157,8 @@ final class CodeBlockView: NSView {
 
     private func setup() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.5).cgColor
         layer?.cornerRadius = 6
-        layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.separatorColor.cgColor
+        applyColors()
 
         let text = ConversationBodyTextView.make()
         text.setBody(NSAttributedString(
@@ -154,9 +170,16 @@ final class CodeBlockView: NSView {
         ))
         addSubview(text)
 
-        let copyButton = NSButton(title: "Copy", target: self, action: #selector(copyCode))
-        copyButton.bezelStyle = .accessoryBarAction
-        copyButton.controlSize = .mini
+        let copyButton: NSButton
+        if let icon = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy") {
+            copyButton = NSButton(image: icon, target: self, action: #selector(copyCode))
+            copyButton.isBordered = false
+            copyButton.contentTintColor = .secondaryLabelColor
+        } else {
+            copyButton = NSButton(title: "Copy", target: self, action: #selector(copyCode))
+            copyButton.bezelStyle = .accessoryBarAction
+        }
+        copyButton.controlSize = .small
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(copyButton)
 
@@ -168,6 +191,17 @@ final class CodeBlockView: NSView {
             copyButton.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             copyButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColors()
+    }
+
+    private func applyColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = DetailStyles.conversationCodeFillColor.cgColor
+        }
     }
 
     @objc private func copyCode() {
@@ -192,7 +226,7 @@ final class MarkdownTableView: NSView {
     private func setup(headers: [String], rows: [[String]]) {
         wantsLayer = true
         layer?.cornerRadius = 6
-        layer?.borderWidth = 0.5
+        layer?.borderWidth = DetailStyles.hairlineWidth(for: self)
         layer?.borderColor = NSColor.separatorColor.cgColor
 
         let columnCount = max(headers.count, rows.map(\.count).max() ?? 0)
@@ -202,7 +236,7 @@ final class MarkdownTableView: NSView {
             let label = DetailStyles.makeSelectableValueLabel(
                 text,
                 font: .systemFont(ofSize: 12, weight: bold ? .semibold : .regular),
-                color: bold ? .labelColor : .secondaryLabelColor,
+                color: .labelColor,
                 alignment: .left
             )
             label.lineBreakMode = .byTruncatingTail
@@ -227,5 +261,10 @@ final class MarkdownTableView: NSView {
             grid.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             grid.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        layer?.borderWidth = DetailStyles.hairlineWidth(for: self)
     }
 }
