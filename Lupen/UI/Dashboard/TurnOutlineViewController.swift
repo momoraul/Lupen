@@ -2229,9 +2229,11 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
             )
             let cell = makeOrReuseIconCell(id: cellId, iconLeading: isNested ? 20 : 4)
             let attr = attributedStepSummary(for: step)
-            cell.textField?.attributedStringValue = step.kind == .prompt
-                ? QueryHighlighter.applied(to: attr, query: highlightQuery)
-                : attr
+            if step.kind == .prompt {
+                cell.setRichText(QueryHighlighter.applied(to: attr, query: highlightQuery))
+            } else {
+                cell.textField?.attributedStringValue = attr
+            }
             cell.textField?.alignment = .left
             cell.textField?.lineBreakMode = .byTruncatingTail
 
@@ -2747,10 +2749,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         let attachTint = attachmentColor ?? color
         // Collapse any number of image markers into a single leading glyph — the
         // list only needs to signal "has attachment", not how many.
-        let textOnly = preview
-            .replacingOccurrences(of: "🖼", with: " ")
-            .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespaces)
+        let textOnly = TurnPreview.collapsedAttachmentText(preview)
         let result = NSMutableAttributedString()
         result.append(attachmentGlyph(font: font, color: attachTint))   // includes a trailing space
         if !textOnly.isEmpty {
@@ -2764,21 +2763,17 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// `labelColor.withAlphaComponent(...)` loses its dynamic resolution when
     /// baked into the symbol image (renders the dark-mode value in light mode →
     /// invisible), so apply the alpha onto concrete white/black instead.
-    private static var attachmentTint: NSColor {
-        NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            return (isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.6)
-        }
+    private static let attachmentTint = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return (isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.6)
     }
 
     /// Dimmer tint for interrupted ("inactive") rows — a touch fainter than the
     /// active rows so they recede further. Dynamic provider so it bakes per
     /// appearance (and the cell still flips it to white on selection).
-    private static var interruptedTint: NSColor {
-        NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            return (isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.4)
-        }
+    private static let interruptedTint = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return (isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.4)
     }
 
     /// Inline `paperclip` SF Symbol — the conventional "has attachment" glyph.
@@ -3634,9 +3629,10 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     private func makeOrReuseIconCell(
         id: NSUserInterfaceItemIdentifier,
         iconLeading: CGFloat = 4
-    ) -> NSTableCellView {
-        if let reused = outlineView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView {
+    ) -> RecoloringCellView {
+        if let reused = outlineView.makeView(withIdentifier: id, owner: nil) as? RecoloringCellView {
             reused.textField.map(TurnOutlineCellTextLayout.applySingleLineBehavior)
+            reused.clearRichText()
             return reused
         }
         let iv = NSImageView()
@@ -3651,7 +3647,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         TurnOutlineCellTextLayout.applySingleLineBehavior(to: tf)
         tf.translatesAutoresizingMaskIntoConstraints = false
 
-        let cv = NSTableCellView()
+        let cv = RecoloringCellView()
         cv.identifier = id
         cv.imageView = iv
         cv.textField = tf
@@ -4279,12 +4275,23 @@ extension TurnOutlineViewController {
 /// base string and re-tinting on `backgroundStyle` restores the standard look.
 private final class RecoloringCellView: NSTableCellView {
     private var baseText: NSAttributedString?
+    private var emphasizedText: NSAttributedString?
 
     /// Set the cell's text through here (not `textField.attributedStringValue`)
-    /// so the base is captured and re-applied on selection changes.
+    /// so the base + its selection variant are captured once and swapped on
+    /// selection changes (no per-selection recompute/offscreen redraw).
     func setRichText(_ attr: NSAttributedString) {
         baseText = attr
+        emphasizedText = Self.recoloredForSelection(attr)
         applyBackgroundStyle()
+    }
+
+    /// Clear captured text so a reused cell rebound via a plain
+    /// `attributedStringValue` (non-attachment rows) falls back to the default
+    /// selection recoloring instead of a stale base.
+    func clearRichText() {
+        baseText = nil
+        emphasizedText = nil
     }
 
     override var backgroundStyle: NSView.BackgroundStyle {
@@ -4293,9 +4300,8 @@ private final class RecoloringCellView: NSTableCellView {
 
     private func applyBackgroundStyle() {
         guard let textField, let baseText else { return }
-        textField.attributedStringValue = backgroundStyle == .emphasized
-            ? Self.recoloredForSelection(baseText)
-            : baseText
+        textField.attributedStringValue =
+            (backgroundStyle == .emphasized ? (emphasizedText ?? baseText) : baseText)
     }
 
     private static func recoloredForSelection(_ s: NSAttributedString) -> NSAttributedString {
@@ -4305,6 +4311,8 @@ private final class RecoloringCellView: NSTableCellView {
         result.enumerateAttribute(.foregroundColor, in: full, options: []) { value, range, _ in
             if value != nil { result.addAttribute(.foregroundColor, value: color, range: range) }
         }
+        // Drop any search-highlight background so the selected row isn't white-on-yellow.
+        result.removeAttribute(.backgroundColor, range: full)
         var attachments: [(NSRange, NSTextAttachment)] = []
         result.enumerateAttribute(.attachment, in: full, options: []) { value, range, _ in
             if let att = value as? NSTextAttachment, att.image != nil { attachments.append((range, att)) }
