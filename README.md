@@ -183,6 +183,20 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.6.3 — _2026-06-24_
+
+A calmer Conversation tab and a more reliable menu bar.
+
+- **Conversation tab redesign** — quiet cards (a hairline border + faint fill so
+  the dialogue leads instead of competing with boxes), receding headers, and an
+  accent-bordered selected step; body typography, reading width, and code/table
+  legibility were tuned alongside.
+- **Cleaner attachment indicator** — a single legible paperclip marks turns with
+  image attachments (instead of one glyph per image), and it stays readable on
+  the selected row in both light and dark mode.
+- **Menu bar** — clicking the menu-bar item now reliably brings the window to the
+  front, and idle days show a clear "$0" instead of a near-invisible dimmed amount.
+
 ### v0.6.2 — _2026-06-23_
 
 Urgent CLI crash fix plus more accurate Codex usage verification.

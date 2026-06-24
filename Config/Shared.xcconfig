@@ -12,8 +12,8 @@ INFOPLIST_KEY_NSHumanReadableCopyright = Copyright © 2026 jaden (@momoraul). MI
 // Bump MARKETING_VERSION for user-visible releases, CURRENT_PROJECT_VERSION
 // for every build that ships (TestFlight / Developer ID notarization).
 
-MARKETING_VERSION = 0.6.2
-CURRENT_PROJECT_VERSION = 7
+MARKETING_VERSION = 0.6.3
+CURRENT_PROJECT_VERSION = 8
 
 // --- Activation policy ------------------------------------------------------
 // We run as a regular app (Dock icon + global menu bar always visible)
