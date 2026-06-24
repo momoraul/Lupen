@@ -54,48 +54,23 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             isSetUp = true
         }
 
-        // 6.14 hardening — the menu-bar click intermittently failed to
-        // surface this window (user had to click the Dock icon). Three
-        // ordered fixes, each targeting a known failure mode:
-        //
-        // 1) De-miniaturize first. `makeKeyAndOrderFront` never pulls a
-        //    window out of the Dock, so a minimized dashboard made the
-        //    status-item click a silent no-op — the exact "Dock click
-        //    needed" symptom.
-        if window?.isMiniaturized == true {
-            window?.deminiaturize(nil)
-        }
-
-        // 2) Activate BEFORE ordering. A status-item click does not
-        //    activate the app, and under macOS 14+ cooperative
-        //    activation an order-then-activate sequence can lose the
-        //    race: the window order-fronts on its own Space while the
-        //    app stays inactive, so nothing visibly happens. Activating
-        //    first also lets the system's "switch to a Space with open
-        //    windows for the application" behavior kick in when the
-        //    dashboard lives on another Space.
-        //    NSApp.activate() (macOS 14+ cooperative) does not reliably
-        //    activate from status bar button clicks.
-        //    activate(ignoringOtherApps:) is deprecated but has no
-        //    working replacement for this use case. Used by NetNewsWire,
-        //    Rectangle, and other production apps.
-        NSApp.activate(ignoringOtherApps: true)
-
+        // Surface reliably from the status-item click context. The click
+        // leaves the app inactive, so `bringToFront()`'s `orderFrontRegardless`
+        // is what actually pulls the window forward instead of leaving it
+        // hidden behind the frontmost app. See `NSWindow.bringToFront`.
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        window?.bringToFront()
 
-        // 3) Re-front on the next runloop tick, after the cooperative
-        //    activation request has settled. When the first order
-        //    already won this is a harmless no-op; when it lost the
-        //    activation race this is what actually brings the window
-        //    forward.
-        DispatchQueue.main.async { [weak self] in
-            self?.window?.makeKeyAndOrderFront(nil)
-        }
-
-        if autoSelectFirstSessionOnShow,
-           let splitVC = window?.contentViewController as? DashboardSplitViewController {
-            autoSelectAction(splitVC)
+        // Defer auto-selection to the next runloop tick. Running it inline
+        // mutates the outline during the window's first layout pass (right
+        // after makeKeyAndOrderFront) and trips `_NSDetectedLayoutRecursion`;
+        // deferring lets the first layout settle, then claims selection/focus.
+        if autoSelectFirstSessionOnShow {
+            DispatchQueue.main.async { [weak self] in
+                guard let splitVC = self?.window?.contentViewController
+                    as? DashboardSplitViewController else { return }
+                self?.autoSelectAction(splitVC)
+            }
         }
     }
 

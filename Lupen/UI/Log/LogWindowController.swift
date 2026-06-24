@@ -13,8 +13,7 @@ final class LogWindowController {
 
     func showWindow() {
         if let window, window.isVisible {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate()
+            window.bringToFront()
             return
         }
 
@@ -35,8 +34,7 @@ final class LogWindowController {
         win.minSize = NSSize(width: 500, height: 300)
 
         self.window = win
-        win.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        win.bringToFront()
     }
 }
 
