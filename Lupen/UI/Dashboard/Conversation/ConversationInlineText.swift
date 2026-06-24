@@ -25,7 +25,7 @@ enum ConversationInlineText {
         color: NSColor
     ) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.35
+        paragraph.lineHeightMultiple = 1.5
         let baseAttrs: [NSAttributedString.Key: Any] = [
             .font: font, .foregroundColor: color, .paragraphStyle: paragraph,
         ]
@@ -80,7 +80,14 @@ enum ConversationInlineText {
     /// link) on the base font. Block structure (table/code block/list) is
     /// already split by the caller via `MarkdownParser`, so only inline is
     /// handled here. Falls back to plain text (`body`) on parse failure.
-    static func markdownInline(_ text: String, font: NSFont, color: NSColor) -> NSAttributedString {
+    static func markdownInline(
+        _ text: String,
+        font: NSFont,
+        color: NSColor,
+        lineHeight: CGFloat = 1.5,
+        spacingBefore: CGFloat = 0,
+        headIndent: CGFloat = 0
+    ) -> NSAttributedString {
         var options = AttributedString.MarkdownParsingOptions()
         options.interpretedSyntax = .inlineOnlyPreservingWhitespace
         options.failurePolicy = .returnPartiallyParsedIfPossible
@@ -91,7 +98,10 @@ enum ConversationInlineText {
         let full = NSRange(location: 0, length: result.length)
         result.addAttribute(.foregroundColor, value: color, range: full)
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.35
+        paragraph.lineHeightMultiple = lineHeight
+        paragraph.paragraphSpacingBefore = spacingBefore
+        paragraph.headIndent = headIndent
+        paragraph.firstLineHeadIndent = headIndent
         result.addAttribute(.paragraphStyle, value: paragraph, range: full)
         result.enumerateAttribute(.inlinePresentationIntent, in: full) { value, range, _ in
             var resolved = font
@@ -104,6 +114,13 @@ enum ConversationInlineText {
                 }
                 if intent.contains(.code) {
                     resolved = .monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+                    // Faint background so inline code stays identifiable as code
+                    // once the surrounding text flows chrome-free.
+                    result.addAttribute(
+                        .backgroundColor,
+                        value: NSColor.labelColor.withAlphaComponent(0.08),
+                        range: range
+                    )
                 }
             }
             result.addAttribute(.font, value: resolved, range: range)
@@ -114,11 +131,12 @@ enum ConversationInlineText {
     /// Attributed string with an SF Symbol (not emoji — proper system tint /
     /// dark mode / VoiceOver) prepended to text. Used for card header/summary glyphs.
     static func symbolPrefixed(
-        _ symbolName: String, text: String, font: NSFont, color: NSColor
+        _ symbolName: String, text: String, font: NSFont, color: NSColor,
+        iconColor: NSColor? = nil
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .medium)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+            .applying(NSImage.SymbolConfiguration(paletteColors: [iconColor ?? color]))
         if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
             .withSymbolConfiguration(config) {
             let attachment = NSTextAttachment()
@@ -137,12 +155,18 @@ enum ConversationInlineText {
 /// Card-top role/meta header ("You", "Assistant · opus-4-8 · $0.37").
 @MainActor
 enum ConversationCardHeader {
-    static func make(_ text: String, color: NSColor, symbol: String? = nil) -> NSTextField {
-        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+    static func make(
+        _ text: String, color: NSColor, symbol: String? = nil, iconColor: NSColor? = nil
+    ) -> NSTextField {
+        // medium (not semibold) + monospaced digits: the header recedes behind
+        // the body, while the model·cost meta digits still align. The text color
+        // is supplied by the caller (kept secondary); the icon may keep a faint
+        // role tint via `iconColor`.
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         let label = DetailStyles.makeChromeLabel(text, font: font, color: color, alignment: .left)
         if let symbol {
             label.attributedStringValue = ConversationInlineText.symbolPrefixed(
-                symbol, text: text, font: font, color: color
+                symbol, text: text, font: font, color: color, iconColor: iconColor
             )
         }
         // Truncate + low compression so a long header (model·cost) doesn't push the card width.

@@ -158,6 +158,9 @@ struct StatusBlock: ConversationBlock, Equatable {
     let id: String
     let kind: StatusKind
     let isHighlighted: Bool
+    /// Originating Step uuid; nil for turn-level banners (compacted/orphan).
+    /// Lets selection retargeting treat a status banner as a highlight target.
+    var stepUuid: String? = nil
     var tier: BlockTier { .primary }
     var role: BlockRole { .system }
     var plainTextFallback: String { kind.message }

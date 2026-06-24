@@ -136,6 +136,16 @@ enum TurnPreview {
         return result as String
     }
 
+    /// Collapses any number of image markers (🖼) plus surrounding whitespace
+    /// into clean text with single spaces. The turn/conversation lists render a
+    /// single attachment glyph in the view layer, so the preview text itself
+    /// carries no marker. Pure (no regex) — cheap for per-row use and testable.
+    static func collapsedAttachmentText(_ preview: String) -> String {
+        preview
+            .split(whereSeparator: { $0 == "🖼" || $0.isWhitespace })
+            .joined(separator: " ")
+    }
+
     /// Returns the input only when it's a bare slash command (no whitespace).
     /// "/skill" -> "/skill", "/skill foo" -> nil.
     static func slashOnly(_ text: String) -> String? {

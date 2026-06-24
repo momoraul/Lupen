@@ -22,6 +22,16 @@ final class ConversationBodyTextView: NSTextView, NSTextViewDelegate {
 
     var onRevealFile: ((URL) -> Void)?
 
+    /// Optional reading-width cap. When set, glyphs wrap at
+    /// `min(bounds.width, maxReadingWidth)` while the *view* still fills the
+    /// container width. Crucial: the cap lives in the text container, NOT in an
+    /// Auto Layout width constraint — a `<=` width constraint on this view would
+    /// propagate up the equality chain and lock the whole pane's max width. The
+    /// container must never be width-constrained by its children.
+    var maxReadingWidth: CGFloat? {
+        didSet { invalidateIntrinsicContentSize() }
+    }
+
     static func make() -> ConversationBodyTextView {
         let container = NSTextContainer(
             size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
@@ -98,9 +108,12 @@ final class ConversationBodyTextView: NSTextView, NSTextViewDelegate {
         guard let textContainer else { return false }
         let width = bounds.width
         guard width > 0 else { return false }
-        if textContainer.containerSize.width != width {
+        // Wrap at the reading-width cap when set, but keep the view following the
+        // real bounds width — so the container is never width-constrained by us.
+        let target = min(width, maxReadingWidth ?? width)
+        if textContainer.containerSize.width != target {
             textContainer.containerSize = NSSize(
-                width: width, height: CGFloat.greatestFiniteMagnitude
+                width: target, height: CGFloat.greatestFiniteMagnitude
             )
         }
         return true

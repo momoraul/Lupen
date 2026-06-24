@@ -130,6 +130,64 @@ enum DetailStyles {
         NSColor.separatorColor
     }
 
+    /// Conversation prompt-fill — a neutral low-alpha surface for the user's
+    /// prompt block. Once the cards are stripped this fill is the main speaker
+    /// cue, so it sits a touch stronger than `sectionBoxFillColor` while still
+    /// reading as "a quiet surface". Branched per appearance (same idiom as
+    /// `sectionBoxFillColor`) so dark and light feel equivalent rather than one
+    /// being invisible and the other heavy.
+    static var conversationPromptFillColor: NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return isDark
+                ? NSColor.white.withAlphaComponent(0.05)
+                : NSColor.black.withAlphaComponent(0.04)
+        }
+    }
+
+    /// A crisp 1-device-pixel hairline width for `view`'s current display.
+    ///
+    /// A CALayer `borderWidth` is in points and is rasterized at the layer's
+    /// `contentsScale`, so a hardcoded 0.5pt is exactly one pixel only on Retina
+    /// (2x); on a 1x display it is a half-pixel that antialiases to a fuzzy line.
+    /// `1 / backingScaleFactor` yields one device pixel on any display
+    /// (0.5pt @2x, 1pt @1x). Reapply from `viewDidChangeBackingProperties()`
+    /// because a window can move between displays of different scale.
+    static func hairlineWidth(for view: NSView) -> CGFloat {
+        let scale = view.window?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor
+            ?? 2
+        return 1.0 / scale
+    }
+
+    /// Resting border for conversation cards. `separatorColor` reads too faint
+    /// as a 1px hairline on the dark conversation surface (cards stop being
+    /// distinguishable), so this is a touch more present while staying a quiet
+    /// neutral line. Branched per appearance (same idiom as the fill tokens).
+    static var conversationCardBorderColor: NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return isDark
+                ? NSColor.white.withAlphaComponent(0.20)
+                : NSColor.black.withAlphaComponent(0.14)
+        }
+    }
+
+    /// Code-block surface (fill only — no border, to avoid a nested box-in-box).
+    /// `textBackgroundColor` blended into the card read as nearly invisible
+    /// (white-on-white in light, sunk in dark). This is a distinct shaded well —
+    /// a touch lighter than a dark card, a clear gray on a light card. The light
+    /// value is heavier because a black overlay on a near-white card needs more
+    /// alpha to register than a white overlay on a near-black one.
+    static var conversationCodeFillColor: NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return isDark
+                ? NSColor.white.withAlphaComponent(0.06)
+                : NSColor.black.withAlphaComponent(0.08)
+        }
+    }
+
     // MARK: - Row typography + heights
 
     /// Regular row: `Input Tokens` / `25`.

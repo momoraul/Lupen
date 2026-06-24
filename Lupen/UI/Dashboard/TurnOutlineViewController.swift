@@ -1889,7 +1889,9 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
                         preview,
                         font: headerFont,
                         color: .labelColor,
-                        attachmentColor: .systemBlue
+                        // A notch below the text so the clip reads as a quiet
+                        // indicator, not a competing glyph (label=merges, secondary=too faint).
+                        attachmentColor: Self.attachmentTint
                     )
                 }
                 return Self.prependingCodexSourceLabel(sourceLabel, to: base, font: headerFont)
@@ -1909,8 +1911,8 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
                         base = Self.attributedPreview(
                             preview,
                             font: headerFont,
-                            color: .secondaryLabelColor,
-                            attachmentColor: .tertiaryLabelColor
+                            color: Self.interruptedTint,
+                            attachmentColor: Self.interruptedTint
                         )
                     }
                     return Self.prependingCodexSourceLabel(
@@ -1922,7 +1924,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
                 }()
                 let withBadge = Self.appendingStatusBadge("⊘ interrupted", to: dimAttributed)
                 let hintedDim = appendShortPromptHint(to: withBadge, for: turn)
-                cell.textField?.attributedStringValue = QueryHighlighter.applied(to: hintedDim, query: highlightQuery)
+                cell.setRichText(QueryHighlighter.applied(to: hintedDim, query: highlightQuery))
                 cell.textField?.alignment = .left
                 cell.textField?.lineBreakMode = .byTruncatingTail
                 cell.toolTip = sourceLabel.map { "Interrupted · Codex source: \($0)" } ?? "Interrupted"
@@ -1940,7 +1942,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
                 let cell = makeOrReuseTurnHeaderCell(id: NSUserInterfaceItemIdentifier("TurnCell_prompt_apiError"))
                 let withBadge = Self.appendingStatusBadge("⚠ API error", color: .systemOrange, to: attributed)
                 let hinted = appendShortPromptHint(to: withBadge, for: turn)
-                cell.textField?.attributedStringValue = QueryHighlighter.applied(to: hinted, query: highlightQuery)
+                cell.setRichText(QueryHighlighter.applied(to: hinted, query: highlightQuery))
                 cell.textField?.alignment = .left
                 cell.textField?.lineBreakMode = .byTruncatingTail
                 // Tooltip surfaces the actual error body when available
@@ -1969,7 +1971,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
                 let cell = makeOrReuseTurnHeaderCell(id: NSUserInterfaceItemIdentifier("TurnCell_prompt_compacted"))
                 let withBadge = Self.appendingStatusBadge("✂ compacted", to: attributed)
                 let hinted = appendShortPromptHint(to: withBadge, for: turn)
-                cell.textField?.attributedStringValue = QueryHighlighter.applied(to: hinted, query: highlightQuery)
+                cell.setRichText(QueryHighlighter.applied(to: hinted, query: highlightQuery))
                 cell.textField?.alignment = .left
                 cell.textField?.lineBreakMode = .byTruncatingTail
                 let source = sourceLabel.map { " Codex source: \($0)." } ?? ""
@@ -1981,7 +1983,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
             } else {
                 let cell = makeOrReuseTurnHeaderCell(id: NSUserInterfaceItemIdentifier("TurnCell_prompt_header"))
                 let hinted = appendShortPromptHint(to: attributed, for: turn)
-                cell.textField?.attributedStringValue = QueryHighlighter.applied(to: hinted, query: highlightQuery)
+                cell.setRichText(QueryHighlighter.applied(to: hinted, query: highlightQuery))
                 cell.textField?.alignment = .left
                 cell.textField?.lineBreakMode = .byTruncatingTail
                 cell.toolTip = sourceLabel.map { "Codex source: \($0)" }
@@ -2227,9 +2229,11 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
             )
             let cell = makeOrReuseIconCell(id: cellId, iconLeading: isNested ? 20 : 4)
             let attr = attributedStepSummary(for: step)
-            cell.textField?.attributedStringValue = step.kind == .prompt
-                ? QueryHighlighter.applied(to: attr, query: highlightQuery)
-                : attr
+            if step.kind == .prompt {
+                cell.setRichText(QueryHighlighter.applied(to: attr, query: highlightQuery))
+            } else {
+                cell.textField?.attributedStringValue = attr
+            }
             cell.textField?.alignment = .left
             cell.textField?.lineBreakMode = .byTruncatingTail
 
@@ -2725,7 +2729,8 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
 
     /// Returns an attributed string built from a `TurnPreview` where
     /// the `🖼` emoji placeholder is replaced by an inline SF Symbol
-    /// `photo` attachment so the icon renders in the system text tone
+    /// `paperclip` attachment — the conventional "has attachment" affordance
+    /// (Mail/Finder) — so the icon renders in the muted system text tone
     /// instead of the off-tone color emoji glyph.
     static func attributedPreview(
         _ preview: String,
@@ -2742,25 +2747,44 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         }
 
         let attachTint = attachmentColor ?? color
+        // Collapse any number of image markers into a single leading glyph — the
+        // list only needs to signal "has attachment", not how many.
+        let textOnly = TurnPreview.collapsedAttachmentText(preview)
         let result = NSMutableAttributedString()
-        let parts = preview.components(separatedBy: "🖼")
-        for (index, part) in parts.enumerated() {
-            if !part.isEmpty {
-                result.append(NSAttributedString(string: part, attributes: baseAttrs))
-            }
-            if index < parts.count - 1 {
-                result.append(photoSymbolAttachment(font: font, color: attachTint))
-            }
+        result.append(attachmentGlyph(font: font, color: attachTint))   // includes a trailing space
+        if !textOnly.isEmpty {
+            result.append(NSAttributedString(string: textOnly, attributes: baseAttrs))
         }
         return result
     }
 
-    /// Inline SF Symbol `photo` attachment scaled/tinted to match the
-    /// surrounding text's font size and color.
-    private static func photoSymbolAttachment(font: NSFont, color: NSColor) -> NSAttributedString {
-        let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .regular)
+    /// Tint for the inline attachment glyph — a notch below the text (between
+    /// secondaryLabel and label), resolved per-appearance via a dynamic provider.
+    /// `labelColor.withAlphaComponent(...)` loses its dynamic resolution when
+    /// baked into the symbol image (renders the dark-mode value in light mode →
+    /// invisible), so apply the alpha onto concrete white/black instead.
+    private static let attachmentTint = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return (isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.6)
+    }
+
+    /// Dimmer tint for interrupted ("inactive") rows — a touch fainter than the
+    /// active rows so they recede further. Dynamic provider so it bakes per
+    /// appearance (and the cell still flips it to white on selection).
+    private static let interruptedTint = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return (isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.4)
+    }
+
+    /// Inline `paperclip` SF Symbol — the conventional "has attachment" glyph.
+    /// Muted, sized just under the text, and optically centered on the text's
+    /// cap-height band (baseline-relative) so it sits level with the line
+    /// instead of riding the descender.
+    private static func attachmentGlyph(font: NSFont, color: NSColor) -> NSAttributedString {
+        // .medium weight so the thin paperclip strokes stay legible at list size.
+        let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .medium)
             .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
-        guard let image = NSImage(systemSymbolName: "photo", accessibilityDescription: "image")?
+        guard let image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "attachment")?
             .withSymbolConfiguration(config) else {
             // fallback — plain emoji
             return NSAttributedString(string: "🖼", attributes: [
@@ -2769,23 +2793,19 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         }
         let attachment = NSTextAttachment()
         attachment.image = image
-        // Baseline tweak — the `photo` symbol's natural anchor is the
-        // top, so nudge it down slightly so it sits on the text baseline.
-        let baselineDescender = font.descender
+        // Center on the cap-height band rather than nudging off the descender,
+        // so the glyph reads as level with the surrounding text.
         attachment.bounds = CGRect(
             x: 0,
-            y: baselineDescender + 1,
+            y: (font.capHeight - image.size.height) / 2,
             width: image.size.width,
             height: image.size.height
         )
-        let str = NSMutableAttributedString(attachment: attachment)
-        // Trailing space so the symbol doesn't crowd the next glyph.
-        let leading = NSAttributedString(string: " ", attributes: [
+        let wrap = NSMutableAttributedString(attachment: attachment)
+        // Thin trailing space so the glyph doesn't crowd the next character.
+        wrap.append(NSAttributedString(string: " ", attributes: [
             .font: font, .foregroundColor: color
-        ])
-        let wrap = NSMutableAttributedString()
-        wrap.append(str)
-        wrap.append(leading)
+        ]))
         return wrap
     }
 
@@ -2874,7 +2894,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
                 cleaned,
                 font: promptFont,
                 color: .labelColor,
-                attachmentColor: .controlAccentColor
+                attachmentColor: Self.attachmentTint
             )
 
         case .reply:
@@ -3542,8 +3562,8 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// Turn header cell — text only, left-aligned, 4pt leading. Text
     /// sits right next to the disclosure triangle to mimic the Mail /
     /// Xcode style.
-    private func makeOrReuseTurnHeaderCell(id: NSUserInterfaceItemIdentifier) -> NSTableCellView {
-        if let reused = outlineView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView {
+    private func makeOrReuseTurnHeaderCell(id: NSUserInterfaceItemIdentifier) -> RecoloringCellView {
+        if let reused = outlineView.makeView(withIdentifier: id, owner: nil) as? RecoloringCellView {
             reused.textField.map(TurnOutlineCellTextLayout.applySingleLineBehavior)
             return reused
         }
@@ -3559,7 +3579,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         TurnOutlineCellTextLayout.applySingleLineBehavior(to: tf)
         tf.translatesAutoresizingMaskIntoConstraints = false
 
-        let cv = NSTableCellView()
+        let cv = RecoloringCellView()
         cv.identifier = id
         cv.textField = tf
         cv.addSubview(tf)
@@ -3609,9 +3629,10 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     private func makeOrReuseIconCell(
         id: NSUserInterfaceItemIdentifier,
         iconLeading: CGFloat = 4
-    ) -> NSTableCellView {
-        if let reused = outlineView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView {
+    ) -> RecoloringCellView {
+        if let reused = outlineView.makeView(withIdentifier: id, owner: nil) as? RecoloringCellView {
             reused.textField.map(TurnOutlineCellTextLayout.applySingleLineBehavior)
+            reused.clearRichText()
             return reused
         }
         let iv = NSImageView()
@@ -3626,7 +3647,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         TurnOutlineCellTextLayout.applySingleLineBehavior(to: tf)
         tf.translatesAutoresizingMaskIntoConstraints = false
 
-        let cv = NSTableCellView()
+        let cv = RecoloringCellView()
         cv.identifier = id
         cv.imageView = iv
         cv.textField = tf
@@ -4246,6 +4267,79 @@ extension TurnOutlineViewController {
 /// ordinary hierarchy (skill/subagent grouping, not Turn boundary) so
 /// the cyan tint stays even after the Turn-descendant indent guide
 /// experiments were removed.
+/// Cell that recolors its rich text — and any inline image attachment — to the
+/// selection text color while the row is emphasized. NSTableCellView's automatic
+/// selection recoloring silently no-ops once the attributed string contains an
+/// image attachment (the run keeps its baked colors), so attachment rows would
+/// otherwise show dark text + a dark glyph on the blue selection. Storing the
+/// base string and re-tinting on `backgroundStyle` restores the standard look.
+private final class RecoloringCellView: NSTableCellView {
+    private var baseText: NSAttributedString?
+    private var emphasizedText: NSAttributedString?
+
+    /// Set the cell's text through here (not `textField.attributedStringValue`)
+    /// so the base + its selection variant are captured once and swapped on
+    /// selection changes (no per-selection recompute/offscreen redraw).
+    func setRichText(_ attr: NSAttributedString) {
+        baseText = attr
+        emphasizedText = Self.recoloredForSelection(attr)
+        applyBackgroundStyle()
+    }
+
+    /// Clear captured text so a reused cell rebound via a plain
+    /// `attributedStringValue` (non-attachment rows) falls back to the default
+    /// selection recoloring instead of a stale base.
+    func clearRichText() {
+        baseText = nil
+        emphasizedText = nil
+    }
+
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { applyBackgroundStyle() }
+    }
+
+    private func applyBackgroundStyle() {
+        guard let textField, let baseText else { return }
+        textField.attributedStringValue =
+            (backgroundStyle == .emphasized ? (emphasizedText ?? baseText) : baseText)
+    }
+
+    private static func recoloredForSelection(_ s: NSAttributedString) -> NSAttributedString {
+        let color = NSColor.alternateSelectedControlTextColor
+        let result = NSMutableAttributedString(attributedString: s)
+        let full = NSRange(location: 0, length: result.length)
+        result.enumerateAttribute(.foregroundColor, in: full, options: []) { value, range, _ in
+            if value != nil { result.addAttribute(.foregroundColor, value: color, range: range) }
+        }
+        // Drop any search-highlight background so the selected row isn't white-on-yellow.
+        result.removeAttribute(.backgroundColor, range: full)
+        var attachments: [(NSRange, NSTextAttachment)] = []
+        result.enumerateAttribute(.attachment, in: full, options: []) { value, range, _ in
+            if let att = value as? NSTextAttachment, att.image != nil { attachments.append((range, att)) }
+        }
+        for (range, att) in attachments.reversed() {
+            guard let image = att.image else { continue }
+            let newAtt = NSTextAttachment()
+            newAtt.image = tint(image, to: color)
+            newAtt.bounds = att.bounds
+            result.replaceCharacters(in: range, with: NSAttributedString(attachment: newAtt))
+        }
+        return result
+    }
+
+    /// Recolor an image's opaque pixels to `color` (alpha preserved) via
+    /// source-atop compositing.
+    private static func tint(_ image: NSImage, to color: NSColor) -> NSImage {
+        let copy = NSImage(size: image.size)
+        copy.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        color.set()
+        NSRect(origin: .zero, size: image.size).fill(using: .sourceAtop)
+        copy.unlockFocus()
+        return copy
+    }
+}
+
 private final class SkillGroupRowView: NSTableRowView {
     override func drawBackground(in dirtyRect: NSRect) {
         super.drawBackground(in: dirtyRect)
