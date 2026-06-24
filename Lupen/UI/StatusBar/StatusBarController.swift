@@ -13,11 +13,6 @@ final class StatusBarController {
     struct CostDisplayState: Equatable {
         let costText: String?
         let showsPlaceholder: Bool
-        /// Render the cost run in the secondary label color. Used for
-        /// the `$0.00` idle state (6.13): the number's job is "alive
-        /// and tracking, nothing spent", so it shouldn't carry the
-        /// same visual weight as a real total.
-        var isDimmed: Bool = false
     }
 
     private let statusItem: NSStatusItem
@@ -88,7 +83,7 @@ final class StatusBarController {
             _ = store.launchProgress.phase
             _ = store.activeProvider
             _ = store.isRenderingActiveProviderSessions
-            // 6.13 `$0.00` idle state gates on "any indexed sessions" —
+            // 6.13 `$0` idle state gates on "any indexed sessions" —
             // re-render when the first shell projection lands so a fresh
             // install flips from icon-only to the dimmed zero.
             _ = store.sessions.isEmpty
@@ -196,7 +191,6 @@ final class StatusBarController {
         let composed = StatusBarAttributedTitle.compose(
             costText: costDisplay.costText,
             placeholder: costDisplay.showsPlaceholder,
-            dimmed: costDisplay.isDimmed,
             badge: badge,
             limit: limit
         )
@@ -238,7 +232,7 @@ final class StatusBarController {
             return CostDisplayState(costText: nil, showsPlaceholder: false)
         }
         guard cost > 0 else {
-            // Idle day (6.13): a dimmed "$0.00" confirms the app is
+            // Idle day (6.13): a visible "$0" confirms the app is
             // alive and tracking — a bare icon is ambiguous between
             // "nothing spent" and "not working". Gated on the provider
             // having ANY indexed sessions so a fresh install stays
@@ -250,9 +244,8 @@ final class StatusBarController {
                 return CostDisplayState(costText: nil, showsPlaceholder: false)
             }
             return CostDisplayState(
-                costText: compactCurrency ? "$0" : "$0.00",
-                showsPlaceholder: false,
-                isDimmed: true
+                costText: "$0",
+                showsPlaceholder: false
             )
         }
         let costText = compactCurrency

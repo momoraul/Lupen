@@ -50,16 +50,12 @@ enum StatusBarAttributedTitle {
     ///     off, or a fresh install with nothing indexed yet).
     ///   - placeholder: True during true cold start (no cache, no
     ///     parse yet). Replaces cost with `"..."`.
-    ///   - dimmed: Render the cost run in the secondary label color —
-    ///     the `$0.00` idle state (6.13) keeps a lower visual weight
-    ///     than a real spend total.
     ///   - badge: Parse-diagnostics severity — overlays a small
     ///     coloured dot on the icon's top-right.
     ///   - limit: 5-hour-limit consumption tier — tints the icon's
     ///     ring stroke.
     static func compose(costText: String?,
                         placeholder: Bool,
-                        dimmed: Bool = false,
                         badge: StatusBarIconComposer.BadgeSeverity,
                         limit: StatusBarIconComposer.LimitSeverity) -> Composed {
         // 1. Icon as inline attachment. The image is the *only* visual
@@ -112,9 +108,10 @@ enum StatusBarAttributedTitle {
                 string: t,
                 attributes: [
                     .font: monoFont,
-                    .foregroundColor: dimmed
-                        ? NSColor.secondaryLabelColor
-                        : NSColor.labelColor,
+                    // Always the primary label color so the idle "$0" stays
+                    // legible on the menu bar — secondaryLabel was near-invisible
+                    // over a busy/light wallpaper. Matches the icon's tint.
+                    .foregroundColor: NSColor.labelColor,
                 ]
             )
             result.append(digits)
