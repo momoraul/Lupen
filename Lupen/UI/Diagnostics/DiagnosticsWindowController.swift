@@ -39,7 +39,6 @@ final class DiagnosticsWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     func show() {
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        window?.bringToFront()
     }
 }

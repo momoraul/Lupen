@@ -33,7 +33,6 @@ final class VerifyCostsWindowController: NSWindowController {
     func show() {
         window?.title = store.activeProvider.verificationWindowTitle
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        window?.bringToFront()
     }
 }
