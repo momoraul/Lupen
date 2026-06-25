@@ -56,6 +56,23 @@ struct PreferencesForm: View {
             }
 
             Section {
+                Picker("Appearance", selection: $settings.appearanceMode) {
+                    ForEach(AppearanceMode.allCases, id: \.self) { mode in
+                        Text(mode.localizedTitle).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            } header: {
+                Text("Appearance")
+            } footer: {
+                Text("System follows your macOS appearance. Light or Dark pins Lupen to that appearance regardless of the system setting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section {
                 Picker("Mode", selection: $settings.activeProvider) {
                     ForEach(ProviderRegistry.all) { provider in
                         Text(provider.displayName).tag(provider.kind)

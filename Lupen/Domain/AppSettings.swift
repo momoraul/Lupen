@@ -26,6 +26,30 @@ enum SessionListLayoutMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// User-chosen app appearance override.
+///
+/// `system` follows the macOS Appearance setting (the default and prior
+/// behaviour); `light`/`dark` pin Lupen to that appearance regardless of the
+/// system. Applied app-wide via `NSApp.appearance` (see AppDelegate), so every
+/// window and the menu-bar item track it. The raw string is the persistence
+/// key in `app_settings.json` — renaming a case is a file-format break.
+///
+/// The `NSAppearance` mapping lives in the App layer (AppKit), not here, to
+/// keep this Domain type free of UI-framework dependencies.
+enum AppearanceMode: String, Codable, CaseIterable, Sendable {
+    case system
+    case light
+    case dark
+
+    var localizedTitle: String {
+        switch self {
+        case .system: return "System"
+        case .light:  return "Light"
+        case .dark:   return "Dark"
+        }
+    }
+}
+
 /// App-wide user preferences that outlive a single window lifetime.
 ///
 /// `@Observable` so SwiftUI forms, AppKit menus, and the sidebar can share a
@@ -45,6 +69,16 @@ final class AppSettings {
     var sessionListLayout: SessionListLayoutMode {
         didSet {
             guard oldValue != sessionListLayout else { return }
+            schedulePersist()
+        }
+    }
+
+    /// App-wide appearance override. Observed by `AppDelegate`, which mirrors
+    /// it onto `NSApp.appearance` and recomposes the menu-bar item, so picking
+    /// Light/Dark applies to every window and the status item promptly.
+    var appearanceMode: AppearanceMode {
+        didSet {
+            guard oldValue != appearanceMode else { return }
             schedulePersist()
         }
     }
@@ -187,6 +221,7 @@ final class AppSettings {
         self.storage = storage
         let loaded = storage.load()
         self.sessionListLayout = loaded.sessionListLayout
+        self.appearanceMode = loaded.appearanceMode
         self.activeProvider = loaded.activeProvider
         self.pinnedSessionIds = Set(loaded.pinnedSessionIds)
         self.claudeCodeRootPath = loaded.claudeCodeRootPath
@@ -314,6 +349,7 @@ final class AppSettings {
     private func currentSnapshot() -> AppSettingsData {
         AppSettingsData(
             sessionListLayout: sessionListLayout,
+            appearanceMode: appearanceMode,
             activeProvider: activeProvider,
             pinnedSessionIds: Array(pinnedSessionIds).sorted(),
             claudeCodeRootPath: claudeCodeRootPath,
