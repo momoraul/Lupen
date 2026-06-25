@@ -300,6 +300,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         startObservingProviderMode()
 
+        // Apply the persisted appearance override before any window or the
+        // status item is built, then keep NSApp.appearance in sync as the
+        // Preferences picker changes it.
+        applyAppearance()
+        startObservingAppearance()
+
         statusBarController = StatusBarController(
             store: store,
             settings: settings,
@@ -560,6 +566,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updateProviderSpecificMenuTitles()
                 self?.syncStoreToActiveProvider()
                 self?.startObservingProviderMode()
+            }
+        }
+    }
+
+    /// Mirror the user's appearance override onto `NSApp.appearance`. `nil`
+    /// (the `.system` case) hands appearance back to macOS; `.light`/`.dark`
+    /// pin every window to that appearance. Windows redraw themselves on the
+    /// change; the menu-bar item's baked, non-template icon does not, so we
+    /// recompose it explicitly afterwards (no-op until the controller exists).
+    private func applyAppearance() {
+        let appearance: NSAppearance?
+        switch settings.appearanceMode {
+        case .system: appearance = nil
+        case .light:  appearance = NSAppearance(named: .aqua)
+        case .dark:   appearance = NSAppearance(named: .darkAqua)
+        }
+        NSApp.appearance = appearance
+        statusBarController?.refreshForAppearanceChange()
+    }
+
+    /// Re-apply on every change to `settings.appearanceMode` and re-arm the
+    /// one-shot observation (same pattern as `startObservingProviderMode`).
+    private func startObservingAppearance() {
+        withObservationTracking {
+            _ = settings.appearanceMode
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                self?.applyAppearance()
+                self?.startObservingAppearance()
             }
         }
     }

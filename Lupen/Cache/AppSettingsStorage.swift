@@ -8,6 +8,8 @@ import Foundation
 /// older builds — missing keys fall back to `.default`.
 struct AppSettingsData: Codable, Equatable, Sendable {
     var sessionListLayout: SessionListLayoutMode
+    /// App-wide appearance override. `.system` follows macOS (default).
+    var appearanceMode: AppearanceMode
     var activeProvider: ProviderKind
     var pinnedSessionIds: [String]
     var claudeCodeRootPath: String?
@@ -72,6 +74,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         #endif
         return AppSettingsData(
             sessionListLayout: .flat,
+            appearanceMode: .system,
             activeProvider: .claudeCode,
             pinnedSessionIds: [],
             claudeCodeRootPath: nil,
@@ -89,6 +92,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
 
     init(
         sessionListLayout: SessionListLayoutMode,
+        appearanceMode: AppearanceMode = .system,
         activeProvider: ProviderKind = .claudeCode,
         pinnedSessionIds: [String],
         claudeCodeRootPath: String? = nil,
@@ -103,6 +107,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         statuslinePrefs: StatuslinePrefsData = .default
     ) {
         self.sessionListLayout = sessionListLayout
+        self.appearanceMode = appearanceMode
         self.activeProvider = activeProvider
         self.pinnedSessionIds = Self.normalizePinnedSessionIds(
             pinnedSessionIds,
@@ -128,6 +133,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case sessionListLayout
+        case appearanceMode
         case activeProvider
         case pinnedSessionIds
         case claudeCodeRootPath
@@ -148,6 +154,10 @@ struct AppSettingsData: Codable, Equatable, Sendable {
             SessionListLayoutMode.self,
             forKey: .sessionListLayout
         ) ?? AppSettingsData.default.sessionListLayout
+        self.appearanceMode = try c.decodeIfPresent(
+            AppearanceMode.self,
+            forKey: .appearanceMode
+        ) ?? AppSettingsData.default.appearanceMode
         let activeProviderRaw = try c.decodeIfPresent(String.self, forKey: .activeProvider)
         self.activeProvider = activeProviderRaw.flatMap(ProviderKind.init(rawValue:))
             ?? AppSettingsData.default.activeProvider
@@ -349,6 +359,7 @@ struct AppSettingsStorage: Sendable {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let normalized = AppSettingsData(
                 sessionListLayout: data.sessionListLayout,
+                appearanceMode: data.appearanceMode,
                 activeProvider: data.activeProvider,
                 pinnedSessionIds: data.pinnedSessionIds.sorted(),
                 claudeCodeRootPath: data.claudeCodeRootPath,

@@ -44,6 +44,16 @@ final class StatusBarController {
         self.onButtonClick = handler
     }
 
+    /// Recompose the status item after an app-appearance override flip
+    /// (`NSApp.appearance`). Windows redraw themselves on an appearance
+    /// change, but the menu-bar icon is a non-template image whose palette is
+    /// baked into a static `NSTextAttachment` at compose time, so it needs an
+    /// explicit recompose. Called by `AppDelegate` right after it sets
+    /// `NSApp.appearance`, so the new appearance is already in effect here.
+    func refreshForAppearanceChange() {
+        applyAttributedTitle()
+    }
+
     // MARK: - Button Setup
 
     private func configureButton() {
