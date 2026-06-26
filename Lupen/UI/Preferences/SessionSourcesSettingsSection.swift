@@ -113,12 +113,49 @@ struct SessionSourcesSettingsSection: View {
         panel.prompt = "Add"
         panel.message = "Choose a Claude Code projects folder or a Codex home."
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        // Infer kind/root from structure; fall back to Claude for an ambiguous
-        // folder (the user can remove it and re-add if the guess is wrong).
+
+        let kind: ProviderKind
+        let root: URL
         if let inferred = SessionSourceInference.infer(fromPickedFolder: url) {
-            _ = settings.addSource(root: inferred.root, kind: inferred.kind)
+            kind = inferred.kind
+            root = inferred.root
+        } else if let chosen = askKind(for: url) {
+            // Ambiguous layout — the user picks the kind rather than guessing.
+            kind = chosen
+            root = url
         } else {
-            _ = settings.addSource(root: url, kind: .claudeCode)
+            return
         }
+        if settings.addSource(root: root, kind: kind) == nil {
+            notifyDuplicate(root: root)
+        }
+    }
+
+    /// Ask which parser an ambiguous folder holds. Returns nil on Cancel.
+    private func askKind(for url: URL) -> ProviderKind? {
+        let alert = NSAlert()
+        alert.messageText = "Which kind of sessions does this folder hold?"
+        alert.informativeText = url.path
+        alert.addButton(withTitle: "Claude Code")
+        alert.addButton(withTitle: "Codex")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .claudeCode
+        case .alertSecondButtonReturn: return .codex
+        default: return nil
+        }
+    }
+
+    /// Tell the user the picked folder is already registered (addSource
+    /// returned nil on a duplicate normalized root).
+    private func notifyDuplicate(root: URL) {
+        let alert = NSAlert()
+        alert.messageText = "This folder is already a session source."
+        if let existing = SessionSourceInference.duplicateRootSource(
+            SessionSource.normalizedRoot(root), in: settings.resolvedSources
+        ) {
+            alert.informativeText = "“\(existing.name)” already points at \(root.path)."
+        }
+        alert.runModal()
     }
 }
