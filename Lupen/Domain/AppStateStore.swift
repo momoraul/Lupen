@@ -155,7 +155,15 @@ final class AppStateStore: @unchecked Sendable {
     /// The legacy `switchProvider` graph capture/restore was deleted in
     /// Phase 5.1.
     func setActiveProviderForProjectionSwap(_ provider: ProviderKind) {
-        activeSource = builtinSource(for: provider)
+        setActiveSourceForProjectionSwap(builtinSource(for: provider))
+    }
+
+    /// Projection swap to an arbitrary session source (built-in or not). The
+    /// driver layer flips which source's index is projected; this records the
+    /// active source so `activeProvider`, the per-source DB id, and the picker
+    /// selection all agree.
+    func setActiveSourceForProjectionSwap(_ source: SessionSource) {
+        activeSource = source
     }
 
     /// Public entry point for the active provider usage audit engine.
