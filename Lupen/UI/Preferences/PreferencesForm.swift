@@ -36,6 +36,16 @@ struct PreferencesForm: View {
     /// section. Production AppDelegate always supplies one.
     var statuslineService: StatuslineConnectionService? = nil
 
+    /// The active-source selection for the Mode picker. Reads `activeSourceId`
+    /// and routes writes through `setActiveSource` (which only honours enabled
+    /// sources — the picker lists exactly those).
+    private var activeSourceBinding: Binding<String> {
+        Binding(
+            get: { settings.activeSourceId },
+            set: { settings.setActiveSource(id: $0) }
+        )
+    }
+
     var body: some View {
         Form {
             Section {
@@ -73,20 +83,22 @@ struct PreferencesForm: View {
             }
 
             Section {
-                Picker("Mode", selection: $settings.activeProvider) {
-                    ForEach(ProviderRegistry.all) { provider in
-                        Text(provider.displayName).tag(provider.kind)
+                Picker("Mode", selection: activeSourceBinding) {
+                    ForEach(settings.enabledResolvedSources) { source in
+                        Text(source.name).tag(source.id)
                     }
                 }
                 .pickerStyle(.menu)
             } header: {
                 Text("Mode")
             } footer: {
-                Text("Lupen shows sessions, totals, reports, and verification for the selected mode.")
+                Text("Lupen shows sessions, totals, reports, and verification for the selected source.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            SessionSourcesSettingsSection(settings: settings)
 
             UpdatesSettingsSection()
 
