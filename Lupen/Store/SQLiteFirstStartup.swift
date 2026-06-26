@@ -103,14 +103,22 @@ final class SQLiteFirstStartup: @unchecked Sendable {
     init(
         source: ProviderIndexSource,
         appStore: AppStateStore,
+        sourceId: String? = nil,
         databaseURL: URL? = nil,
+        appSupportRoot: URL = LupenPaths.applicationSupportRoot(),
         refreshThrottle: TimeInterval = 0.5,
         rescanDebounce: TimeInterval = 0.5,
         isFileWatchingEnabled: Bool = true
     ) throws {
-        let resolvedURL = databaseURL ?? LupenPaths
-            .providerRoot(for: source.provider)
-            .appendingPathComponent("index.sqlite3")
+        // The index DB folder is keyed by the session source's stable id so
+        // sibling sources index in isolation. Defaulting to the provider's
+        // rawValue (== the built-in source id) keeps a built-in launch on its
+        // existing `providers/<rawValue>/index.sqlite3` file — byte-identical
+        // to the pre-multi-source layout, no rebuild.
+        let resolvedSourceId = sourceId ?? source.provider.rawValue
+        let resolvedURL = databaseURL ?? LupenPaths.indexDatabaseURL(
+            forSourceId: resolvedSourceId, appSupportRoot: appSupportRoot
+        )
         try FileManager.default.createDirectory(
             at: resolvedURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
