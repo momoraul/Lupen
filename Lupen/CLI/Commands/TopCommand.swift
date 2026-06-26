@@ -24,7 +24,7 @@ struct TopCommand: ParsableCommand {
     func run() throws {
         let range = try options.resolveRange()
 
-        let engine = try CLIEngine.open(provider: options.provider, refresh: options.refresh)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
 
         let periodCost = try engine.store.totalCostUSD(from: range.from, to: range.to)

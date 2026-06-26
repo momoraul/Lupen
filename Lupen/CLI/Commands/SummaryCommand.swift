@@ -14,7 +14,7 @@ struct SummaryCommand: ParsableCommand {
 
     func run() throws {
         let range = try options.resolveRange()
-        let engine = try CLIEngine.open(provider: options.provider, refresh: options.refresh)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
 
         let totals = try engine.store.usageTotals(from: range.from, to: range.to)

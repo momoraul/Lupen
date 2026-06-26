@@ -16,7 +16,7 @@ struct ModelsCommand: ParsableCommand {
     func run() throws {
         let range = try options.resolveRange()
         let sort = try BreakdownSort.parse(rowOptions.sort, default: .cost)
-        let engine = try CLIEngine.open(provider: options.provider, refresh: options.refresh)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
 
         let rows = try engine.store.modelUsageAggregates(from: range.from, to: range.to)
@@ -41,7 +41,7 @@ struct ProjectsCommand: ParsableCommand {
     func run() throws {
         let range = try options.resolveRange()
         let sort = try BreakdownSort.parse(rowOptions.sort, default: .cost)
-        let engine = try CLIEngine.open(provider: options.provider, refresh: options.refresh)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
 
         let rows = try engine.store.projectAggregates(from: range.from, to: range.to)

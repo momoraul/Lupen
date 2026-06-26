@@ -24,7 +24,7 @@ struct BudgetCommand: ParsableCommand {
 
     func run() throws {
         let range = try options.resolveRange()
-        let engine = try CLIEngine.open(provider: options.provider, refresh: options.refresh)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
 
         let report = CLIBudgetReport(
@@ -96,7 +96,7 @@ struct StatuslineCommand: ParsableCommand {
         // first run, or rebuild it after an app-version schema bump, but it
         // never imports.) Stay silent — no freshness note — so a bare
         // `$(lupen statusline)` capture is a single clean token.
-        let engine = try CLIEngine.open(provider: options.provider, refresh: false)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: false)
         let cost = try engine.store.totalCostUSD(from: range.from, to: range.to)
 
         if options.json {

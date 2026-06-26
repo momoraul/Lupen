@@ -18,7 +18,7 @@ struct SkillsCommand: ParsableCommand {
         let range = try options.resolveRange()
         let sort = try SkillSort.parse(rowOptions.sort, default: .cost)
 
-        let engine = try CLIEngine.open(provider: options.provider, refresh: options.refresh)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
 
         let aggregates = try engine.store.skillAggregates(from: range.from, to: range.to)
