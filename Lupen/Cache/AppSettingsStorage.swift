@@ -11,6 +11,12 @@ struct AppSettingsData: Codable, Equatable, Sendable {
     /// App-wide appearance override. `.system` follows macOS (default).
     var appearanceMode: AppearanceMode
     var activeProvider: ProviderKind
+    /// Stable id of the active session source — the authority for which source
+    /// is projected. Built-in source ids equal `ProviderKind.rawValue`, so
+    /// `activeProvider` is kept in sync as the active source's parser kind.
+    /// Migrated from `activeProvider` when absent in a file written by an
+    /// older build.
+    var activeSourceId: String
     var pinnedSessionIds: [String]
     var claudeCodeRootPath: String?
     var codexRootPath: String?
@@ -81,6 +87,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
             sessionListLayout: .flat,
             appearanceMode: .system,
             activeProvider: .claudeCode,
+            activeSourceId: ProviderKind.claudeCode.rawValue,
             pinnedSessionIds: [],
             claudeCodeRootPath: nil,
             codexRootPath: nil,
@@ -100,6 +107,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         sessionListLayout: SessionListLayoutMode,
         appearanceMode: AppearanceMode = .system,
         activeProvider: ProviderKind = .claudeCode,
+        activeSourceId: String? = nil,
         pinnedSessionIds: [String],
         claudeCodeRootPath: String? = nil,
         codexRootPath: String? = nil,
@@ -116,6 +124,9 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         self.sessionListLayout = sessionListLayout
         self.appearanceMode = appearanceMode
         self.activeProvider = activeProvider
+        // Built-in source id == ProviderKind.rawValue, so deriving from the
+        // active provider is the correct migration when no id was persisted.
+        self.activeSourceId = activeSourceId ?? activeProvider.rawValue
         self.pinnedSessionIds = Self.normalizePinnedSessionIds(
             pinnedSessionIds,
             defaultProvider: activeProvider
@@ -143,6 +154,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         case sessionListLayout
         case appearanceMode
         case activeProvider
+        case activeSourceId
         case pinnedSessionIds
         case claudeCodeRootPath
         case codexRootPath
@@ -170,6 +182,10 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         let activeProviderRaw = try c.decodeIfPresent(String.self, forKey: .activeProvider)
         self.activeProvider = activeProviderRaw.flatMap(ProviderKind.init(rawValue:))
             ?? AppSettingsData.default.activeProvider
+        // Migration: older files have no `activeSourceId` — derive it from the
+        // active provider (built-in id == rawValue).
+        self.activeSourceId = try c.decodeIfPresent(String.self, forKey: .activeSourceId)
+            ?? self.activeProvider.rawValue
         self.pinnedSessionIds = Self.normalizePinnedSessionIds(try c.decodeIfPresent(
             [String].self,
             forKey: .pinnedSessionIds
@@ -374,6 +390,7 @@ struct AppSettingsStorage: Sendable {
                 sessionListLayout: data.sessionListLayout,
                 appearanceMode: data.appearanceMode,
                 activeProvider: data.activeProvider,
+                activeSourceId: data.activeSourceId,
                 pinnedSessionIds: data.pinnedSessionIds.sorted(),
                 claudeCodeRootPath: data.claudeCodeRootPath,
                 codexRootPath: data.codexRootPath,

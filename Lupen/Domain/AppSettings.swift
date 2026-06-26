@@ -83,13 +83,30 @@ final class AppSettings {
         }
     }
 
-    /// Global provider mode. Every user-visible surface should render data
-    /// for this provider only.
-    var activeProvider: ProviderKind {
+    /// Stable id of the active session source — the persisted authority for
+    /// which source is shown. Built-in source ids equal `ProviderKind.rawValue`
+    /// so `activeProvider` below round-trips through it losslessly.
+    var activeSourceId: String {
         didSet {
-            guard oldValue != activeProvider else { return }
+            guard oldValue != activeSourceId else { return }
             schedulePersist()
         }
+    }
+
+    /// Global provider mode. Every user-visible surface should render data
+    /// for this provider only. Projection of `activeSourceId`: the getter
+    /// resolves the active source's parser kind, the setter maps a kind to its
+    /// built-in source id. Keeps the many call sites that read/write
+    /// `activeProvider` working unchanged; observation still fires because the
+    /// accessors touch the observed `activeSourceId` (and `sessionSources`
+    /// only for non-built-in ids).
+    var activeProvider: ProviderKind {
+        get {
+            ProviderKind(rawValue: activeSourceId)
+                ?? sessionSources.source(id: activeSourceId)?.kind
+                ?? .claudeCode
+        }
+        set { activeSourceId = newValue.rawValue }
     }
 
     /// IDs of sessions the user has pinned to the top of the Flat layout.
@@ -233,7 +250,7 @@ final class AppSettings {
         let loaded = storage.load()
         self.sessionListLayout = loaded.sessionListLayout
         self.appearanceMode = loaded.appearanceMode
-        self.activeProvider = loaded.activeProvider
+        self.activeSourceId = loaded.activeSourceId
         self.pinnedSessionIds = Set(loaded.pinnedSessionIds)
         self.claudeCodeRootPath = loaded.claudeCodeRootPath
         self.codexRootPath = loaded.codexRootPath
@@ -363,6 +380,7 @@ final class AppSettings {
             sessionListLayout: sessionListLayout,
             appearanceMode: appearanceMode,
             activeProvider: activeProvider,
+            activeSourceId: activeSourceId,
             pinnedSessionIds: Array(pinnedSessionIds).sorted(),
             claudeCodeRootPath: claudeCodeRootPath,
             codexRootPath: codexRootPath,
