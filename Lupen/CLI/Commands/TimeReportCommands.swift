@@ -41,7 +41,7 @@ enum TimeReportRunner {
         let range = try options.resolveRange()
         let sort = try TimeSort.parse(rowOptions.sort, default: .date)
 
-        let engine = try CLIEngine.open(provider: options.provider, refresh: options.refresh)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
 
         let daily = try engine.store.usageBuckets(hourly: false, from: range.from, to: range.to)

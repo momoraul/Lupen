@@ -86,8 +86,37 @@ extension ProviderKind: ExpressibleByArgument {
 /// flags read identically across the tool (the ccusage-style vocabulary:
 /// `--since/--until`, `--last`, `--month`, `--json`).
 struct CLIGlobalOptions: ParsableArguments {
-    @Option(name: .long, help: "Provider to report on.")
-    var provider: ProviderKind = .claudeCode
+    @Option(name: .customLong("provider"), help: "Built-in provider to report on (claudeCode | codex). Ignored when --source is given.")
+    var providerArg: ProviderKind = .claudeCode
+
+    @Option(name: .customLong("source"), help: "Session source to report on, by name or id (overrides --provider). Includes user-added and auto-detected sources.")
+    var source: String?
+
+    /// The resolved session source: a custom source when --source matches one,
+    /// otherwise the built-in for --provider. The built-in path is cheap (no
+    /// settings load / detect cost) so the common case stays fast. An unknown
+    /// --source is rejected in `validate()`, so this only reaches the fallback
+    /// for a blank/absent value.
+    var resolvedSource: SessionSource {
+        if let source, !source.trimmingCharacters(in: .whitespaces).isEmpty,
+           let resolved = CLISourceResolver.resolveLive(source) {
+            return resolved
+        }
+        return SessionSourceRegistry.builtinSource(
+            for: providerArg,
+            claudeRoot: FileDiscovery().projectsDirectory,
+            codexRoot: CodexSessionDiscovery().codexHome
+        )
+    }
+
+    /// Parser kind of the resolved source — what commands branch on. Skips the
+    /// live resolution on the common (no --source) path.
+    var provider: ProviderKind {
+        if let source, !source.trimmingCharacters(in: .whitespaces).isEmpty {
+            return resolvedSource.kind
+        }
+        return providerArg
+    }
 
     @Option(name: .long, help: "Start date (YYYY-MM-DD), inclusive. Pair with --until.")
     var since: String?
@@ -119,6 +148,16 @@ struct CLIGlobalOptions: ParsableArguments {
     func validate() throws {
         if json && csv {
             throw ValidationError("Use only one of --json or --csv.")
+        }
+        // Reject an unknown --source up front instead of silently falling back
+        // to the default provider (which would print a *different* source's
+        // data). Built-in/absent values resolve trivially.
+        if let source, !source.trimmingCharacters(in: .whitespaces).isEmpty,
+           CLISourceResolver.resolveLive(source) == nil {
+            throw ValidationError(
+                "Unknown --source '\(source)'. Pass a session source name or id "
+                + "(see Settings ▸ Session Sources), or omit --source."
+            )
         }
     }
 

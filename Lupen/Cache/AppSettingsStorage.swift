@@ -11,6 +11,12 @@ struct AppSettingsData: Codable, Equatable, Sendable {
     /// App-wide appearance override. `.system` follows macOS (default).
     var appearanceMode: AppearanceMode
     var activeProvider: ProviderKind
+    /// Stable id of the active session source — the authority for which source
+    /// is projected. Built-in source ids equal `ProviderKind.rawValue`, so
+    /// `activeProvider` is kept in sync as the active source's parser kind.
+    /// Migrated from `activeProvider` when absent in a file written by an
+    /// older build.
+    var activeSourceId: String
     var pinnedSessionIds: [String]
     var claudeCodeRootPath: String?
     var codexRootPath: String?
@@ -54,6 +60,11 @@ struct AppSettingsData: Codable, Equatable, Sendable {
     /// fields needed to remember a Connect across launches without
     /// re-parsing settings.json from scratch on every read.
     var statuslinePrefs: StatuslinePrefsData
+    /// User-defined session sources: added folders plus enable/name overrides
+    /// for built-in and auto-detected sources. Empty = defaults only. Stored
+    /// in its OWN field (not `providerConfigurations`) to avoid the legacy
+    /// `ensureBuiltIn` root-clobber on persist.
+    var sessionSources: [SessionSource]
 
     /// Default on first launch / corrupt file fallback.
     ///
@@ -76,6 +87,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
             sessionListLayout: .flat,
             appearanceMode: .system,
             activeProvider: .claudeCode,
+            activeSourceId: ProviderKind.claudeCode.rawValue,
             pinnedSessionIds: [],
             claudeCodeRootPath: nil,
             codexRootPath: nil,
@@ -86,7 +98,8 @@ struct AppSettingsData: Codable, Equatable, Sendable {
             startAtLogin: false,
             showParseWarningBadge: defaultBadgesOn,
             showParseErrorBadge: defaultBadgesOn,
-            statuslinePrefs: .default
+            statuslinePrefs: .default,
+            sessionSources: []
         )
     }()
 
@@ -94,6 +107,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         sessionListLayout: SessionListLayoutMode,
         appearanceMode: AppearanceMode = .system,
         activeProvider: ProviderKind = .claudeCode,
+        activeSourceId: String? = nil,
         pinnedSessionIds: [String],
         claudeCodeRootPath: String? = nil,
         codexRootPath: String? = nil,
@@ -104,11 +118,15 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         startAtLogin: Bool,
         showParseWarningBadge: Bool,
         showParseErrorBadge: Bool,
-        statuslinePrefs: StatuslinePrefsData = .default
+        statuslinePrefs: StatuslinePrefsData = .default,
+        sessionSources: [SessionSource] = []
     ) {
         self.sessionListLayout = sessionListLayout
         self.appearanceMode = appearanceMode
         self.activeProvider = activeProvider
+        // Built-in source id == ProviderKind.rawValue, so deriving from the
+        // active provider is the correct migration when no id was persisted.
+        self.activeSourceId = activeSourceId ?? activeProvider.rawValue
         self.pinnedSessionIds = Self.normalizePinnedSessionIds(
             pinnedSessionIds,
             defaultProvider: activeProvider
@@ -129,12 +147,14 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         self.showParseWarningBadge = showParseWarningBadge
         self.showParseErrorBadge = showParseErrorBadge
         self.statuslinePrefs = statuslinePrefs
+        self.sessionSources = sessionSources
     }
 
     enum CodingKeys: String, CodingKey {
         case sessionListLayout
         case appearanceMode
         case activeProvider
+        case activeSourceId
         case pinnedSessionIds
         case claudeCodeRootPath
         case codexRootPath
@@ -146,6 +166,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         case showParseWarningBadge
         case showParseErrorBadge
         case statuslinePrefs
+        case sessionSources
     }
 
     init(from decoder: Decoder) throws {
@@ -161,6 +182,10 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         let activeProviderRaw = try c.decodeIfPresent(String.self, forKey: .activeProvider)
         self.activeProvider = activeProviderRaw.flatMap(ProviderKind.init(rawValue:))
             ?? AppSettingsData.default.activeProvider
+        // Migration: older files have no `activeSourceId` — derive it from the
+        // active provider (built-in id == rawValue).
+        self.activeSourceId = try c.decodeIfPresent(String.self, forKey: .activeSourceId)
+            ?? self.activeProvider.rawValue
         self.pinnedSessionIds = Self.normalizePinnedSessionIds(try c.decodeIfPresent(
             [String].self,
             forKey: .pinnedSessionIds
@@ -211,6 +236,10 @@ struct AppSettingsData: Codable, Equatable, Sendable {
             StatuslinePrefsData.self,
             forKey: .statuslinePrefs
         ) ?? AppSettingsData.default.statuslinePrefs
+        self.sessionSources = try c.decodeIfPresent(
+            [SessionSource].self,
+            forKey: .sessionSources
+        ) ?? AppSettingsData.default.sessionSources
     }
 
     private static func normalizePinnedSessionIds(_ ids: [String], defaultProvider: ProviderKind) -> [String] {
@@ -361,6 +390,7 @@ struct AppSettingsStorage: Sendable {
                 sessionListLayout: data.sessionListLayout,
                 appearanceMode: data.appearanceMode,
                 activeProvider: data.activeProvider,
+                activeSourceId: data.activeSourceId,
                 pinnedSessionIds: data.pinnedSessionIds.sorted(),
                 claudeCodeRootPath: data.claudeCodeRootPath,
                 codexRootPath: data.codexRootPath,
@@ -371,7 +401,8 @@ struct AppSettingsStorage: Sendable {
                 startAtLogin: data.startAtLogin,
                 showParseWarningBadge: data.showParseWarningBadge,
                 showParseErrorBadge: data.showParseErrorBadge,
-                statuslinePrefs: data.statuslinePrefs
+                statuslinePrefs: data.statuslinePrefs,
+                sessionSources: data.sessionSources
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

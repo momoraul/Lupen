@@ -189,15 +189,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferencesWindowController: PreferencesWindowController?
     private var manageSessionsWindowController: ManageSessionsWindowController?
     /// Store cache the manage window uses to read an inactive provider's index.
-    private var managedReadStores: [ProviderKind: ProviderStore] = [:]
+    private var managedReadStores: [String: ProviderStore] = [:]
     private var verifyUsageMenuItem: NSMenuItem?
     private lazy var logWindowController = LogWindowController(logger: LoggerService.shared)
     private let smokeTest = LaunchSmokeTestConfig.current()
     private let launchDiagnosticsConfig = LaunchDiagnosticsConfig.current()
-    /// SQLite-first drivers, one per provider (plan 3.5): both keep
-    /// indexing in the background; only the active provider's driver
-    /// projects into the store. Provider switch = projection swap.
-    private var sqliteFirstStartups: [ProviderKind: SQLiteFirstStartup] = [:]
+    /// SQLite-first drivers, keyed by session-source id (a built-in's id is
+    /// its `ProviderKind.rawValue`). Only the active source's driver projects
+    /// into the store; switching is a projection swap. Keying by source id
+    /// (not bare `ProviderKind`) lets sibling sources of the same kind each
+    /// own a driver.
+    private var sqliteFirstStartups: [String: SQLiteFirstStartup] = [:]
     private var sqliteFirstCodexHome: URL?
     private var smokeTestCompleted = false
 
@@ -369,15 +371,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WallClockCoordinator.shared.start()
 
         let startupProvider = settings.activeProvider
-        let startupPlan = StartupDataLoadPlan(
-            provider: startupProvider,
-            codexHome: codexHomeURLFromSettings()
-        )
         armSmokeTestTimeoutIfNeeded(provider: startupProvider)
         // Plan 5.1: SQLite-first is the only startup path — the legacy
         // cache/orchestrator pipeline was deleted. GUI smoke runs
         // measure this same path and exit once indexing settles.
-        startSQLiteFirstStartup(plan: startupPlan)
+        //
+        // If the persisted active source is a user-added/auto-detected one,
+        // restore it via the custom path; otherwise take the built-in plan
+        // path (smoke runs only ever target built-ins).
+        if let active = settings.resolvedSources.source(id: settings.activeSourceId),
+           active.enabled, active.origin != .builtin {
+            sqliteFirstActivateCustom(source: active)
+        } else {
+            startSQLiteFirstStartup(plan: StartupDataLoadPlan(
+                provider: startupProvider,
+                codexHome: codexHomeURLFromSettings()
+            ))
+        }
         if smokeTest != nil {
             pollSmokeTestCompletion(provider: startupProvider)
         }
@@ -419,7 +429,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// drivers keep importing with their store writes muted.
     private func sqliteFirstActivate(provider: ProviderKind, codexHome: URL?) {
         guard let store else { return }
-        for (kind, startup) in sqliteFirstStartups where kind != provider {
+        let sourceId = provider.rawValue
+        for (key, startup) in sqliteFirstStartups where key != sourceId {
             startup.deactivateProjection()
         }
         store.setActiveProviderForProjectionSwap(provider)
@@ -429,14 +440,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // import bounded on the real 100 GB corpus (the legacy
             // full-load entry points were deleted in 5.1).
             let resolvedHome = CodexSessionDiscovery(codexHome: codexHome).codexHome
-            if sqliteFirstStartups[.codex] != nil, sqliteFirstCodexHome != resolvedHome {
-                sqliteFirstStartups[.codex]?.stop()
-                sqliteFirstStartups[.codex] = nil
+            if sqliteFirstStartups[sourceId] != nil, sqliteFirstCodexHome != resolvedHome {
+                sqliteFirstStartups[sourceId]?.stop()
+                sqliteFirstStartups[sourceId] = nil
             }
             sqliteFirstCodexHome = resolvedHome
         }
 
-        if let existing = sqliteFirstStartups[provider] {
+        if let existing = sqliteFirstStartups[sourceId] {
             existing.activateProjection()
             return
         }
@@ -452,8 +463,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
         do {
-            let startup = try SQLiteFirstStartup(source: source, appStore: store)
-            sqliteFirstStartups[provider] = startup
+            let startup = try SQLiteFirstStartup(source: source, appStore: store, sourceId: sourceId)
+            sqliteFirstStartups[sourceId] = startup
             startup.start()   // a fresh driver starts with its projection active
             LaunchMemoryCheckpoint.record(
                 "app.sqliteFirst.startupBegan",
@@ -559,12 +570,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startObservingProviderMode() {
         withObservationTracking {
-            _ = settings.activeProvider
+            _ = settings.activeSourceId
             _ = settings.codexRootPath
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 self?.updateProviderSpecificMenuTitles()
-                self?.syncStoreToActiveProvider()
+                self?.syncStoreToActiveSource()
                 self?.startObservingProviderMode()
             }
         }
@@ -604,13 +615,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         verifyUsageMenuItem?.title = settings.activeProvider.verificationMenuTitle
     }
 
-    private func syncStoreToActiveProvider() {
-        // Plan 3.5/5.1: switching providers swaps the active projection
-        // — there is no legacy switch path anymore.
-        sqliteFirstActivate(
-            provider: settings.activeProvider,
-            codexHome: codexHomeURLFromSettings()
-        )
+    private func syncStoreToActiveSource() {
+        // Switching the active source is a projection swap. Built-in sources
+        // keep the legacy per-provider path (which honours the codexRootPath /
+        // smoke codexHome overrides); a user-added/auto-detected source uses
+        // its own root via the custom path. A missing/disabled active id falls
+        // back to the built-in path for the resolved provider.
+        let activeId = settings.activeSourceId
+        if let active = settings.resolvedSources.source(id: activeId),
+           active.enabled, active.origin != .builtin {
+            sqliteFirstActivateCustom(source: active)
+        } else {
+            sqliteFirstActivate(
+                provider: settings.activeProvider,
+                codexHome: codexHomeURLFromSettings()
+            )
+        }
+    }
+
+    /// Activate a non-built-in source: project its index, creating and starting
+    /// the driver on first use. Mirrors `sqliteFirstActivate(provider:)` but
+    /// keyed by the source's stable id and rooted at `source.root`.
+    private func sqliteFirstActivateCustom(source: SessionSource) {
+        guard let store else { return }
+        let sourceId = source.id
+        for (key, startup) in sqliteFirstStartups where key != sourceId {
+            startup.deactivateProjection()
+        }
+        store.setActiveSourceForProjectionSwap(source)
+
+        if let existing = sqliteFirstStartups[sourceId] {
+            existing.activateProjection()
+            return
+        }
+        do {
+            let startup = try SQLiteFirstStartup(
+                source: ProviderIndexSource(source), appStore: store, sourceId: sourceId
+            )
+            sqliteFirstStartups[sourceId] = startup
+            startup.start()
+            LaunchMemoryCheckpoint.record(
+                "app.sqliteFirst.startupBegan",
+                config: launchDiagnosticsConfig,
+                metadata: ["provider": source.kind.rawValue, "source": sourceId]
+            )
+        } catch {
+            LoggerService.shared.error(
+                "SQLite-first startup failed (source \(sourceId)): \(error)",
+                context: "App"
+            )
+            store.isLoading = false
+        }
     }
 
     private func codexHomeURLFromSettings() -> URL? {
@@ -1049,48 +1104,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Manage Sessions & Storage window
 
     @objc func openManageSessions(_ sender: Any?) {
-        if manageSessionsWindowController == nil {
+        let sources = settings.enabledResolvedSources
+        guard let active = settings.resolvedSources.source(id: settings.activeSourceId)
+            ?? sources.first else { return }
+        if let controller = manageSessionsWindowController {
+            // Reused singleton — re-push the current sources/active so a source
+            // added/removed/activated since the last open is reflected.
+            controller.update(sources: sources, active: active)
+        } else {
             manageSessionsWindowController = ManageSessionsWindowController(
-                provider: settings.activeProvider,
+                source: active,
+                sources: sources,
                 isIndexingProvider: { [weak self] in self?.store.isIndexing ?? false },
-                storeProvider: { [weak self] provider in self?.manageProviderStore(for: provider) },
-                contextProvider: { [weak self] provider in self?.manageContext(for: provider) },
-                requestRescan: { [weak self] provider in self?.sqliteFirstStartups[provider]?.coordinator.requestRescan() },
-                rebuildIndex: { [weak self] provider in self?.sqliteFirstStartups[provider]?.rebuildIndex() }
+                storeProvider: { [weak self] source in self?.manageSourceStore(for: source) },
+                contextProvider: { [weak self] source in self?.manageContext(for: source) },
+                requestRescan: { [weak self] source in self?.sqliteFirstStartups[source.id]?.coordinator.requestRescan() },
+                rebuildIndex: { [weak self] source in self?.sqliteFirstStartups[source.id]?.rebuildIndex() },
+                hasLiveDriver: { [weak self] source in self?.sqliteFirstStartups[source.id] != nil }
             )
         }
         manageSessionsWindowController?.show()
     }
 
-    /// Provides the indexing store for the active provider, or opens that
-    /// provider's index DB directly (for read/delete consistency) when
-    /// inactive. Lets the manage window show Claude Code tab sessions even
-    /// when started on codex.
-    private func manageProviderStore(for provider: ProviderKind) -> ProviderStore? {
-        if let startup = sqliteFirstStartups[provider] {
+    /// Provides the indexing store for a source, or opens that source's index
+    /// DB directly (for read/delete consistency) when its driver isn't active.
+    /// Lets the manage window show any enabled source's sessions.
+    private func manageSourceStore(for source: SessionSource) -> ProviderStore? {
+        if let startup = sqliteFirstStartups[source.id] {
             // Prefer the active store, and release any read-only pool opened
             // while inactive (avoids file-handle/WAL leaks — a GRDB pool closes
             // when its ref is released).
-            managedReadStores[provider] = nil
+            managedReadStores[source.id] = nil
             return startup.coordinator.store
         }
-        if let cached = managedReadStores[provider] {
+        if let cached = managedReadStores[source.id] {
             return cached
         }
-        let url = LupenPaths.indexDatabaseURL(for: provider)
+        let url = LupenPaths.indexDatabaseURL(forSourceId: source.id)
         guard FileManager.default.fileExists(atPath: url.path),
               let database = try? ProviderDatabase.open(at: url) else { return nil }
         let store = ProviderStore(database: database)
-        managedReadStores[provider] = store
+        managedReadStores[source.id] = store
         return store
     }
 
-    private func manageContext(for provider: ProviderKind) -> ManageProviderContext? {
-        switch provider {
+    private func manageContext(for source: SessionSource) -> ManageProviderContext? {
+        switch source.kind {
         case .claudeCode:
-            return .claude(projectsDirectory: FileDiscovery().projectsDirectory)
+            return .claude(projectsDirectory: source.root)
         case .codex:
-            return .codex(codexHome: CodexSessionDiscovery(codexHome: codexHomeURLFromSettings()).codexHome)
+            return .codex(codexHome: source.root)
         }
     }
 

@@ -32,16 +32,41 @@ struct CLIEngine {
         appSupportRoot: URL = LupenPaths.applicationSupportRoot(),
         progress: (String) -> Void = { CLIOutput.note($0) }
     ) throws -> CLIEngine {
-        let database = try ProviderDatabase.open(provider: provider, appSupportRoot: appSupportRoot)
+        // A built-in provider is just its built-in source; delegate so the
+        // index path / refresh source are identical to the per-source path.
+        try open(
+            source: SessionSourceRegistry.builtinSource(
+                for: provider,
+                claudeRoot: FileDiscovery().projectsDirectory,
+                codexRoot: CodexSessionDiscovery().codexHome
+            ),
+            refresh: refresh,
+            appSupportRoot: appSupportRoot,
+            progress: progress
+        )
+    }
+
+    /// Open the index for an explicit session source — the per-source DB under
+    /// `providers/<source.id>/`, refreshed from `source.root` via the source's
+    /// parser. The built-in convenience above routes through here.
+    static func open(
+        source: SessionSource,
+        refresh: Bool,
+        appSupportRoot: URL = LupenPaths.applicationSupportRoot(),
+        progress: (String) -> Void = { CLIOutput.note($0) }
+    ) throws -> CLIEngine {
+        let database = try ProviderDatabase.open(
+            at: LupenPaths.indexDatabaseURL(forSourceId: source.id, appSupportRoot: appSupportRoot)
+        )
         let store = ProviderStore(database: database)
 
         var outcome: CLIRefresher.Outcome?
         if refresh {
-            let lockURL = LupenPaths.refreshLockURL(for: provider, appSupportRoot: appSupportRoot)
+            let lockURL = LupenPaths.refreshLockURL(forSourceId: source.id, appSupportRoot: appSupportRoot)
             if let lock = CLIProcessLock.acquire(at: lockURL, timeout: 30) {
                 defer { lock.release() }
                 outcome = CLIRefresher.run(
-                    source: CLIRefresher.source(for: provider),
+                    source: ProviderIndexSource(source),
                     store: store,
                     progress: progress
                 )
@@ -51,7 +76,7 @@ struct CLIEngine {
         }
 
         return CLIEngine(
-            provider: provider,
+            provider: source.kind,
             store: store,
             bootstrapOutcome: database.outcome,
             didRefresh: refresh,

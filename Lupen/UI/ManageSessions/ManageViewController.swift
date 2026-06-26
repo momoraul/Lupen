@@ -38,7 +38,7 @@ final class ManageViewController: NSViewController {
     private let sessionResumer = SessionResumer()
 
     private let providerSeg = NSSegmentedControl(
-        labels: ["Claude Code", "Codex"], trackingMode: .selectOne, target: nil, action: nil)
+        labels: [], trackingMode: .selectOne, target: nil, action: nil)
     private let scopeSeg = NSSegmentedControl(
         labels: ["Sessions", "Lupen Cache", "All Disk"], trackingMode: .selectOne, target: nil, action: nil)
     private let searchField = NSSearchField()
@@ -109,9 +109,9 @@ final class ManageViewController: NSViewController {
     // MARK: - Build
 
     private func buildUI() {
-        providerSeg.selectedSegment = store.provider == .claudeCode ? 0 : 1
         providerSeg.target = self
         providerSeg.action = #selector(providerChanged)
+        rebuildProviderSegments()
 
         scopeSeg.selectedSegment = 0
         scopeSeg.target = self
@@ -310,8 +310,22 @@ final class ManageViewController: NSViewController {
 
     // MARK: - Toolbar actions
 
+    /// Populate the source switcher from the enabled sources (one segment
+    /// each, labelled by name), selecting the current source.
+    private func rebuildProviderSegments() {
+        providerSeg.segmentCount = store.sources.count
+        for (index, src) in store.sources.enumerated() {
+            providerSeg.setLabel(src.name, forSegment: index)
+        }
+        if let index = store.sources.firstIndex(where: { $0.id == store.source.id }) {
+            providerSeg.selectedSegment = index
+        }
+    }
+
     @objc private func providerChanged() {
-        store.switchProvider(providerSeg.selectedSegment == 0 ? .claudeCode : .codex)
+        let index = providerSeg.selectedSegment
+        guard store.sources.indices.contains(index) else { return }
+        store.switchSource(store.sources[index])
     }
     @objc private func scopeChanged() {
         let scopes: [ManageScope] = [.sessions, .cache, .allDisk]
@@ -503,6 +517,17 @@ final class ManageViewController: NSViewController {
     // MARK: - Cache tab
 
     private func confirmRebuild() {
+        // An enabled-but-never-activated source has no live driver, so a
+        // rebuild would silently do nothing. Tell the user how to enable it
+        // instead of pretending the rebuild ran.
+        guard store.canManageIndex else {
+            let info = NSAlert()
+            info.messageText = "Activate this source to rebuild"
+            info.informativeText = "Switch to this source in the sidebar (the mode picker) first — only the active source's index can be rebuilt."
+            info.addButton(withTitle: "OK")
+            info.runModal()
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Rebuild the index?"
         alert.informativeText = "Clears the derived index and re-scans your session logs. Original logs are not modified."
@@ -531,6 +556,9 @@ final class ManageViewController: NSViewController {
 
     private func refresh() {
         guard isReady else { return }
+        // Keep the source switcher in sync with the store (handles the window
+        // being re-opened with an updated source list / active selection).
+        rebuildProviderSegments()
         switch store.scope {
         case .sessions:
             cachedRows = store.displayRows

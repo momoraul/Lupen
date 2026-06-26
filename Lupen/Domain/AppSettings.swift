@@ -83,13 +83,30 @@ final class AppSettings {
         }
     }
 
-    /// Global provider mode. Every user-visible surface should render data
-    /// for this provider only.
-    var activeProvider: ProviderKind {
+    /// Stable id of the active session source — the persisted authority for
+    /// which source is shown. Built-in source ids equal `ProviderKind.rawValue`
+    /// so `activeProvider` below round-trips through it losslessly.
+    var activeSourceId: String {
         didSet {
-            guard oldValue != activeProvider else { return }
+            guard oldValue != activeSourceId else { return }
             schedulePersist()
         }
+    }
+
+    /// Global provider mode. Every user-visible surface should render data
+    /// for this provider only. Projection of `activeSourceId`: the getter
+    /// resolves the active source's parser kind, the setter maps a kind to its
+    /// built-in source id. Keeps the many call sites that read/write
+    /// `activeProvider` working unchanged; observation still fires because the
+    /// accessors touch the observed `activeSourceId` (and `sessionSources`
+    /// only for non-built-in ids).
+    var activeProvider: ProviderKind {
+        get {
+            ProviderKind(rawValue: activeSourceId)
+                ?? sessionSources.source(id: activeSourceId)?.kind
+                ?? .claudeCode
+        }
+        set { activeSourceId = newValue.rawValue }
     }
 
     /// IDs of sessions the user has pinned to the top of the Flat layout.
@@ -206,6 +223,155 @@ final class AppSettings {
         }
     }
 
+    /// User's session-source overrides (added folders + enable/name changes).
+    /// Built-in and auto-detected sources are layered on at resolve time; this
+    /// stores only what the user customised. Observed so the picker/indexing
+    /// react when a source is added/activated.
+    var sessionSources: [SessionSource] {
+        didSet {
+            guard oldValue != sessionSources else { return }
+            recomputeResolvedSources()
+            schedulePersist()
+        }
+    }
+
+    /// The composed, canonical source list — built-in defaults + auto-detected
+    /// candidates + the user's `sessionSources` overrides — recomputed only
+    /// when `sessionSources` changes (the composition runs `detect()`, which
+    /// stats the filesystem, so it is cached here rather than recomputed per
+    /// read). The mode picker and the indexing lifecycle read from this SSOT.
+    private(set) var resolvedSources: [SessionSource]
+
+    /// Whitelist projection of `resolvedSources` — only enabled sources are
+    /// indexed and shown in the picker.
+    var enabledResolvedSources: [SessionSource] { resolvedSources.enabledSources }
+
+    private func recomputeResolvedSources() {
+        resolvedSources = SessionSourceRegistry.resolve(saved: sessionSources)
+    }
+
+    // MARK: - Session source management
+    //
+    // The Settings UI drives these; each mutates the `sessionSources` override
+    // list (or `activeSourceId`), which recomputes `resolvedSources` and
+    // persists. Built-in and auto-detected sources are enabled/renamed by
+    // writing an override carrying their id; only user-added sources are
+    // removable.
+
+    /// Register a user folder as a new enabled source. Returns nil if the
+    /// normalized root duplicates an existing source. Name defaults to a
+    /// suggestion and is made unique.
+    @discardableResult
+    func addSource(root: URL, kind: ProviderKind, name: String? = nil) -> SessionSource? {
+        let normalizedRoot = SessionSource.normalizedRoot(root)
+        guard SessionSourceInference.duplicateRootSource(normalizedRoot, in: resolvedSources) == nil
+        else { return nil }
+        let base = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suggested = (base?.isEmpty == false ? base! :
+            SessionSourceInference.suggestName(forRoot: normalizedRoot, kind: kind))
+        let uniqueName = SessionSourceInference.uniqueName(
+            suggested, existingNames: resolvedSources.map(\.name)
+        )
+        let source = SessionSource(
+            id: makeUserSourceId(forRoot: normalizedRoot, kind: kind),
+            name: uniqueName, kind: kind, root: normalizedRoot,
+            origin: .userAdded, enabled: true
+        )
+        sessionSources = sessionSources + [source]
+        return source
+    }
+
+    /// Remove a user-added source. Built-in and auto-detected sources are not
+    /// removable (disable them instead). If it was active, falls back to the
+    /// first remaining enabled source.
+    func removeSource(id: String) {
+        guard resolvedSources.source(id: id)?.origin == .userAdded else { return }
+        let next = sessionSources.filter { $0.id != id }
+        guard next.count != sessionSources.count else { return }
+        if activeSourceId == id { activeSourceId = fallbackActiveSourceId(excluding: id) }
+        sessionSources = next
+    }
+
+    /// Enable/disable a source (whitelist toggle). Refuses to disable the last
+    /// enabled source; disabling the active source falls back to another
+    /// still-enabled source (never to a disabled one).
+    func setSourceEnabled(id: String, _ enabled: Bool) {
+        guard let current = resolvedSources.source(id: id), current.enabled != enabled else { return }
+        if !enabled, resolvedSources.enabledSources.count <= 1 { return }
+        if !enabled, activeSourceId == id { activeSourceId = fallbackActiveSourceId(excluding: id) }
+        var updated = current
+        updated.enabled = enabled
+        upsertSourceOverride(updated)
+    }
+
+    /// The id to make active when the current active source is being removed or
+    /// disabled: the first still-enabled source other than `id`. The Claude
+    /// built-in is only a last-resort default (unreachable while the
+    /// min-one-enabled guard holds), so the active source is always enabled.
+    private func fallbackActiveSourceId(excluding id: String) -> String {
+        resolvedSources.enabledSources.first { $0.id != id }?.id
+            ?? SessionSourceRegistry.claudeBuiltinID
+    }
+
+    /// Rename a source. Rejects an empty name or one already used by a
+    /// different source. Returns whether the rename was applied.
+    @discardableResult
+    func renameSource(id: String, to newName: String) -> Bool {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let current = resolvedSources.source(id: id), !trimmed.isEmpty else { return false }
+        // Check both the visible sources AND saved overrides: a saved source can
+        // be shadowed out of `resolvedSources` by a root collision yet still
+        // persist in `sessionSources`, so comparing only the visible set could
+        // let two persisted sources share a name.
+        let otherNames = (resolvedSources + sessionSources).filter { $0.id != id }.map(\.name)
+        guard !otherNames.contains(trimmed) else { return false }
+        guard current.name != trimmed else { return true }
+        var updated = current
+        updated.name = trimmed
+        upsertSourceOverride(updated)
+        return true
+    }
+
+    /// Make `id` the active (projected) source. Only enabled sources can be
+    /// activated. Returns whether it was applied.
+    @discardableResult
+    func setActiveSource(id: String) -> Bool {
+        guard let source = resolvedSources.source(id: id), source.enabled else { return false }
+        activeSourceId = id
+        return true
+    }
+
+    private func upsertSourceOverride(_ source: SessionSource) {
+        var next = sessionSources
+        if let index = next.firstIndex(where: { $0.id == source.id }) {
+            next[index] = source
+        } else {
+            next.append(source)
+        }
+        sessionSources = next
+    }
+
+    private func makeUserSourceId(forRoot root: URL, kind: ProviderKind) -> String {
+        let tail = root.standardizedFileURL.pathComponents
+            .filter { $0 != "/" }
+            .suffix(2)
+            .joined(separator: "-")
+        var slug = tail
+            .replacingOccurrences(of: ProviderScopedID.separator, with: "-")
+            .replacingOccurrences(of: " ", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
+        if slug.isEmpty { slug = kind.rawValue }
+        let base = "user-\(slug)"
+        // Include saved ids too: a source shadowed out of `resolvedSources` by a
+        // root collision still lives in `sessionSources`, and a new id must not
+        // collide with it (else two persisted sources would share an id).
+        let existingIds = Set(resolvedSources.map(\.id)).union(sessionSources.map(\.id))
+        guard existingIds.contains(base) else { return base }
+        var suffix = 2
+        while existingIds.contains("\(base)-\(suffix)") { suffix += 1 }
+        return "\(base)-\(suffix)"
+    }
+
     // MARK: - Dependencies
 
     private let storage: AppSettingsStorage
@@ -222,7 +388,7 @@ final class AppSettings {
         let loaded = storage.load()
         self.sessionListLayout = loaded.sessionListLayout
         self.appearanceMode = loaded.appearanceMode
-        self.activeProvider = loaded.activeProvider
+        self.activeSourceId = loaded.activeSourceId
         self.pinnedSessionIds = Set(loaded.pinnedSessionIds)
         self.claudeCodeRootPath = loaded.claudeCodeRootPath
         self.codexRootPath = loaded.codexRootPath
@@ -239,6 +405,9 @@ final class AppSettings {
         self.showParseWarningBadge = loaded.showParseWarningBadge
         self.showParseErrorBadge = loaded.showParseErrorBadge
         self.statuslinePrefs = loaded.statuslinePrefs
+        self.sessionSources = loaded.sessionSources
+        // didSet doesn't fire during init, so seed the composed list here.
+        self.resolvedSources = SessionSourceRegistry.resolve(saved: loaded.sessionSources)
     }
 
     // Note: no `deinit { pendingPersist?.cancel() }` — the scheduled
@@ -351,6 +520,7 @@ final class AppSettings {
             sessionListLayout: sessionListLayout,
             appearanceMode: appearanceMode,
             activeProvider: activeProvider,
+            activeSourceId: activeSourceId,
             pinnedSessionIds: Array(pinnedSessionIds).sorted(),
             claudeCodeRootPath: claudeCodeRootPath,
             codexRootPath: codexRootPath,
@@ -361,7 +531,8 @@ final class AppSettings {
             startAtLogin: startAtLogin,
             showParseWarningBadge: showParseWarningBadge,
             showParseErrorBadge: showParseErrorBadge,
-            statuslinePrefs: statuslinePrefs
+            statuslinePrefs: statuslinePrefs,
+            sessionSources: sessionSources
         )
     }
 

@@ -20,7 +20,7 @@ struct SearchCommand: ParsableCommand {
     }
 
     func run() throws {
-        let engine = try CLIEngine.open(provider: options.provider, refresh: options.refresh)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
 
         // Sanitize the query into an FTS5 prefix expression (as the GUI's
@@ -120,7 +120,7 @@ struct ResumeCommand: ParsableCommand {
 
     func run() throws {
         // Resume reads the existing index (no refresh needed to look up a known id).
-        let engine = try CLIEngine.open(provider: options.provider, refresh: false)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: false)
         guard let row = try engine.store.session(id: sessionId) else {
             throw ValidationError(
                 "No session '\(sessionId)' for \(options.provider.cliLabel). Use the full id from `lupen search` or `lupen top --json`."

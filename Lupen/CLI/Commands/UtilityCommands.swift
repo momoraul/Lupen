@@ -58,7 +58,7 @@ struct RefreshCommand: ParsableCommand {
     @OptionGroup var options: CLIGlobalOptions
 
     func run() throws {
-        let engine = try CLIEngine.open(provider: options.provider, refresh: true)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: true)
         CLIOutput.line(CLIRefreshMessage.text(for: engine.refreshOutcome))
     }
 }

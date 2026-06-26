@@ -23,7 +23,7 @@ struct VerifyCommand: ParsableCommand {
     @OptionGroup var options: CLIGlobalOptions
 
     func run() throws {
-        let engine = try CLIEngine.open(provider: options.provider, refresh: options.refresh)
+        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
         if options.periodLabel != "all time" {
             CLIOutput.note("verify audits all sessions; period filters are ignored.")
