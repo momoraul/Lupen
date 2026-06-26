@@ -12,6 +12,8 @@ import AppKit
 @MainActor
 final class ManageSessionsWindowController: NSWindowController, NSWindowDelegate {
 
+    private let store: ManageStore
+
     init(
         source: SessionSource,
         sources: [SessionSource],
@@ -30,6 +32,7 @@ final class ManageSessionsWindowController: NSWindowController, NSWindowDelegate
             requestRescan: requestRescan,
             rebuildIndex: rebuildIndex
         )
+        self.store = store
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1040, height: 680),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -48,6 +51,13 @@ final class ManageSessionsWindowController: NSWindowController, NSWindowDelegate
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    /// Re-push the latest enabled sources + active selection before showing —
+    /// the controller is a reused singleton, so changes since the last open
+    /// must be applied or the switcher would show a stale list.
+    func update(sources: [SessionSource], active: SessionSource) {
+        store.updateSources(sources, active: active)
+    }
 
     func show() {
         window?.bringToFront()

@@ -1104,10 +1104,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Manage Sessions & Storage window
 
     @objc func openManageSessions(_ sender: Any?) {
-        if manageSessionsWindowController == nil {
-            let sources = settings.enabledResolvedSources
-            guard let active = settings.resolvedSources.source(id: settings.activeSourceId)
-                ?? sources.first else { return }
+        let sources = settings.enabledResolvedSources
+        guard let active = settings.resolvedSources.source(id: settings.activeSourceId)
+            ?? sources.first else { return }
+        if let controller = manageSessionsWindowController {
+            // Reused singleton — re-push the current sources/active so a source
+            // added/removed/activated since the last open is reflected.
+            controller.update(sources: sources, active: active)
+        } else {
             manageSessionsWindowController = ManageSessionsWindowController(
                 source: active,
                 sources: sources,

@@ -182,6 +182,19 @@ final class ManageStore {
         load()
     }
 
+    /// Re-push the switcher's source list + active selection. The window is a
+    /// reused singleton, so sources added/removed/enabled in Settings (or a
+    /// new active source picked in the sidebar) between opens are applied here.
+    func updateSources(_ newSources: [SessionSource], active: SessionSource) {
+        guard newSources != sources || active.id != source.id else { return }
+        sources = newSources
+        source = active
+        selectedIDs = []
+        rows = []
+        diskItems = []
+        load()
+    }
+
     // MARK: - Load
 
     func load() {

@@ -545,6 +545,9 @@ final class ManageViewController: NSViewController {
 
     private func refresh() {
         guard isReady else { return }
+        // Keep the source switcher in sync with the store (handles the window
+        // being re-opened with an updated source list / active selection).
+        rebuildProviderSegments()
         switch store.scope {
         case .sessions:
             cachedRows = store.displayRows
