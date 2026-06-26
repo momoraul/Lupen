@@ -12,7 +12,12 @@ struct CodexSessionDiscovery: Sendable {
             return codexHomeOverride
         }
         if let env = ProcessInfo.processInfo.environment["CODEX_HOME"], !env.isEmpty {
-            return URL(fileURLWithPath: env)
+            // Expand `~` and standardize so this matches the root that
+            // KnownSourceLocations derives for the same CODEX_HOME — otherwise
+            // a tilde'd value would make the built-in and the auto-detected
+            // Codex source point at differently-spelled paths and dodge the
+            // registry's root-dedup. A no-op for an already-absolute value.
+            return URL(fileURLWithPath: (env as NSString).expandingTildeInPath).standardizedFileURL
         }
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex")
