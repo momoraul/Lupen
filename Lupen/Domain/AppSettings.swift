@@ -319,7 +319,11 @@ final class AppSettings {
     func renameSource(id: String, to newName: String) -> Bool {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let current = resolvedSources.source(id: id), !trimmed.isEmpty else { return false }
-        let otherNames = resolvedSources.filter { $0.id != id }.map(\.name)
+        // Check both the visible sources AND saved overrides: a saved source can
+        // be shadowed out of `resolvedSources` by a root collision yet still
+        // persist in `sessionSources`, so comparing only the visible set could
+        // let two persisted sources share a name.
+        let otherNames = (resolvedSources + sessionSources).filter { $0.id != id }.map(\.name)
         guard !otherNames.contains(trimmed) else { return false }
         guard current.name != trimmed else { return true }
         var updated = current
@@ -358,7 +362,10 @@ final class AppSettings {
             .replacingOccurrences(of: "/", with: "-")
         if slug.isEmpty { slug = kind.rawValue }
         let base = "user-\(slug)"
-        let existingIds = Set(resolvedSources.map(\.id))
+        // Include saved ids too: a source shadowed out of `resolvedSources` by a
+        // root collision still lives in `sessionSources`, and a new id must not
+        // collide with it (else two persisted sources would share an id).
+        let existingIds = Set(resolvedSources.map(\.id)).union(sessionSources.map(\.id))
         guard existingIds.contains(base) else { return base }
         var suffix = 2
         while existingIds.contains("\(base)-\(suffix)") { suffix += 1 }
