@@ -283,25 +283,34 @@ final class AppSettings {
 
     /// Remove a user-added source. Built-in and auto-detected sources are not
     /// removable (disable them instead). If it was active, falls back to the
-    /// Claude built-in.
+    /// first remaining enabled source.
     func removeSource(id: String) {
         guard resolvedSources.source(id: id)?.origin == .userAdded else { return }
         let next = sessionSources.filter { $0.id != id }
         guard next.count != sessionSources.count else { return }
-        if activeSourceId == id { activeSourceId = SessionSourceRegistry.claudeBuiltinID }
+        if activeSourceId == id { activeSourceId = fallbackActiveSourceId(excluding: id) }
         sessionSources = next
     }
 
     /// Enable/disable a source (whitelist toggle). Refuses to disable the last
-    /// enabled source; disabling the active source falls back to the Claude
-    /// built-in.
+    /// enabled source; disabling the active source falls back to another
+    /// still-enabled source (never to a disabled one).
     func setSourceEnabled(id: String, _ enabled: Bool) {
         guard let current = resolvedSources.source(id: id), current.enabled != enabled else { return }
         if !enabled, resolvedSources.enabledSources.count <= 1 { return }
-        if !enabled, activeSourceId == id { activeSourceId = SessionSourceRegistry.claudeBuiltinID }
+        if !enabled, activeSourceId == id { activeSourceId = fallbackActiveSourceId(excluding: id) }
         var updated = current
         updated.enabled = enabled
         upsertSourceOverride(updated)
+    }
+
+    /// The id to make active when the current active source is being removed or
+    /// disabled: the first still-enabled source other than `id`. The Claude
+    /// built-in is only a last-resort default (unreachable while the
+    /// min-one-enabled guard holds), so the active source is always enabled.
+    private func fallbackActiveSourceId(excluding id: String) -> String {
+        resolvedSources.enabledSources.first { $0.id != id }?.id
+            ?? SessionSourceRegistry.claudeBuiltinID
     }
 
     /// Rename a source. Rejects an empty name or one already used by a
