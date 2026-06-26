@@ -250,6 +250,112 @@ final class AppSettings {
         resolvedSources = SessionSourceRegistry.resolve(saved: sessionSources)
     }
 
+    // MARK: - Session source management
+    //
+    // The Settings UI drives these; each mutates the `sessionSources` override
+    // list (or `activeSourceId`), which recomputes `resolvedSources` and
+    // persists. Built-in and auto-detected sources are enabled/renamed by
+    // writing an override carrying their id; only user-added sources are
+    // removable.
+
+    /// Register a user folder as a new enabled source. Returns nil if the
+    /// normalized root duplicates an existing source. Name defaults to a
+    /// suggestion and is made unique.
+    @discardableResult
+    func addSource(root: URL, kind: ProviderKind, name: String? = nil) -> SessionSource? {
+        let normalizedRoot = SessionSource.normalizedRoot(root)
+        guard SessionSourceInference.duplicateRootSource(normalizedRoot, in: resolvedSources) == nil
+        else { return nil }
+        let base = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suggested = (base?.isEmpty == false ? base! :
+            SessionSourceInference.suggestName(forRoot: normalizedRoot, kind: kind))
+        let uniqueName = SessionSourceInference.uniqueName(
+            suggested, existingNames: resolvedSources.map(\.name)
+        )
+        let source = SessionSource(
+            id: makeUserSourceId(forRoot: normalizedRoot, kind: kind),
+            name: uniqueName, kind: kind, root: normalizedRoot,
+            origin: .userAdded, enabled: true
+        )
+        sessionSources = sessionSources + [source]
+        return source
+    }
+
+    /// Remove a user-added source. Built-in and auto-detected sources are not
+    /// removable (disable them instead). If it was active, falls back to the
+    /// Claude built-in.
+    func removeSource(id: String) {
+        guard resolvedSources.source(id: id)?.origin == .userAdded else { return }
+        let next = sessionSources.filter { $0.id != id }
+        guard next.count != sessionSources.count else { return }
+        if activeSourceId == id { activeSourceId = SessionSourceRegistry.claudeBuiltinID }
+        sessionSources = next
+    }
+
+    /// Enable/disable a source (whitelist toggle). Refuses to disable the last
+    /// enabled source; disabling the active source falls back to the Claude
+    /// built-in.
+    func setSourceEnabled(id: String, _ enabled: Bool) {
+        guard let current = resolvedSources.source(id: id), current.enabled != enabled else { return }
+        if !enabled, resolvedSources.enabledSources.count <= 1 { return }
+        if !enabled, activeSourceId == id { activeSourceId = SessionSourceRegistry.claudeBuiltinID }
+        var updated = current
+        updated.enabled = enabled
+        upsertSourceOverride(updated)
+    }
+
+    /// Rename a source. Rejects an empty name or one already used by a
+    /// different source. Returns whether the rename was applied.
+    @discardableResult
+    func renameSource(id: String, to newName: String) -> Bool {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let current = resolvedSources.source(id: id), !trimmed.isEmpty else { return false }
+        let otherNames = resolvedSources.filter { $0.id != id }.map(\.name)
+        guard !otherNames.contains(trimmed) else { return false }
+        guard current.name != trimmed else { return true }
+        var updated = current
+        updated.name = trimmed
+        upsertSourceOverride(updated)
+        return true
+    }
+
+    /// Make `id` the active (projected) source. Only enabled sources can be
+    /// activated. Returns whether it was applied.
+    @discardableResult
+    func setActiveSource(id: String) -> Bool {
+        guard let source = resolvedSources.source(id: id), source.enabled else { return false }
+        activeSourceId = id
+        return true
+    }
+
+    private func upsertSourceOverride(_ source: SessionSource) {
+        var next = sessionSources
+        if let index = next.firstIndex(where: { $0.id == source.id }) {
+            next[index] = source
+        } else {
+            next.append(source)
+        }
+        sessionSources = next
+    }
+
+    private func makeUserSourceId(forRoot root: URL, kind: ProviderKind) -> String {
+        let tail = root.standardizedFileURL.pathComponents
+            .filter { $0 != "/" }
+            .suffix(2)
+            .joined(separator: "-")
+        var slug = tail
+            .replacingOccurrences(of: ProviderScopedID.separator, with: "-")
+            .replacingOccurrences(of: " ", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
+        if slug.isEmpty { slug = kind.rawValue }
+        let base = "user-\(slug)"
+        let existingIds = Set(resolvedSources.map(\.id))
+        guard existingIds.contains(base) else { return base }
+        var suffix = 2
+        while existingIds.contains("\(base)-\(suffix)") { suffix += 1 }
+        return "\(base)-\(suffix)"
+    }
+
     // MARK: - Dependencies
 
     private let storage: AppSettingsStorage
