@@ -27,17 +27,22 @@ final class ManageStore {
     var scope: ManageScope = .sessions
     var selectedIDs: Set<String> = []
     private(set) var isScanning = false
-    private(set) var provider: ProviderKind
-    /// Whether the current provider is indexing (sessions are protected and blocked while indexing).
+    /// The session source currently shown. Keyed by its stable id for the
+    /// per-source index DB; `provider` (its kind) drives row tagging / copy.
+    private(set) var source: SessionSource
+    /// All sources offered in the window's switcher (the enabled set).
+    private(set) var sources: [SessionSource]
+    var provider: ProviderKind { source.kind }
+    /// Whether the current source is indexing (sessions are protected and blocked while indexing).
     var isIndexingNow: Bool { isIndexingProvider() }
     /// All-disk tab (read-only) entries — largest occupants first.
     private(set) var diskItems: [DiskSizer.Entry] = []
 
     private let isIndexingProvider: @MainActor () -> Bool
-    private let storeProvider: @MainActor (ProviderKind) -> ProviderStore?
-    private let contextProvider: @MainActor (ProviderKind) -> ManageProviderContext?
-    private let requestRescan: @MainActor (ProviderKind) -> Void
-    private let rebuildIndex: @MainActor (ProviderKind) -> Void
+    private let storeProvider: @MainActor (SessionSource) -> ProviderStore?
+    private let contextProvider: @MainActor (SessionSource) -> ManageProviderContext?
+    private let requestRescan: @MainActor (SessionSource) -> Void
+    private let rebuildIndex: @MainActor (SessionSource) -> Void
     /// Callback for AppKit views to receive updates (explicit, instead of @Observable auto-tracking).
     @ObservationIgnored var onChange: (@MainActor () -> Void)?
     private let scanService = ManageScanService()
@@ -47,14 +52,16 @@ final class ManageStore {
     private var scanFlag: ScanCancellationFlag?
 
     init(
-        provider: ProviderKind,
+        source: SessionSource,
+        sources: [SessionSource],
         isIndexingProvider: @escaping @MainActor () -> Bool,
-        storeProvider: @escaping @MainActor (ProviderKind) -> ProviderStore?,
-        contextProvider: @escaping @MainActor (ProviderKind) -> ManageProviderContext?,
-        requestRescan: @escaping @MainActor (ProviderKind) -> Void,
-        rebuildIndex: @escaping @MainActor (ProviderKind) -> Void
+        storeProvider: @escaping @MainActor (SessionSource) -> ProviderStore?,
+        contextProvider: @escaping @MainActor (SessionSource) -> ManageProviderContext?,
+        requestRescan: @escaping @MainActor (SessionSource) -> Void,
+        rebuildIndex: @escaping @MainActor (SessionSource) -> Void
     ) {
-        self.provider = provider
+        self.source = source
+        self.sources = sources
         self.isIndexingProvider = isIndexingProvider
         self.storeProvider = storeProvider
         self.contextProvider = contextProvider
@@ -108,17 +115,17 @@ final class ManageStore {
 
     /// Per-provider storage directory used by Reveal in the manage window.
     var providerSupportRoot: URL {
-        LupenPaths.providerRoot(for: provider)
+        LupenPaths.providerRoot(forSourceId: source.id)
     }
 
     func loadCacheInfo() {
         let root = LupenPaths.applicationSupportRoot()
-        let indexURL = LupenPaths.indexDatabaseURL(for: provider, appSupportRoot: root)
+        let indexURL = LupenPaths.indexDatabaseURL(forSourceId: source.id, appSupportRoot: root)
         let indexBytes = DiskSizer.fileAllocatedSize(indexURL)
         let walBytes = DiskSizer.fileAllocatedSize(URL(fileURLWithPath: indexURL.path + "-wal"))
         let shmBytes = DiskSizer.fileAllocatedSize(URL(fileURLWithPath: indexURL.path + "-shm"))
         let snapshotBytes = snapshotURLs(root: root).reduce(Int64(0)) { $0 + DiskSizer.fileAllocatedSize($1) }
-        let coverage = try? storeProvider(provider)?.coverage()
+        let coverage = try? storeProvider(source)?.coverage()
         let lastIndexed = (try? FileManager.default.attributesOfItem(atPath: indexURL.path))?[.modificationDate] as? Date
         cacheInfo = CacheInfo(
             indexBytes: indexBytes, walBytes: walBytes, shmBytes: shmBytes,
@@ -128,7 +135,7 @@ final class ManageStore {
 
     /// Rebuild the index (original logs untouched) — reuses the existing rebuild path.
     func rebuildCacheIndex() {
-        rebuildIndex(provider)
+        rebuildIndex(source)
         loadCacheInfo()
     }
 
@@ -142,9 +149,9 @@ final class ManageStore {
     }
 
     private func snapshotURLs(root: URL) -> [URL] {
-        [LupenPaths.sessionCacheURL(for: provider, appSupportRoot: root),
-         LupenPaths.parseSnapshotURL(for: provider, appSupportRoot: root),
-         LupenPaths.offsetsURL(for: provider, appSupportRoot: root)]
+        [LupenPaths.sessionCacheURL(forSourceId: source.id, appSupportRoot: root),
+         LupenPaths.parseSnapshotURL(forSourceId: source.id, appSupportRoot: root),
+         LupenPaths.offsetsURL(forSourceId: source.id, appSupportRoot: root)]
     }
 
     // MARK: - Selection
@@ -164,12 +171,12 @@ final class ManageStore {
         onChange?()
     }
 
-    func switchProvider(_ newProvider: ProviderKind) {
-        guard newProvider != provider else { return }
-        provider = newProvider
+    func switchSource(_ newSource: SessionSource) {
+        guard newSource.id != source.id else { return }
+        source = newSource
         selectedIDs = []
-        // Clear the previous provider's rows immediately to avoid a flicker
-        // of wrong-provider data before the async load's first render.
+        // Clear the previous source's rows immediately to avoid a flicker
+        // of wrong-source data before the async load's first render.
         rows = []
         diskItems = []
         load()
@@ -178,7 +185,7 @@ final class ManageStore {
     // MARK: - Load
 
     func load() {
-        guard let store = storeProvider(provider), let context = contextProvider(provider) else {
+        guard let store = storeProvider(source), let context = contextProvider(source) else {
             rows = []
             diskItems = []
             cacheInfo = nil
@@ -245,7 +252,7 @@ final class ManageStore {
     func trash(rows: [ManageRowModel]) async -> ManageTrashService.Outcome {
         let outcome = await trashService.trash(rows.flatMap(\.trashTargets))
         let trashed = Set(outcome.trashedPaths)
-        if let store = storeProvider(provider) {
+        if let store = storeProvider(source) {
             var indexPaths: [String] = []
             // Only prune the whole session's index for rows whose parent file
             // (jsonl) actually went to the Trash. If only the companion
@@ -271,7 +278,7 @@ final class ManageStore {
     /// Undo — restore from the Trash, trigger index re-registration (rescan), then re-render.
     func undoTrash(_ entries: [ManageTrashService.RestoreEntry]) async {
         await trashService.restore(entries)
-        requestRescan(provider)
+        requestRescan(source)
         load()
     }
 

@@ -13,15 +13,17 @@ import AppKit
 final class ManageSessionsWindowController: NSWindowController, NSWindowDelegate {
 
     init(
-        provider: ProviderKind,
+        source: SessionSource,
+        sources: [SessionSource],
         isIndexingProvider: @escaping @MainActor () -> Bool,
-        storeProvider: @escaping @MainActor (ProviderKind) -> ProviderStore?,
-        contextProvider: @escaping @MainActor (ProviderKind) -> ManageProviderContext?,
-        requestRescan: @escaping @MainActor (ProviderKind) -> Void,
-        rebuildIndex: @escaping @MainActor (ProviderKind) -> Void
+        storeProvider: @escaping @MainActor (SessionSource) -> ProviderStore?,
+        contextProvider: @escaping @MainActor (SessionSource) -> ManageProviderContext?,
+        requestRescan: @escaping @MainActor (SessionSource) -> Void,
+        rebuildIndex: @escaping @MainActor (SessionSource) -> Void
     ) {
         let store = ManageStore(
-            provider: provider,
+            source: source,
+            sources: sources,
             isIndexingProvider: isIndexingProvider,
             storeProvider: storeProvider,
             contextProvider: contextProvider,

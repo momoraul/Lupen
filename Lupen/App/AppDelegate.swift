@@ -189,7 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferencesWindowController: PreferencesWindowController?
     private var manageSessionsWindowController: ManageSessionsWindowController?
     /// Store cache the manage window uses to read an inactive provider's index.
-    private var managedReadStores: [ProviderKind: ProviderStore] = [:]
+    private var managedReadStores: [String: ProviderStore] = [:]
     private var verifyUsageMenuItem: NSMenuItem?
     private lazy var logWindowController = LogWindowController(logger: LoggerService.shared)
     private let smokeTest = LaunchSmokeTestConfig.current()
@@ -1105,47 +1105,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openManageSessions(_ sender: Any?) {
         if manageSessionsWindowController == nil {
+            let sources = settings.enabledResolvedSources
+            guard let active = settings.resolvedSources.source(id: settings.activeSourceId)
+                ?? sources.first else { return }
             manageSessionsWindowController = ManageSessionsWindowController(
-                provider: settings.activeProvider,
+                source: active,
+                sources: sources,
                 isIndexingProvider: { [weak self] in self?.store.isIndexing ?? false },
-                storeProvider: { [weak self] provider in self?.manageProviderStore(for: provider) },
-                contextProvider: { [weak self] provider in self?.manageContext(for: provider) },
-                requestRescan: { [weak self] provider in self?.sqliteFirstStartups[provider.rawValue]?.coordinator.requestRescan() },
-                rebuildIndex: { [weak self] provider in self?.sqliteFirstStartups[provider.rawValue]?.rebuildIndex() }
+                storeProvider: { [weak self] source in self?.manageSourceStore(for: source) },
+                contextProvider: { [weak self] source in self?.manageContext(for: source) },
+                requestRescan: { [weak self] source in self?.sqliteFirstStartups[source.id]?.coordinator.requestRescan() },
+                rebuildIndex: { [weak self] source in self?.sqliteFirstStartups[source.id]?.rebuildIndex() }
             )
         }
         manageSessionsWindowController?.show()
     }
 
-    /// Provides the indexing store for the active provider, or opens that
-    /// provider's index DB directly (for read/delete consistency) when
-    /// inactive. Lets the manage window show Claude Code tab sessions even
-    /// when started on codex.
-    private func manageProviderStore(for provider: ProviderKind) -> ProviderStore? {
-        if let startup = sqliteFirstStartups[provider.rawValue] {
+    /// Provides the indexing store for a source, or opens that source's index
+    /// DB directly (for read/delete consistency) when its driver isn't active.
+    /// Lets the manage window show any enabled source's sessions.
+    private func manageSourceStore(for source: SessionSource) -> ProviderStore? {
+        if let startup = sqliteFirstStartups[source.id] {
             // Prefer the active store, and release any read-only pool opened
             // while inactive (avoids file-handle/WAL leaks — a GRDB pool closes
             // when its ref is released).
-            managedReadStores[provider] = nil
+            managedReadStores[source.id] = nil
             return startup.coordinator.store
         }
-        if let cached = managedReadStores[provider] {
+        if let cached = managedReadStores[source.id] {
             return cached
         }
-        let url = LupenPaths.indexDatabaseURL(for: provider)
+        let url = LupenPaths.indexDatabaseURL(forSourceId: source.id)
         guard FileManager.default.fileExists(atPath: url.path),
               let database = try? ProviderDatabase.open(at: url) else { return nil }
         let store = ProviderStore(database: database)
-        managedReadStores[provider] = store
+        managedReadStores[source.id] = store
         return store
     }
 
-    private func manageContext(for provider: ProviderKind) -> ManageProviderContext? {
-        switch provider {
+    private func manageContext(for source: SessionSource) -> ManageProviderContext? {
+        switch source.kind {
         case .claudeCode:
-            return .claude(projectsDirectory: FileDiscovery().projectsDirectory)
+            return .claude(projectsDirectory: source.root)
         case .codex:
-            return .codex(codexHome: CodexSessionDiscovery(codexHome: codexHomeURLFromSettings()).codexHome)
+            return .codex(codexHome: source.root)
         }
     }
 

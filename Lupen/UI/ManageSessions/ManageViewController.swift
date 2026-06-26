@@ -38,7 +38,7 @@ final class ManageViewController: NSViewController {
     private let sessionResumer = SessionResumer()
 
     private let providerSeg = NSSegmentedControl(
-        labels: ["Claude Code", "Codex"], trackingMode: .selectOne, target: nil, action: nil)
+        labels: [], trackingMode: .selectOne, target: nil, action: nil)
     private let scopeSeg = NSSegmentedControl(
         labels: ["Sessions", "Lupen Cache", "All Disk"], trackingMode: .selectOne, target: nil, action: nil)
     private let searchField = NSSearchField()
@@ -109,9 +109,9 @@ final class ManageViewController: NSViewController {
     // MARK: - Build
 
     private func buildUI() {
-        providerSeg.selectedSegment = store.provider == .claudeCode ? 0 : 1
         providerSeg.target = self
         providerSeg.action = #selector(providerChanged)
+        rebuildProviderSegments()
 
         scopeSeg.selectedSegment = 0
         scopeSeg.target = self
@@ -310,8 +310,22 @@ final class ManageViewController: NSViewController {
 
     // MARK: - Toolbar actions
 
+    /// Populate the source switcher from the enabled sources (one segment
+    /// each, labelled by name), selecting the current source.
+    private func rebuildProviderSegments() {
+        providerSeg.segmentCount = store.sources.count
+        for (index, src) in store.sources.enumerated() {
+            providerSeg.setLabel(src.name, forSegment: index)
+        }
+        if let index = store.sources.firstIndex(where: { $0.id == store.source.id }) {
+            providerSeg.selectedSegment = index
+        }
+    }
+
     @objc private func providerChanged() {
-        store.switchProvider(providerSeg.selectedSegment == 0 ? .claudeCode : .codex)
+        let index = providerSeg.selectedSegment
+        guard store.sources.indices.contains(index) else { return }
+        store.switchSource(store.sources[index])
     }
     @objc private func scopeChanged() {
         let scopes: [ManageScope] = [.sessions, .cache, .allDisk]
