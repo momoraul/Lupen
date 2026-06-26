@@ -30,27 +30,33 @@ enum SessionSourceRegistry {
     static var claudeBuiltinID: String { ProviderKind.claudeCode.rawValue }
     static var codexBuiltinID: String { ProviderKind.codex.rawValue }
 
-    /// The two always-present built-in sources, enabled by default. Roots are
-    /// injected (the real defaults are env-aware via the providers), so the
-    /// builtin source's root stays faithful to what the pipeline scans.
-    static func builtins(claudeRoot: URL, codexRoot: URL) -> [SessionSource] {
-        [
-            SessionSource(
+    /// The single built-in source for a parser kind. Used both as the default
+    /// active source and as the projection-swap target while only built-in
+    /// sources are activatable. Enabled by default; id equals the kind's
+    /// rawValue (see above). Root is injected so it stays faithful to the
+    /// env-aware default the pipeline actually scans.
+    static func builtinSource(for kind: ProviderKind, claudeRoot: URL, codexRoot: URL) -> SessionSource {
+        switch kind {
+        case .claudeCode:
+            return SessionSource(
                 id: claudeBuiltinID,
                 name: ProviderRegistry.descriptor(for: .claudeCode).displayName,
-                kind: .claudeCode,
-                root: claudeRoot,
-                origin: .builtin,
-                enabled: true
-            ),
-            SessionSource(
+                kind: .claudeCode, root: claudeRoot, origin: .builtin, enabled: true
+            )
+        case .codex:
+            return SessionSource(
                 id: codexBuiltinID,
                 name: ProviderRegistry.descriptor(for: .codex).displayName,
-                kind: .codex,
-                root: codexRoot,
-                origin: .builtin,
-                enabled: true
-            ),
+                kind: .codex, root: codexRoot, origin: .builtin, enabled: true
+            )
+        }
+    }
+
+    /// The two always-present built-in sources, enabled by default.
+    static func builtins(claudeRoot: URL, codexRoot: URL) -> [SessionSource] {
+        [
+            builtinSource(for: .claudeCode, claudeRoot: claudeRoot, codexRoot: codexRoot),
+            builtinSource(for: .codex, claudeRoot: claudeRoot, codexRoot: codexRoot),
         ]
     }
 

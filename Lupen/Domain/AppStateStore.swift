@@ -70,7 +70,20 @@ final class AppStateStore: @unchecked Sendable {
 
     // MARK: - Private State
 
-    private(set) var activeProvider: ProviderKind = .claudeCode
+    /// The currently-projected session source — the authority for which
+    /// source's data is in `sessions` and is being verified/rendered. A
+    /// `SessionSource` (not a bare `ProviderKind`) so the store carries the
+    /// source's stable id and root, which the per-source DB / pipeline layers
+    /// consume. Today only built-in sources are ever active; the projection
+    /// swap maps a `ProviderKind` to its built-in source.
+    private(set) var activeSource: SessionSource
+
+    /// Parser kind of the active source. Read-only back-compat accessor over
+    /// `activeSource` — the many call sites that branch on Claude vs Codex
+    /// keep reading `activeProvider` unchanged; the authority moved to
+    /// `activeSource`. Observation still fires here because the getter reads
+    /// the observed `activeSource`.
+    var activeProvider: ProviderKind { activeSource.kind }
 
     private let claudeProvider: ClaudeProvider
 
@@ -94,6 +107,25 @@ final class AppStateStore: @unchecked Sendable {
         self.projectsDirectoryOverride = projectsDirectory
         self.claudeProvider = claudeProvider
         self.launchDiagnosticsConfig = launchDiagnosticsConfig
+        // Default active source = the Claude Code built-in. Roots are derived
+        // from the init params (not `self`'s computed accessors, which aren't
+        // usable until init completes); `effectiveProjectsDirectory` honours
+        // the test override the same way.
+        self.activeSource = SessionSourceRegistry.builtinSource(
+            for: .claudeCode,
+            claudeRoot: projectsDirectory ?? claudeProvider.defaultSourceRoot,
+            codexRoot: CodexProvider().defaultSourceRoot
+        )
+    }
+
+    /// The built-in source for `provider`, with roots faithful to what this
+    /// store scans (Claude honours the projects-directory test override).
+    private func builtinSource(for provider: ProviderKind) -> SessionSource {
+        SessionSourceRegistry.builtinSource(
+            for: provider,
+            claudeRoot: effectiveProjectsDirectory,
+            codexRoot: CodexProvider().defaultSourceRoot
+        )
     }
 
     private func scopedClaudeSessionId(_ sessionId: String) -> String {
@@ -122,7 +154,7 @@ final class AppStateStore: @unchecked Sendable {
     /// The legacy `switchProvider` graph capture/restore was deleted in
     /// Phase 5.1.
     func setActiveProviderForProjectionSwap(_ provider: ProviderKind) {
-        activeProvider = provider
+        activeSource = builtinSource(for: provider)
     }
 
     /// Public entry point for the active provider usage audit engine.
@@ -625,7 +657,7 @@ final class AppStateStore: @unchecked Sendable {
         isLoading: Bool,
         loadingProgress: String = ""
     ) {
-        activeProvider = provider
+        activeSource = builtinSource(for: provider)
         self.isLoading = isLoading
         self.loadingProgress = loadingProgress
         launchProgress = isLoading ? .transition(to: .scanningFiles) : .transition(to: .done)
