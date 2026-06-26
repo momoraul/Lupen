@@ -230,8 +230,24 @@ final class AppSettings {
     var sessionSources: [SessionSource] {
         didSet {
             guard oldValue != sessionSources else { return }
+            recomputeResolvedSources()
             schedulePersist()
         }
+    }
+
+    /// The composed, canonical source list — built-in defaults + auto-detected
+    /// candidates + the user's `sessionSources` overrides — recomputed only
+    /// when `sessionSources` changes (the composition runs `detect()`, which
+    /// stats the filesystem, so it is cached here rather than recomputed per
+    /// read). The mode picker and the indexing lifecycle read from this SSOT.
+    private(set) var resolvedSources: [SessionSource]
+
+    /// Whitelist projection of `resolvedSources` — only enabled sources are
+    /// indexed and shown in the picker.
+    var enabledResolvedSources: [SessionSource] { resolvedSources.enabledSources }
+
+    private func recomputeResolvedSources() {
+        resolvedSources = SessionSourceRegistry.resolve(saved: sessionSources)
     }
 
     // MARK: - Dependencies
@@ -268,6 +284,8 @@ final class AppSettings {
         self.showParseErrorBadge = loaded.showParseErrorBadge
         self.statuslinePrefs = loaded.statuslinePrefs
         self.sessionSources = loaded.sessionSources
+        // didSet doesn't fire during init, so seed the composed list here.
+        self.resolvedSources = SessionSourceRegistry.resolve(saved: loaded.sessionSources)
     }
 
     // Note: no `deinit { pendingPersist?.cancel() }` — the scheduled
