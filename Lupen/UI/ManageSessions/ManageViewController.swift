@@ -517,6 +517,17 @@ final class ManageViewController: NSViewController {
     // MARK: - Cache tab
 
     private func confirmRebuild() {
+        // An enabled-but-never-activated source has no live driver, so a
+        // rebuild would silently do nothing. Tell the user how to enable it
+        // instead of pretending the rebuild ran.
+        guard store.canManageIndex else {
+            let info = NSAlert()
+            info.messageText = "Activate this source to rebuild"
+            info.informativeText = "Switch to this source in the sidebar (the mode picker) first — only the active source's index can be rebuilt."
+            info.addButton(withTitle: "OK")
+            info.runModal()
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Rebuild the index?"
         alert.informativeText = "Clears the derived index and re-scans your session logs. Original logs are not modified."

@@ -1119,7 +1119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 storeProvider: { [weak self] source in self?.manageSourceStore(for: source) },
                 contextProvider: { [weak self] source in self?.manageContext(for: source) },
                 requestRescan: { [weak self] source in self?.sqliteFirstStartups[source.id]?.coordinator.requestRescan() },
-                rebuildIndex: { [weak self] source in self?.sqliteFirstStartups[source.id]?.rebuildIndex() }
+                rebuildIndex: { [weak self] source in self?.sqliteFirstStartups[source.id]?.rebuildIndex() },
+                hasLiveDriver: { [weak self] source in self?.sqliteFirstStartups[source.id] != nil }
             )
         }
         manageSessionsWindowController?.show()

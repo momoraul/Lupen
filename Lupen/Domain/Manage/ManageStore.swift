@@ -43,6 +43,10 @@ final class ManageStore {
     private let contextProvider: @MainActor (SessionSource) -> ManageProviderContext?
     private let requestRescan: @MainActor (SessionSource) -> Void
     private let rebuildIndex: @MainActor (SessionSource) -> Void
+    /// Whether a live indexing driver exists for a source. Rebuild/rescan are
+    /// no-ops without one (only activated sources have a driver), so the UI
+    /// uses this to avoid offering an action that would silently do nothing.
+    private let hasLiveDriver: @MainActor (SessionSource) -> Bool
     /// Callback for AppKit views to receive updates (explicit, instead of @Observable auto-tracking).
     @ObservationIgnored var onChange: (@MainActor () -> Void)?
     private let scanService = ManageScanService()
@@ -58,7 +62,8 @@ final class ManageStore {
         storeProvider: @escaping @MainActor (SessionSource) -> ProviderStore?,
         contextProvider: @escaping @MainActor (SessionSource) -> ManageProviderContext?,
         requestRescan: @escaping @MainActor (SessionSource) -> Void,
-        rebuildIndex: @escaping @MainActor (SessionSource) -> Void
+        rebuildIndex: @escaping @MainActor (SessionSource) -> Void,
+        hasLiveDriver: @escaping @MainActor (SessionSource) -> Bool = { _ in true }
     ) {
         self.source = source
         self.sources = sources
@@ -67,7 +72,13 @@ final class ManageStore {
         self.contextProvider = contextProvider
         self.requestRescan = requestRescan
         self.rebuildIndex = rebuildIndex
+        self.hasLiveDriver = hasLiveDriver
     }
+
+    /// Whether the displayed source can be rebuilt/rescanned right now — i.e.
+    /// it has a live indexing driver. False for an enabled-but-never-activated
+    /// source shown via the read-only switcher.
+    var canManageIndex: Bool { hasLiveDriver(source) }
 
     // MARK: - Derived
 

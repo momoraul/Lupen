@@ -21,7 +21,8 @@ final class ManageSessionsWindowController: NSWindowController, NSWindowDelegate
         storeProvider: @escaping @MainActor (SessionSource) -> ProviderStore?,
         contextProvider: @escaping @MainActor (SessionSource) -> ManageProviderContext?,
         requestRescan: @escaping @MainActor (SessionSource) -> Void,
-        rebuildIndex: @escaping @MainActor (SessionSource) -> Void
+        rebuildIndex: @escaping @MainActor (SessionSource) -> Void,
+        hasLiveDriver: @escaping @MainActor (SessionSource) -> Bool
     ) {
         let store = ManageStore(
             source: source,
@@ -30,7 +31,8 @@ final class ManageSessionsWindowController: NSWindowController, NSWindowDelegate
             storeProvider: storeProvider,
             contextProvider: contextProvider,
             requestRescan: requestRescan,
-            rebuildIndex: rebuildIndex
+            rebuildIndex: rebuildIndex,
+            hasLiveDriver: hasLiveDriver
         )
         self.store = store
         let window = NSWindow(
