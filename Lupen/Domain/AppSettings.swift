@@ -206,6 +206,17 @@ final class AppSettings {
         }
     }
 
+    /// User's session-source overrides (added folders + enable/name changes).
+    /// Built-in and auto-detected sources are layered on at resolve time; this
+    /// stores only what the user customised. Observed so the picker/indexing
+    /// react when a source is added/activated.
+    var sessionSources: [SessionSource] {
+        didSet {
+            guard oldValue != sessionSources else { return }
+            schedulePersist()
+        }
+    }
+
     // MARK: - Dependencies
 
     private let storage: AppSettingsStorage
@@ -239,6 +250,7 @@ final class AppSettings {
         self.showParseWarningBadge = loaded.showParseWarningBadge
         self.showParseErrorBadge = loaded.showParseErrorBadge
         self.statuslinePrefs = loaded.statuslinePrefs
+        self.sessionSources = loaded.sessionSources
     }
 
     // Note: no `deinit { pendingPersist?.cancel() }` — the scheduled
@@ -361,7 +373,8 @@ final class AppSettings {
             startAtLogin: startAtLogin,
             showParseWarningBadge: showParseWarningBadge,
             showParseErrorBadge: showParseErrorBadge,
-            statuslinePrefs: statuslinePrefs
+            statuslinePrefs: statuslinePrefs,
+            sessionSources: sessionSources
         )
     }
 

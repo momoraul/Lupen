@@ -54,6 +54,11 @@ struct AppSettingsData: Codable, Equatable, Sendable {
     /// fields needed to remember a Connect across launches without
     /// re-parsing settings.json from scratch on every read.
     var statuslinePrefs: StatuslinePrefsData
+    /// User-defined session sources: added folders plus enable/name overrides
+    /// for built-in and auto-detected sources. Empty = defaults only. Stored
+    /// in its OWN field (not `providerConfigurations`) to avoid the legacy
+    /// `ensureBuiltIn` root-clobber on persist.
+    var sessionSources: [SessionSource]
 
     /// Default on first launch / corrupt file fallback.
     ///
@@ -86,7 +91,8 @@ struct AppSettingsData: Codable, Equatable, Sendable {
             startAtLogin: false,
             showParseWarningBadge: defaultBadgesOn,
             showParseErrorBadge: defaultBadgesOn,
-            statuslinePrefs: .default
+            statuslinePrefs: .default,
+            sessionSources: []
         )
     }()
 
@@ -104,7 +110,8 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         startAtLogin: Bool,
         showParseWarningBadge: Bool,
         showParseErrorBadge: Bool,
-        statuslinePrefs: StatuslinePrefsData = .default
+        statuslinePrefs: StatuslinePrefsData = .default,
+        sessionSources: [SessionSource] = []
     ) {
         self.sessionListLayout = sessionListLayout
         self.appearanceMode = appearanceMode
@@ -129,6 +136,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         self.showParseWarningBadge = showParseWarningBadge
         self.showParseErrorBadge = showParseErrorBadge
         self.statuslinePrefs = statuslinePrefs
+        self.sessionSources = sessionSources
     }
 
     enum CodingKeys: String, CodingKey {
@@ -146,6 +154,7 @@ struct AppSettingsData: Codable, Equatable, Sendable {
         case showParseWarningBadge
         case showParseErrorBadge
         case statuslinePrefs
+        case sessionSources
     }
 
     init(from decoder: Decoder) throws {
@@ -211,6 +220,10 @@ struct AppSettingsData: Codable, Equatable, Sendable {
             StatuslinePrefsData.self,
             forKey: .statuslinePrefs
         ) ?? AppSettingsData.default.statuslinePrefs
+        self.sessionSources = try c.decodeIfPresent(
+            [SessionSource].self,
+            forKey: .sessionSources
+        ) ?? AppSettingsData.default.sessionSources
     }
 
     private static func normalizePinnedSessionIds(_ ids: [String], defaultProvider: ProviderKind) -> [String] {
@@ -371,7 +384,8 @@ struct AppSettingsStorage: Sendable {
                 startAtLogin: data.startAtLogin,
                 showParseWarningBadge: data.showParseWarningBadge,
                 showParseErrorBadge: data.showParseErrorBadge,
-                statuslinePrefs: data.statuslinePrefs
+                statuslinePrefs: data.statuslinePrefs,
+                sessionSources: data.sessionSources
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
