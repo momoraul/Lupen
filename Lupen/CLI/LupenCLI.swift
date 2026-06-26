@@ -94,7 +94,9 @@ struct CLIGlobalOptions: ParsableArguments {
 
     /// The resolved session source: a custom source when --source matches one,
     /// otherwise the built-in for --provider. The built-in path is cheap (no
-    /// settings load / detect cost) so the common case stays fast.
+    /// settings load / detect cost) so the common case stays fast. An unknown
+    /// --source is rejected in `validate()`, so this only reaches the fallback
+    /// for a blank/absent value.
     var resolvedSource: SessionSource {
         if let source, !source.trimmingCharacters(in: .whitespaces).isEmpty,
            let resolved = CLISourceResolver.resolveLive(source) {
@@ -146,6 +148,16 @@ struct CLIGlobalOptions: ParsableArguments {
     func validate() throws {
         if json && csv {
             throw ValidationError("Use only one of --json or --csv.")
+        }
+        // Reject an unknown --source up front instead of silently falling back
+        // to the default provider (which would print a *different* source's
+        // data). Built-in/absent values resolve trivially.
+        if let source, !source.trimmingCharacters(in: .whitespaces).isEmpty,
+           CLISourceResolver.resolveLive(source) == nil {
+            throw ValidationError(
+                "Unknown --source '\(source)'. Pass a session source name or id "
+                + "(see Settings ▸ Session Sources), or omit --source."
+            )
         }
     }
 
