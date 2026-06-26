@@ -194,10 +194,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var logWindowController = LogWindowController(logger: LoggerService.shared)
     private let smokeTest = LaunchSmokeTestConfig.current()
     private let launchDiagnosticsConfig = LaunchDiagnosticsConfig.current()
-    /// SQLite-first drivers, one per provider (plan 3.5): both keep
-    /// indexing in the background; only the active provider's driver
-    /// projects into the store. Provider switch = projection swap.
-    private var sqliteFirstStartups: [ProviderKind: SQLiteFirstStartup] = [:]
+    /// SQLite-first drivers, keyed by session-source id (a built-in's id is
+    /// its `ProviderKind.rawValue`). Only the active source's driver projects
+    /// into the store; switching is a projection swap. Keying by source id
+    /// (not bare `ProviderKind`) lets sibling sources of the same kind each
+    /// own a driver.
+    private var sqliteFirstStartups: [String: SQLiteFirstStartup] = [:]
     private var sqliteFirstCodexHome: URL?
     private var smokeTestCompleted = false
 
@@ -419,7 +421,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// drivers keep importing with their store writes muted.
     private func sqliteFirstActivate(provider: ProviderKind, codexHome: URL?) {
         guard let store else { return }
-        for (kind, startup) in sqliteFirstStartups where kind != provider {
+        let sourceId = provider.rawValue
+        for (key, startup) in sqliteFirstStartups where key != sourceId {
             startup.deactivateProjection()
         }
         store.setActiveProviderForProjectionSwap(provider)
@@ -429,14 +432,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // import bounded on the real 100 GB corpus (the legacy
             // full-load entry points were deleted in 5.1).
             let resolvedHome = CodexSessionDiscovery(codexHome: codexHome).codexHome
-            if sqliteFirstStartups[.codex] != nil, sqliteFirstCodexHome != resolvedHome {
-                sqliteFirstStartups[.codex]?.stop()
-                sqliteFirstStartups[.codex] = nil
+            if sqliteFirstStartups[sourceId] != nil, sqliteFirstCodexHome != resolvedHome {
+                sqliteFirstStartups[sourceId]?.stop()
+                sqliteFirstStartups[sourceId] = nil
             }
             sqliteFirstCodexHome = resolvedHome
         }
 
-        if let existing = sqliteFirstStartups[provider] {
+        if let existing = sqliteFirstStartups[sourceId] {
             existing.activateProjection()
             return
         }
@@ -452,8 +455,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
         do {
-            let startup = try SQLiteFirstStartup(source: source, appStore: store)
-            sqliteFirstStartups[provider] = startup
+            let startup = try SQLiteFirstStartup(source: source, appStore: store, sourceId: sourceId)
+            sqliteFirstStartups[sourceId] = startup
             startup.start()   // a fresh driver starts with its projection active
             LaunchMemoryCheckpoint.record(
                 "app.sqliteFirst.startupBegan",
@@ -1055,8 +1058,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 isIndexingProvider: { [weak self] in self?.store.isIndexing ?? false },
                 storeProvider: { [weak self] provider in self?.manageProviderStore(for: provider) },
                 contextProvider: { [weak self] provider in self?.manageContext(for: provider) },
-                requestRescan: { [weak self] provider in self?.sqliteFirstStartups[provider]?.coordinator.requestRescan() },
-                rebuildIndex: { [weak self] provider in self?.sqliteFirstStartups[provider]?.rebuildIndex() }
+                requestRescan: { [weak self] provider in self?.sqliteFirstStartups[provider.rawValue]?.coordinator.requestRescan() },
+                rebuildIndex: { [weak self] provider in self?.sqliteFirstStartups[provider.rawValue]?.rebuildIndex() }
             )
         }
         manageSessionsWindowController?.show()
@@ -1067,7 +1070,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// inactive. Lets the manage window show Claude Code tab sessions even
     /// when started on codex.
     private func manageProviderStore(for provider: ProviderKind) -> ProviderStore? {
-        if let startup = sqliteFirstStartups[provider] {
+        if let startup = sqliteFirstStartups[provider.rawValue] {
             // Prefer the active store, and release any read-only pool opened
             // while inactive (avoids file-handle/WAL leaks — a GRDB pool closes
             // when its ref is released).
