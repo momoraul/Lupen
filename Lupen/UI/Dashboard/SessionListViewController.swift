@@ -420,15 +420,9 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         providerModeControl.imagePosition = .imageLeading
         providerModeControl.setAccessibilityLabel("Provider mode")
         providerModeControl.toolTip = "Select provider mode"
-        providerModeControl.removeAllItems()
-        for provider in ProviderRegistry.all {
-            let item = NSMenuItem(title: provider.displayName, action: nil, keyEquivalent: "")
-            item.representedObject = provider.kind.rawValue
-            item.toolTip = provider.displayName
-            item.image = Self.providerModeImage(for: provider)
-            providerModeControl.menu?.addItem(item)
-        }
+        rebuildProviderModeMenu()
         updateProviderModeControlSelection()
+        startObservingSourceList()
 
         providerModeControl.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(providerModeControl)
@@ -555,32 +549,58 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             : .secondaryLabelColor
     }
 
-    private func updateProviderModeControlSelection() {
-        guard let index = ProviderRegistry.all.firstIndex(where: { $0.kind == settings.activeProvider }) else {
-            return
+    /// Build the mode popup from the enabled session sources (plan §4.5 —
+    /// the picker SSOT is the active source list, not `ProviderRegistry.all`).
+    /// Each item carries the source id; the kind drives the leading icon.
+    private func rebuildProviderModeMenu() {
+        providerModeControl.removeAllItems()
+        for source in settings.enabledResolvedSources {
+            let descriptor = ProviderRegistry.descriptor(for: source.kind)
+            let item = NSMenuItem(title: source.name, action: nil, keyEquivalent: "")
+            item.representedObject = source.id
+            item.toolTip = "\(source.name) — \(source.root.path)"
+            item.image = Self.providerModeImage(for: descriptor)
+            providerModeControl.menu?.addItem(item)
         }
+    }
+
+    /// Re-arm a one-shot observation of the source list so the popup rebuilds
+    /// when a source is added / activated / renamed (same pattern as the
+    /// sidebar's `startObserving`).
+    private func startObservingSourceList() {
+        withObservationTracking {
+            _ = settings.resolvedSources
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                self?.rebuildProviderModeMenu()
+                self?.updateProviderModeControlSelection()
+                self?.startObservingSourceList()
+            }
+        }
+    }
+
+    private func updateProviderModeControlSelection() {
+        let sources = settings.enabledResolvedSources
+        guard !sources.isEmpty else { return }
+        let index = sources.firstIndex { $0.id == settings.activeSourceId } ?? 0
         providerModeControl.selectItem(at: index)
-        applyProviderModeVisuals(for: ProviderRegistry.all[index])
+        let source = sources[index]
+        applyProviderModeVisuals(name: source.name, kind: source.kind)
     }
 
     @objc private func providerModeChanged(_ sender: NSPopUpButton) {
-        if let rawValue = sender.selectedItem?.representedObject as? String,
-           let provider = ProviderKind(rawValue: rawValue) {
-            settings.activeProvider = provider
-            return
-        }
-        let index = sender.indexOfSelectedItem
-        guard ProviderRegistry.all.indices.contains(index) else { return }
-        settings.activeProvider = ProviderRegistry.all[index].kind
+        guard let id = sender.selectedItem?.representedObject as? String else { return }
+        settings.setActiveSource(id: id)
     }
 
-    private func applyProviderModeVisuals(for provider: ProviderDescriptor) {
-        let accent = Self.providerModeAccentColor(for: provider.kind)
+    private func applyProviderModeVisuals(name: String, kind: ProviderKind) {
+        let descriptor = ProviderRegistry.descriptor(for: kind)
+        let accent = Self.providerModeAccentColor(for: kind)
         providerModeControl.accentColor = accent
-        providerModeControl.image = Self.providerModeImage(for: provider)
+        providerModeControl.image = Self.providerModeImage(for: descriptor)
         providerModeControl.contentTintColor = accent
         providerModeControl.attributedTitle = NSAttributedString(
-            string: provider.displayName,
+            string: name,
             attributes: [
                 .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
                 .foregroundColor: NSColor.labelColor,
@@ -780,6 +800,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             // store change never fires for them.
             _ = settings.sessionListLayout
             _ = settings.activeProvider
+            _ = settings.activeSourceId
             _ = settings.pinnedSessionIds
         } onChange: { [weak self] in
             DispatchQueue.main.async {
@@ -787,6 +808,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
                     "observation fired (from arm #\(armIndex))",
                     context: "Sidebar"
                 )
+                self?.updateProviderModeControlSelection()
                 self?.reloadData()
                 self?.startObserving()
             }
