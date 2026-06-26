@@ -371,15 +371,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WallClockCoordinator.shared.start()
 
         let startupProvider = settings.activeProvider
-        let startupPlan = StartupDataLoadPlan(
-            provider: startupProvider,
-            codexHome: codexHomeURLFromSettings()
-        )
         armSmokeTestTimeoutIfNeeded(provider: startupProvider)
         // Plan 5.1: SQLite-first is the only startup path — the legacy
         // cache/orchestrator pipeline was deleted. GUI smoke runs
         // measure this same path and exit once indexing settles.
-        startSQLiteFirstStartup(plan: startupPlan)
+        //
+        // If the persisted active source is a user-added/auto-detected one,
+        // restore it via the custom path; otherwise take the built-in plan
+        // path (smoke runs only ever target built-ins).
+        if let active = settings.resolvedSources.source(id: settings.activeSourceId),
+           active.enabled, active.origin != .builtin {
+            sqliteFirstActivateCustom(source: active)
+        } else {
+            startSQLiteFirstStartup(plan: StartupDataLoadPlan(
+                provider: startupProvider,
+                codexHome: codexHomeURLFromSettings()
+            ))
+        }
         if smokeTest != nil {
             pollSmokeTestCompletion(provider: startupProvider)
         }
@@ -562,12 +570,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startObservingProviderMode() {
         withObservationTracking {
-            _ = settings.activeProvider
+            _ = settings.activeSourceId
             _ = settings.codexRootPath
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 self?.updateProviderSpecificMenuTitles()
-                self?.syncStoreToActiveProvider()
+                self?.syncStoreToActiveSource()
                 self?.startObservingProviderMode()
             }
         }
@@ -607,13 +615,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         verifyUsageMenuItem?.title = settings.activeProvider.verificationMenuTitle
     }
 
-    private func syncStoreToActiveProvider() {
-        // Plan 3.5/5.1: switching providers swaps the active projection
-        // — there is no legacy switch path anymore.
-        sqliteFirstActivate(
-            provider: settings.activeProvider,
-            codexHome: codexHomeURLFromSettings()
-        )
+    private func syncStoreToActiveSource() {
+        // Switching the active source is a projection swap. Built-in sources
+        // keep the legacy per-provider path (which honours the codexRootPath /
+        // smoke codexHome overrides); a user-added/auto-detected source uses
+        // its own root via the custom path. A missing/disabled active id falls
+        // back to the built-in path for the resolved provider.
+        let activeId = settings.activeSourceId
+        if let active = settings.resolvedSources.source(id: activeId),
+           active.enabled, active.origin != .builtin {
+            sqliteFirstActivateCustom(source: active)
+        } else {
+            sqliteFirstActivate(
+                provider: settings.activeProvider,
+                codexHome: codexHomeURLFromSettings()
+            )
+        }
+    }
+
+    /// Activate a non-built-in source: project its index, creating and starting
+    /// the driver on first use. Mirrors `sqliteFirstActivate(provider:)` but
+    /// keyed by the source's stable id and rooted at `source.root`.
+    private func sqliteFirstActivateCustom(source: SessionSource) {
+        guard let store else { return }
+        let sourceId = source.id
+        for (key, startup) in sqliteFirstStartups where key != sourceId {
+            startup.deactivateProjection()
+        }
+        store.setActiveSourceForProjectionSwap(source)
+
+        if let existing = sqliteFirstStartups[sourceId] {
+            existing.activateProjection()
+            return
+        }
+        do {
+            let startup = try SQLiteFirstStartup(
+                source: ProviderIndexSource(source), appStore: store, sourceId: sourceId
+            )
+            sqliteFirstStartups[sourceId] = startup
+            startup.start()
+            LaunchMemoryCheckpoint.record(
+                "app.sqliteFirst.startupBegan",
+                config: launchDiagnosticsConfig,
+                metadata: ["provider": source.kind.rawValue, "source": sourceId]
+            )
+        } catch {
+            LoggerService.shared.error(
+                "SQLite-first startup failed (source \(sourceId)): \(error)",
+                context: "App"
+            )
+            store.isLoading = false
+        }
     }
 
     private func codexHomeURLFromSettings() -> URL? {
