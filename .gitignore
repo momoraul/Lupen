@@ -42,6 +42,7 @@ test-artifacts/
 # live outside the repo so they stay out of git history.
 /plan.md
 /plan-*.md
+/research.md
 /research-*.md
 /research-*.html
 
