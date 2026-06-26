@@ -126,7 +126,9 @@ enum SessionSourceRegistry {
     static func resolve(
         saved: [SessionSource],
         claudeRoot: URL = ClaudeProvider().defaultSourceRoot,
-        codexRoot: URL = CodexProvider().defaultSourceRoot,
+        // Codex's root is the codexHome (parent of sessions/), since the
+        // importer reads session_index.jsonl from there too.
+        codexRoot: URL = CodexSessionDiscovery().codexHome,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         fileManager: FileManager = .default

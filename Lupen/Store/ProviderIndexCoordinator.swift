@@ -18,6 +18,18 @@ enum ProviderIndexSource: Sendable, Equatable {
         case .codex: return .codex
         }
     }
+
+    /// Build the index source a session source feeds the pipeline: the
+    /// scanner reads `source.root` keyed by `source.kind` — Claude scans the
+    /// projects directory directly, Codex uses the codexHome (parent of
+    /// `sessions/`, also holding `session_index.jsonl`). `SessionSource.root`
+    /// already carries the right base directory per kind, so no derivation.
+    init(_ source: SessionSource) {
+        switch source.kind {
+        case .claudeCode: self = .claude(projectsDirectory: source.root)
+        case .codex: self = .codex(codexHome: source.root)
+        }
+    }
 }
 
 /// Events a coordinator delivers to the main actor (plan §5: progress /

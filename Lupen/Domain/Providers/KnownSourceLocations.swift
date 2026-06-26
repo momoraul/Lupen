@@ -25,7 +25,7 @@ enum KnownSourceLocations {
         fileManager: FileManager = .default
     ) -> [SessionSource] {
         candidateTable(environment: environment, home: home).compactMap { candidate in
-            guard isReadableDirectory(candidate.root, fileManager: fileManager) else { return nil }
+            guard isReadableDirectory(candidate.probe, fileManager: fileManager) else { return nil }
             return SessionSource(
                 id: candidate.id,
                 name: candidate.name,
@@ -41,7 +41,16 @@ enum KnownSourceLocations {
         let id: String
         let name: String
         let kind: ProviderKind
+        /// The base directory the pipeline indexes. For Claude this is the
+        /// `projects` directory it scans directly; for Codex it is the
+        /// `codexHome` (parent of `sessions/`), because the importer also
+        /// reads `session_index.jsonl` from that parent.
         let root: URL
+        /// The directory whose existence gates inclusion. Defaults to `root`;
+        /// Codex probes `root/sessions` so a bare `$CODEX_HOME` without any
+        /// recorded sessions isn't surfaced.
+        var existenceProbe: URL? = nil
+        var probe: URL { existenceProbe ?? root }
     }
 
     private static func candidateTable(environment: [String: String], home: URL) -> [Candidate] {
@@ -64,11 +73,13 @@ enum KnownSourceLocations {
             ))
         }
         if let dir = trimmedEnv(environment["CODEX_HOME"]) {
+            let codexHome = expand(dir)
             rows.append(Candidate(
                 id: "codex-home",
                 name: "CODEX_HOME",
                 kind: .codex,
-                root: expand(dir).appendingPathComponent("sessions")
+                root: codexHome,
+                existenceProbe: codexHome.appendingPathComponent("sessions")
             ))
         }
         return rows

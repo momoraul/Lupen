@@ -114,17 +114,18 @@ final class AppStateStore: @unchecked Sendable {
         self.activeSource = SessionSourceRegistry.builtinSource(
             for: .claudeCode,
             claudeRoot: projectsDirectory ?? claudeProvider.defaultSourceRoot,
-            codexRoot: CodexProvider().defaultSourceRoot
+            codexRoot: CodexSessionDiscovery().codexHome
         )
     }
 
     /// The built-in source for `provider`, with roots faithful to what this
-    /// store scans (Claude honours the projects-directory test override).
+    /// store scans (Claude honours the projects-directory test override;
+    /// Codex's root is the codexHome, parent of sessions/).
     private func builtinSource(for provider: ProviderKind) -> SessionSource {
         SessionSourceRegistry.builtinSource(
             for: provider,
             claudeRoot: effectiveProjectsDirectory,
-            codexRoot: CodexProvider().defaultSourceRoot
+            codexRoot: CodexSessionDiscovery().codexHome
         )
     }
 
