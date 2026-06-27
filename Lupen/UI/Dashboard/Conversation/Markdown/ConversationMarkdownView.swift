@@ -141,11 +141,10 @@ final class ConversationMarkdownView: NSStackView {
 
 /// Code block — mono text + faint background + left accent + Copy button at top-right.
 @MainActor
-final class CodeBlockView: NSView {
+final class CodeBlockView: HoverRevealView {
 
     private let code: String
     private let copyButton: CardCopyButton
-    private var hoverTrackingArea: NSTrackingArea?
 
     init(code: String) {
         self.code = code
@@ -178,7 +177,6 @@ final class CodeBlockView: NSView {
         // until the block is hovered (revealed in mouseEntered). Overlaid at the
         // top-trailing corner so hiding it leaves no gap and the code keeps full
         // width.
-        copyButton.isHidden = true
         addSubview(copyButton)
 
         NSLayoutConstraint.activate([
@@ -189,25 +187,10 @@ final class CodeBlockView: NSView {
             copyButton.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             copyButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
+        // HoverRevealView reveals it on hover (and keeps it through the copy
+        // confirmation).
+        hoverRevealButton = copyButton
     }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverTrackingArea {
-            removeTrackingArea(hoverTrackingArea)
-            self.hoverTrackingArea = nil
-        }
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        hoverTrackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { copyButton.isHidden = false }
-    override func mouseExited(with event: NSEvent) { copyButton.isHidden = true }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()

@@ -1,3 +1,10 @@
+//
+//  ConversationBlockCopy.swift
+//  Lupen
+//
+//  Created by jaden on 2026/06/28.
+//
+
 import Foundation
 
 /// Maps a curated `ConversationBlock` to the plain text the per-card Copy button

@@ -27,20 +27,18 @@ import AppKit
 /// headers), not from removing the card — a frame-less reply lost its left
 /// baseline and containment and read as crude.
 @MainActor
-final class CardContainerView: NSView {
+final class CardContainerView: HoverRevealView {
 
     private let bodyContainer = NSView()
     private let role: BlockRole
     private let tier: BlockTier
     private let highlighted: Bool
-    private var copyButton: CardCopyButton?
     /// Body trailing: pinned to the card edge normally, re-pinned to the copy
     /// button's leading while a button is mounted so a long header (model · cost)
     /// never draws behind the icon. The column stays reserved even while the
     /// button is hover-hidden, so revealing it on hover doesn't reflow the body.
     private var bodyTrailingDefault: NSLayoutConstraint!
     private var bodyTrailingToButton: NSLayoutConstraint?
-    private var hoverTrackingArea: NSTrackingArea?
 
     init(role: BlockRole, tier: BlockTier, highlighted: Bool) {
         self.role = role
@@ -144,20 +142,15 @@ final class CardContainerView: NSView {
     /// (D-6). Overlaid above the body so it doesn't shift content; the card
     /// header truncates behind it. Empty/nil text removes the button.
     func setCopyText(_ text: String?) {
-        copyButton?.removeFromSuperview()
-        copyButton = nil
+        hoverRevealButton?.removeFromSuperview()
+        hoverRevealButton = nil
         bodyTrailingToButton?.isActive = false
         bodyTrailingToButton = nil
         bodyTrailingDefault.isActive = true
 
-        guard let text, !text.isEmpty else {
-            updateTrackingAreas()
-            return
-        }
+        guard let text, !text.isEmpty else { return }
         let button = CardCopyButton.make(copyText: text)
-        button.isHidden = true   // revealed on hover (mouseEntered)
         addSubview(button)       // added after bodyContainer → sits above it
-        copyButton = button
         let topInset: CGFloat = hasShell ? 6 : 2
 
         // Reserve the button's column so body content never renders behind it.
@@ -170,34 +163,9 @@ final class CardContainerView: NSView {
             button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             toButton,
         ])
-        updateTrackingAreas()
-    }
-
-    // MARK: - Hover reveal
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverTrackingArea {
-            removeTrackingArea(hoverTrackingArea)
-            self.hoverTrackingArea = nil
-        }
-        // Only cards that actually have a copy button need hover tracking.
-        guard copyButton != nil else { return }
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        hoverTrackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        copyButton?.isHidden = false
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        copyButton?.isHidden = true
+        // HoverRevealView takes over: hidden until hover, shown through the
+        // confirmation, plus its tracking area.
+        hoverRevealButton = button
     }
 
     /// Role accent color (selected border + selected fill + header icon tint).

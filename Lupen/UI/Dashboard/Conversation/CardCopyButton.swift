@@ -1,3 +1,10 @@
+//
+//  CardCopyButton.swift
+//  Lupen
+//
+//  Created by jaden on 2026/06/28.
+//
+
 import AppKit
 
 /// Small borderless "copy" button with built-in confirmation feedback (D-6).
@@ -22,6 +29,11 @@ final class CardCopyButton: NSButton {
     /// seam so the copy + acknowledgement can be asserted without a timer wait.
     private(set) var isShowingConfirmation = false
 
+    /// Fired whenever `isShowingConfirmation` flips (copy starts, reverts, or is
+    /// reset). A hover host listens so it can keep the button visible for the
+    /// duration of the confirmation even if the pointer has left.
+    var onConfirmationChanged: (() -> Void)?
+
     static func make(copyText: String) -> CardCopyButton {
         let button = CardCopyButton(frame: .zero)
         button.configure(copyText: copyText)
@@ -43,8 +55,15 @@ final class CardCopyButton: NSButton {
         setContentHuggingPriority(.required, for: .vertical)
     }
 
-    /// Update the text copied on the next click (cards are reused across turns).
-    func setCopyText(_ text: String) { copyText = text }
+    /// Update the text copied on the next click (a reused button, e.g. the Raw
+    /// tab's, points at new content). Drops any in-flight confirmation so a
+    /// stale checkmark doesn't carry across to the new content.
+    func setCopyText(_ text: String) {
+        copyText = text
+        revertWorkItem?.cancel()
+        revertWorkItem = nil
+        if isShowingConfirmation { restoreCopyGlyph() }
+    }
 
     @objc private func performCopy() {
         NSPasteboard.general.clearContents()
@@ -57,16 +76,19 @@ final class CardCopyButton: NSButton {
         image = Self.doneIcon
         contentTintColor = .systemGreen
         toolTip = "Copied"
+        onConfirmationChanged?()
 
         revertWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.image = Self.copyIcon
-            self.contentTintColor = .secondaryLabelColor
-            self.toolTip = "Copy"
-            self.isShowingConfirmation = false
-        }
+        let work = DispatchWorkItem { [weak self] in self?.restoreCopyGlyph() }
         revertWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.confirmationSeconds, execute: work)
+    }
+
+    private func restoreCopyGlyph() {
+        image = Self.copyIcon
+        contentTintColor = .secondaryLabelColor
+        toolTip = "Copy"
+        isShowingConfirmation = false
+        onConfirmationChanged?()
     }
 }
