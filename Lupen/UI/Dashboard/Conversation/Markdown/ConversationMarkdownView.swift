@@ -144,9 +144,12 @@ final class ConversationMarkdownView: NSStackView {
 final class CodeBlockView: NSView {
 
     private let code: String
+    private let copyButton: CardCopyButton
+    private var hoverTrackingArea: NSTrackingArea?
 
     init(code: String) {
         self.code = code
+        self.copyButton = CardCopyButton.make(copyText: code)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         setup()
@@ -170,21 +173,41 @@ final class CodeBlockView: NSView {
         ))
         addSubview(text)
 
-        // Shared per-card copy affordance (D-6) — gives the code block the same
-        // doc.on.doc → checkmark confirmation used across conversation cards and
-        // the Raw tab (the old button gave no success feedback).
-        let copyButton = CardCopyButton.make(copyText: code)
+        // Shared per-card copy affordance (D-6) — same doc.on.doc → checkmark
+        // confirmation as the conversation cards, and like them it stays hidden
+        // until the block is hovered (revealed in mouseEntered). Overlaid at the
+        // top-trailing corner so hiding it leaves no gap and the code keeps full
+        // width.
+        copyButton.isHidden = true
         addSubview(copyButton)
 
         NSLayoutConstraint.activate([
             text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            text.topAnchor.constraint(equalTo: copyButton.bottomAnchor, constant: 2),
+            text.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             copyButton.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             copyButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
     }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+            self.hoverTrackingArea = nil
+        }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { copyButton.isHidden = false }
+    override func mouseExited(with event: NSEvent) { copyButton.isHidden = true }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
