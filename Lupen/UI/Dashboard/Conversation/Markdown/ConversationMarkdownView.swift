@@ -141,12 +141,14 @@ final class ConversationMarkdownView: NSStackView {
 
 /// Code block — mono text + faint background + left accent + Copy button at top-right.
 @MainActor
-final class CodeBlockView: NSView {
+final class CodeBlockView: HoverRevealView {
 
     private let code: String
+    private let copyButton: CardCopyButton
 
     init(code: String) {
         self.code = code
+        self.copyButton = CardCopyButton.make(copyText: code)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         setup()
@@ -170,27 +172,24 @@ final class CodeBlockView: NSView {
         ))
         addSubview(text)
 
-        let copyButton: NSButton
-        if let icon = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy") {
-            copyButton = NSButton(image: icon, target: self, action: #selector(copyCode))
-            copyButton.isBordered = false
-            copyButton.contentTintColor = .secondaryLabelColor
-        } else {
-            copyButton = NSButton(title: "Copy", target: self, action: #selector(copyCode))
-            copyButton.bezelStyle = .accessoryBarAction
-        }
-        copyButton.controlSize = .small
-        copyButton.translatesAutoresizingMaskIntoConstraints = false
+        // Shared per-card copy affordance (D-6) — same doc.on.doc → checkmark
+        // confirmation as the conversation cards, and like them it stays hidden
+        // until the block is hovered (revealed in mouseEntered). Overlaid at the
+        // top-trailing corner so hiding it leaves no gap and the code keeps full
+        // width.
         addSubview(copyButton)
 
         NSLayoutConstraint.activate([
             text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            text.topAnchor.constraint(equalTo: copyButton.bottomAnchor, constant: 2),
+            text.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             copyButton.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             copyButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
+        // HoverRevealView reveals it on hover (and keeps it through the copy
+        // confirmation).
+        hoverRevealButton = copyButton
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -202,11 +201,6 @@ final class CodeBlockView: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = DetailStyles.conversationCodeFillColor.cgColor
         }
-    }
-
-    @objc private func copyCode() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
     }
 }
 

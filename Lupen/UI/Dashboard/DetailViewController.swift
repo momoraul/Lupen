@@ -1397,6 +1397,9 @@ final class RawDetailView: NSView {
 
     private let scrollView = NSScrollView()
     private let textView = NSTextView()
+    /// Top-trailing "Copy JSON" affordance (D-6) — the Raw tab was copyable only
+    /// via ⌘C / drag-select before. Copies the full pretty-printed payload.
+    private let copyButton = CardCopyButton.make(copyText: "")
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -1432,11 +1435,18 @@ final class RawDetailView: NSView {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
 
+        copyButton.toolTip = "Copy JSON"
+        copyButton.isHidden = true
+        addSubview(copyButton)   // overlays the scroll view's top-trailing corner
+
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            copyButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            copyButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
         ])
     }
 
@@ -1444,6 +1454,7 @@ final class RawDetailView: NSView {
         guard let data = rawPayload else {
             textView.string = "(no raw data available)"
             textView.textColor = .tertiaryLabelColor
+            copyButton.isHidden = true
             return
         }
 
@@ -1451,6 +1462,8 @@ final class RawDetailView: NSView {
         textView.textColor = .labelColor
         textView.string = formatted
         textView.scrollToBeginningOfDocument(nil)
+        copyButton.setCopyText(formatted)
+        copyButton.isHidden = false
     }
 }
 

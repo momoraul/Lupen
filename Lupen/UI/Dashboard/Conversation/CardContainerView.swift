@@ -27,12 +27,18 @@ import AppKit
 /// headers), not from removing the card — a frame-less reply lost its left
 /// baseline and containment and read as crude.
 @MainActor
-final class CardContainerView: NSView {
+final class CardContainerView: HoverRevealView {
 
     private let bodyContainer = NSView()
     private let role: BlockRole
     private let tier: BlockTier
     private let highlighted: Bool
+    /// Body trailing: pinned to the card edge normally, re-pinned to the copy
+    /// button's leading while a button is mounted so a long header (model · cost)
+    /// never draws behind the icon. The column stays reserved even while the
+    /// button is hover-hidden, so revealing it on hover doesn't reflow the body.
+    private var bodyTrailingDefault: NSLayoutConstraint!
+    private var bodyTrailingToButton: NSLayoutConstraint?
 
     init(role: BlockRole, tier: BlockTier, highlighted: Bool) {
         self.role = role
@@ -64,9 +70,10 @@ final class CardContainerView: NSView {
         let leadingInset: CGFloat = hasShell ? 14 : 24
         let trailingInset: CGFloat = hasShell ? 14 : 12
 
+        bodyTrailingDefault = bodyContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -trailingInset)
         NSLayoutConstraint.activate([
             bodyContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: leadingInset),
-            bodyContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -trailingInset),
+            bodyTrailingDefault,
             bodyContainer.topAnchor.constraint(equalTo: topAnchor, constant: vInset),
             bodyContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -vInset),
         ])
@@ -129,6 +136,36 @@ final class CardContainerView: NSView {
             view.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
             view.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
         ])
+    }
+
+    /// Mount (or clear) the per-card Copy button in the top-trailing corner
+    /// (D-6). Overlaid above the body so it doesn't shift content; the card
+    /// header truncates behind it. Empty/nil text removes the button.
+    func setCopyText(_ text: String?) {
+        hoverRevealButton?.removeFromSuperview()
+        hoverRevealButton = nil
+        bodyTrailingToButton?.isActive = false
+        bodyTrailingToButton = nil
+        bodyTrailingDefault.isActive = true
+
+        guard let text, !text.isEmpty else { return }
+        let button = CardCopyButton.make(copyText: text)
+        addSubview(button)       // added after bodyContainer → sits above it
+        let topInset: CGFloat = hasShell ? 6 : 2
+
+        // Reserve the button's column so body content never renders behind it.
+        bodyTrailingDefault.isActive = false
+        let toButton = bodyContainer.trailingAnchor.constraint(equalTo: button.leadingAnchor, constant: -8)
+        bodyTrailingToButton = toButton
+
+        NSLayoutConstraint.activate([
+            button.topAnchor.constraint(equalTo: topAnchor, constant: topInset),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            toButton,
+        ])
+        // HoverRevealView takes over: hidden until hover, shown through the
+        // confirmation, plus its tracking area.
+        hoverRevealButton = button
     }
 
     /// Role accent color (selected border + selected fill + header icon tint).
