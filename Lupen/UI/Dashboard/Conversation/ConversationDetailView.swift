@@ -29,10 +29,24 @@ final class ConversationDetailView: NSView {
     /// already visible) from "new content" (reveal the target).
     private var renderedBlockIDs: [String] = []
 
+    // MARK: - In-conversation find (D-3)
+    private let findBar = ConversationFindBar(frame: .zero)
+    /// `scrollView.top == self.top` when the find bar is hidden; swapped for
+    /// `scrollView.top == findBar.bottom` while finding so the bar doesn't
+    /// cover the first card.
+    private var scrollTopToContainer: NSLayoutConstraint!
+    private var scrollTopToFindBar: NSLayoutConstraint!
+    /// Text views searched in the current find session, in document order —
+    /// `ConversationFindEngine.Match.textIndex` indexes into this.
+    private var findTextViews: [ConversationBodyTextView] = []
+    private var findMatches: [ConversationFindEngine.Match] = []
+    private var findCurrentIndex: Int?
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         registerRenderers()
         setup()
+        setupFindBar()
     }
 
     @available(*, unavailable)
@@ -67,8 +81,9 @@ final class ConversationDetailView: NSView {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
 
+        scrollTopToContainer = scrollView.topAnchor.constraint(equalTo: topAnchor)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollTopToContainer,
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -151,6 +166,11 @@ final class ConversationDetailView: NSView {
             scrollView.contentView.scroll(to: .zero)
             scrollView.reflectScrolledClipView(scrollView.contentView)
         }
+        // The card views were rebuilt, so any prior find snapshot is stale.
+        // Re-run the query against the fresh text views (no-op when not finding).
+        if isFinding {
+            updateFind(query: findBar.query, reveal: false)
+        }
     }
 
     /// Scroll only as much as needed to reveal `view`. When `keepIfVisible` (the
@@ -179,6 +199,163 @@ final class ConversationDetailView: NSView {
             targetY = rect.maxY - visibleHeight + topInset
         }
         let clamped = min(max(0, targetY), maxY)
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: clamped))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    // MARK: - In-conversation find (D-3)
+
+    private func setupFindBar() {
+        findBar.translatesAutoresizingMaskIntoConstraints = false
+        findBar.isHidden = true
+        addSubview(findBar)
+
+        scrollTopToFindBar = scrollView.topAnchor.constraint(equalTo: findBar.bottomAnchor)
+        NSLayoutConstraint.activate([
+            findBar.topAnchor.constraint(equalTo: topAnchor),
+            findBar.leadingAnchor.constraint(equalTo: leadingAnchor),
+            findBar.trailingAnchor.constraint(equalTo: trailingAnchor),
+            findBar.heightAnchor.constraint(equalToConstant: ConversationFindBar.barHeight),
+        ])
+
+        findBar.onQueryChanged = { [weak self] query in self?.updateFind(query: query, reveal: true) }
+        findBar.onNext = { [weak self] in self?.stepFind(forward: true) }
+        findBar.onPrevious = { [weak self] in self?.stepFind(forward: false) }
+        findBar.onClose = { [weak self] in self?.endFind() }
+    }
+
+    /// True while the find bar is mounted and visible.
+    var isFinding: Bool { !findBar.isHidden }
+
+    /// Reveal the find bar and focus its field. Re-applies the current query so
+    /// reopening over an existing search restores its highlights.
+    func beginFind() {
+        guard !isFinding else { findBar.focusField(); return }
+        findBar.isHidden = false
+        scrollTopToContainer.isActive = false
+        scrollTopToFindBar.isActive = true
+        updateFind(query: findBar.query, reveal: true)
+        findBar.focusField()
+    }
+
+    /// Hide the find bar and drop all match highlights.
+    func endFind() {
+        guard isFinding else { return }
+        clearHighlights()
+        findTextViews = []
+        findMatches = []
+        findCurrentIndex = nil
+        scrollTopToFindBar.isActive = false
+        scrollTopToContainer.isActive = true
+        findBar.isHidden = true
+    }
+
+    /// Advance to the next / previous match (wraps). No-op without matches.
+    func findNext() { stepFind(forward: true) }
+    func findPrevious() { stepFind(forward: false) }
+
+    private func stepFind(forward: Bool) {
+        guard !findMatches.isEmpty else { NSSound.beep(); return }
+        findCurrentIndex = ConversationFindEngine.step(
+            current: findCurrentIndex, count: findMatches.count, forward: forward
+        )
+        applyHighlights()
+        revealCurrentMatch()
+        findBar.setCount(current: findCurrentIndex, total: findMatches.count)
+    }
+
+    /// Rebuild the match set for `query` against the live card text views.
+    private func updateFind(query: String, reveal: Bool) {
+        findTextViews = conversationTextViews()
+        let texts = findTextViews.map(\.string)
+        findMatches = ConversationFindEngine.matches(in: texts, query: query)
+        findCurrentIndex = findMatches.isEmpty ? nil : 0
+        applyHighlights()
+        if reveal { revealCurrentMatch() }
+        findBar.setCount(current: findCurrentIndex, total: findMatches.count)
+    }
+
+    /// All `ConversationBodyTextView`s in the card stack, in document order
+    /// (depth-first) — covers prompt/assistant/thinking/activity bodies, whether
+    /// direct card bodies or sections inside a `ConversationMarkdownView`.
+    private func conversationTextViews() -> [ConversationBodyTextView] {
+        var found: [ConversationBodyTextView] = []
+        func walk(_ view: NSView) {
+            for sub in view.subviews {
+                if let tv = sub as? ConversationBodyTextView { found.append(tv) }
+                walk(sub)
+            }
+        }
+        for card in stack.arrangedSubviews { walk(card) }
+        return found
+    }
+
+    private func clearHighlights() {
+        for textView in findTextViews {
+            guard let lm = textView.layoutManager else { continue }
+            let full = NSRange(location: 0, length: (textView.string as NSString).length)
+            lm.removeTemporaryAttribute(.backgroundColor, forCharacterRange: full)
+            lm.removeTemporaryAttribute(.foregroundColor, forCharacterRange: full)
+        }
+    }
+
+    private func applyHighlights() {
+        clearHighlights()
+        for (i, match) in findMatches.enumerated() {
+            guard findTextViews.indices.contains(match.textIndex) else { continue }
+            let textView = findTextViews[match.textIndex]
+            // Defensive: a temporary attribute on a range past the view's
+            // current length throws NSRangeException. The range is rebuilt from
+            // this same view's string, so it holds today — guard anyway against
+            // a future renderer that mutates a body in place without a rebuild.
+            guard let lm = textView.layoutManager,
+                  NSMaxRange(match.range) <= (textView.string as NSString).length else { continue }
+            // Current match gets a stronger tint; black foreground keeps the
+            // matched text legible on the yellow/orange in both appearances
+            // (mirrors QueryHighlighter's contrast handling).
+            let background = (i == findCurrentIndex)
+                ? NSColor.systemOrange
+                : NSColor.findHighlightColor
+            lm.addTemporaryAttributes(
+                [.backgroundColor: background, .foregroundColor: NSColor.black],
+                forCharacterRange: match.range
+            )
+        }
+    }
+
+    private func revealCurrentMatch() {
+        guard let index = findCurrentIndex, findMatches.indices.contains(index) else { return }
+        let match = findMatches[index]
+        guard findTextViews.indices.contains(match.textIndex) else { return }
+        let textView = findTextViews[match.textIndex]
+        guard let lm = textView.layoutManager, let tc = textView.textContainer,
+              NSMaxRange(match.range) <= (textView.string as NSString).length else { return }
+        let glyphRange = lm.glyphRange(forCharacterRange: match.range, actualCharacterRange: nil)
+        var rect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+        rect.origin.x += textView.textContainerOrigin.x
+        rect.origin.y += textView.textContainerOrigin.y
+        let inDocument = textView.convert(rect, to: documentView)
+        scrollDocumentRectIntoView(inDocument)
+    }
+
+    /// Scroll the minimum amount to bring `rect` (in documentView coords) into
+    /// view, leaving room below the find bar at the top. (Named to avoid
+    /// colliding with `NSView.scrollRectToVisible(_:)`.)
+    private func scrollDocumentRectIntoView(_ rect: NSRect) {
+        let clip = scrollView.contentView.bounds
+        let visibleHeight = clip.height
+        let documentHeight = max(documentView.bounds.height, stack.fittingSize.height)
+        let maxY = max(0, documentHeight - visibleHeight)
+        let topInset = ConversationFindBar.barHeight + 8
+
+        var targetY = clip.origin.y
+        if rect.minY < clip.minY + topInset {
+            targetY = rect.minY - topInset
+        } else if rect.maxY > clip.maxY {
+            targetY = rect.maxY - visibleHeight + 12
+        }
+        let clamped = min(max(0, targetY), maxY)
+        guard abs(clamped - clip.origin.y) > 0.5 else { return }
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: clamped))
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
