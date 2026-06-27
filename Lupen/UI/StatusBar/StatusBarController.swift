@@ -15,11 +15,17 @@ final class StatusBarController {
         let showsPlaceholder: Bool
     }
 
+    /// How a menu-bar click is routed. `.primary` is a plain left-click
+    /// (opens the Dashboard); `.secondary` is a right-click or a
+    /// Control-left-click (macOS convention for a context menu).
+    enum ClickKind: Equatable { case primary, secondary }
+
     private let statusItem: NSStatusItem
     private let store: AppStateStore
     private let settings: AppSettings
     private let rateLimitSampleStore: RateLimitSampleStore
     private var onButtonClick: ((NSStatusBarButton) -> Void)?
+    private var menuProvider: (() -> NSMenu?)?
 
     var button: NSStatusBarButton? { statusItem.button }
 
@@ -44,6 +50,27 @@ final class StatusBarController {
         self.onButtonClick = handler
     }
 
+    /// Supplies the context menu shown on a secondary (right / Control)
+    /// click. Rebuilt on every click so provider-dependent titles
+    /// (e.g. "Verify Costs…" vs "Verify Usage…") stay current. Returning
+    /// `nil` falls back to the primary action.
+    func setMenuProvider(_ provider: @escaping () -> NSMenu?) {
+        self.menuProvider = provider
+    }
+
+    /// Pure click classification — `.rightMouseDown`, or a
+    /// `.control`-modified left click, is a secondary (context-menu)
+    /// click; everything else opens the Dashboard. Extracted as a static
+    /// so the routing logic is unit-testable without a live status item.
+    static func classifyClick(
+        eventType: NSEvent.EventType,
+        modifiers: NSEvent.ModifierFlags
+    ) -> ClickKind {
+        if eventType == .rightMouseDown { return .secondary }
+        if eventType == .leftMouseDown, modifiers.contains(.control) { return .secondary }
+        return .primary
+    }
+
     /// Recompose the status item after an app-appearance override flip
     /// (`NSApp.appearance`). Windows redraw themselves on an appearance
     /// change, but the menu-bar icon is a non-template image whose palette is
@@ -66,17 +93,44 @@ final class StatusBarController {
         button.image = nil
         button.target = self
         button.action = #selector(statusBarButtonClicked(_:))
-        button.sendAction(on: [.leftMouseDown])  // React on mouse down, not mouse up
+        // React on mouse down, not mouse up. Right-click is included so a
+        // secondary click can raise the context menu (macOS convention).
+        button.sendAction(on: [.leftMouseDown, .rightMouseDown])
 
         applyAttributedTitle()
     }
 
     @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        let kind = Self.classifyClick(
+            eventType: event?.type ?? .leftMouseDown,
+            modifiers: event?.modifierFlags ?? []
+        )
         LoggerService.shared.info(
-            "Menu bar icon clicked — NSApp.isActive=\(NSApp.isActive)",
+            "Menu bar icon clicked — kind=\(kind), NSApp.isActive=\(NSApp.isActive)",
             context: "StatusBar"
         )
-        onButtonClick?(sender)
+        switch kind {
+        case .secondary:
+            if let menu = menuProvider?() {
+                presentMenu(menu)
+            } else {
+                onButtonClick?(sender)
+            }
+        case .primary:
+            onButtonClick?(sender)
+        }
+    }
+
+    /// Pops the context menu directly beneath the status item. Assigning
+    /// `statusItem.menu` makes the click raise the menu (instead of firing
+    /// the button action) with the standard pressed-state highlight; it is
+    /// cleared immediately afterwards so the next plain click still routes
+    /// through `statusBarButtonClicked`.
+    private func presentMenu(_ menu: NSMenu) {
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
     }
 
     // MARK: - Observation
