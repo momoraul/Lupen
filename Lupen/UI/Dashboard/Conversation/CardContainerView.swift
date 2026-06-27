@@ -36,9 +36,11 @@ final class CardContainerView: NSView {
     private var copyButton: CardCopyButton?
     /// Body trailing: pinned to the card edge normally, re-pinned to the copy
     /// button's leading while a button is mounted so a long header (model · cost)
-    /// never draws behind the always-visible icon.
+    /// never draws behind the icon. The column stays reserved even while the
+    /// button is hover-hidden, so revealing it on hover doesn't reflow the body.
     private var bodyTrailingDefault: NSLayoutConstraint!
     private var bodyTrailingToButton: NSLayoutConstraint?
+    private var hoverTrackingArea: NSTrackingArea?
 
     init(role: BlockRole, tier: BlockTier, highlighted: Bool) {
         self.role = role
@@ -148,9 +150,13 @@ final class CardContainerView: NSView {
         bodyTrailingToButton = nil
         bodyTrailingDefault.isActive = true
 
-        guard let text, !text.isEmpty else { return }
+        guard let text, !text.isEmpty else {
+            updateTrackingAreas()
+            return
+        }
         let button = CardCopyButton.make(copyText: text)
-        addSubview(button)   // added after bodyContainer → sits above it
+        button.isHidden = true   // revealed on hover (mouseEntered)
+        addSubview(button)       // added after bodyContainer → sits above it
         copyButton = button
         let topInset: CGFloat = hasShell ? 6 : 2
 
@@ -164,6 +170,34 @@ final class CardContainerView: NSView {
             button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             toButton,
         ])
+        updateTrackingAreas()
+    }
+
+    // MARK: - Hover reveal
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+            self.hoverTrackingArea = nil
+        }
+        // Only cards that actually have a copy button need hover tracking.
+        guard copyButton != nil else { return }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        copyButton?.isHidden = false
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        copyButton?.isHidden = true
     }
 
     /// Role accent color (selected border + selected fill + header icon tint).

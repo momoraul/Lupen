@@ -28,7 +28,6 @@ struct ActivityGroupRenderer: BlockRenderer {
         }
         let card = CardContainerView(role: .assistant, tier: block.tier, highlighted: block.isHighlighted)
         card.setBody(disclosure)
-        card.setCopyText(ConversationBlockCopy.plainText(for: block))
         return card
     }
 
