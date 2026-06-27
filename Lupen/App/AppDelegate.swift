@@ -327,6 +327,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             LoggerService.shared.debug("Click handler executing — calling showDashboard", context: "App")
             dashboard.showDashboard()
         }
+        // Secondary (right / Control) click raises an action menu. Built
+        // fresh each click so the Verify title follows the active source.
+        statusBarController.setMenuProvider { [weak self] in
+            guard let self else { return nil }
+            return StatusBarMenuBuilder.makeMenu(
+                target: self,
+                verifyTitle: self.settings.activeProvider.verificationMenuTitle
+            )
+        }
 
         // Honour the user's "Open Dashboard on launch" preference. Skip
         // in the test host because tests don't want a window popping up.
