@@ -808,6 +808,9 @@ final class DetailViewController: NSViewController {
     }
 
     private func showTab(_ index: Int) {
+        // Leaving the Conversation tab dismisses its find bar (the other tabs
+        // aren't searchable) so stale match highlights don't linger.
+        if index != 0 { conversationView.endFind() }
         // First visit to Raw/Usage for this selection: run the parked
         // loader (plan 4.2 — hidden tabs never fetch).
         if Self.lazyTabIndexes.contains(index),
@@ -819,6 +822,39 @@ final class DetailViewController: NSViewController {
         }
         for (i, tabView) in currentTabViews.enumerated() {
             tabView.isHidden = (i != index)
+        }
+    }
+
+    // MARK: - Find (D-3)
+
+    /// ⌘F via the responder chain. When focus is in the detail pane and the
+    /// Conversation tab is showing, open its in-conversation find bar. On any
+    /// other tab, forward to the next responder so the sidebar's session search
+    /// keeps the shortcut (context-aware Find).
+    @objc func focusSearchField(_ sender: Any?) {
+        guard segmentedControl.selectedSegment == 0 else {
+            nextResponder?.tryToPerform(#selector(focusSearchField(_:)), with: sender)
+            return
+        }
+        conversationView.beginFind()
+    }
+
+    /// ⌘G / ⇧⌘G. While the conversation find bar is active, drive its match
+    /// navigation; otherwise forward so the Turn-outline match navigation keeps
+    /// the shortcut unchanged.
+    @objc func navigateToNextMatch(_ sender: Any?) {
+        if conversationView.isFinding {
+            conversationView.findNext()
+        } else {
+            nextResponder?.tryToPerform(#selector(navigateToNextMatch(_:)), with: sender)
+        }
+    }
+
+    @objc func navigateToPreviousMatch(_ sender: Any?) {
+        if conversationView.isFinding {
+            conversationView.findPrevious()
+        } else {
+            nextResponder?.tryToPerform(#selector(navigateToPreviousMatch(_:)), with: sender)
         }
     }
 
