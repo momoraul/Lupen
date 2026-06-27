@@ -203,6 +203,13 @@ final class SQLiteFirstStartup: @unchecked Sendable {
         isProjectionActive = false
     }
 
+    /// A-1: user-triggered integrity check — runs `PRAGMA quick_check` on this
+    /// source's index. Returns true when healthy. Safe to call off the main
+    /// thread (the pool is thread-safe). A `false` is repaired by `rebuildIndex()`.
+    func checkIntegrity() -> Bool {
+        coordinator.store.database.integrityCheck()
+    }
+
     /// Plan 5.2: user-triggered "Rebuild Index" — wipe every derived
     /// row and re-scan the source logs in the background. The wipe runs
     /// against the open pool (never delete DB files under a live writer

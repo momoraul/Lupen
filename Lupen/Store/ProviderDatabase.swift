@@ -158,6 +158,29 @@ final class ProviderDatabase: @unchecked Sendable {
         try pool.close()
     }
 
+    // MARK: - Integrity (A-1)
+
+    /// Runs `PRAGMA quick_check` against the live pool and reports whether the
+    /// database is structurally sound. Returns `false` for any reported
+    /// corruption (a non-`"ok"` result) or when the check itself throws (the
+    /// file is too damaged to read).
+    ///
+    /// User-triggered (the "Check Index Integrity" menu action) rather than run
+    /// on open: `quick_check` scans every page, so keeping it off the launch
+    /// path avoids a stall on large indexes. The caller runs it off the main
+    /// thread; the pool is safe to read from any thread. The index is a derived
+    /// cache, so a `false` here is recovered by a transparent rebuild + re-scan.
+    func integrityCheck() -> Bool {
+        do {
+            let result = try pool.read { db in
+                try String.fetchOne(db, sql: "PRAGMA quick_check(1)")
+            }
+            return result == "ok"
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - Storage failure recovery (plan 5.2b)
 
     /// True when `error` means the storage underneath an open pool can

@@ -785,6 +785,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         fileMenu.addItem(.separator())
 
+        // A-1: non-destructive integrity check (PRAGMA quick_check) of the
+        // derived index, run on demand off the main thread. Offers a rebuild
+        // only if corruption is found.
+        let checkIntegrityItem = NSMenuItem(
+            title: "Check Index Integrity…",
+            action: #selector(checkIndexIntegrity(_:)),
+            keyEquivalent: ""
+        )
+        checkIntegrityItem.target = self
+        fileMenu.addItem(checkIntegrityItem)
+
         // Destructive-ish — wipes the derived SQLite indexes and
         // re-scans the source logs in the background. Confirm via
         // NSAlert so a mis-click doesn't discard a finished backfill.
@@ -1178,6 +1189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 settings: settings,
                 onRevealLogFile: { [weak self] in self?.revealLogFileInFinder(nil) },
                 onClearCacheAndReparse: { [weak self] in self?.clearCacheAndReparse(nil) },
+                onCheckIndexIntegrity: { [weak self] in self?.checkIndexIntegrity(nil) },
                 statuslineService: statuslineService
             )
         }
@@ -1248,6 +1260,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         for startup in sqliteFirstStartups.values {
+            startup.rebuildIndex()
+        }
+    }
+
+    // MARK: - Index integrity (A-1)
+
+    /// User-triggered `PRAGMA quick_check` of the open indexes. Runs off the
+    /// main thread (the scan touches every page); on completion reports the
+    /// result and, if corruption is found, offers a rebuild + re-scan.
+    @objc func checkIndexIntegrity(_ sender: Any?) {
+        let startups = Array(sqliteFirstStartups.values)
+        guard !startups.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "No Index to Check"
+            alert.informativeText = "The session index hasn't been opened yet. Open the dashboard, then try again."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let corrupt = startups.filter { !$0.checkIntegrity() }
+            DispatchQueue.main.async { [weak self] in
+                self?.presentIntegrityResult(corrupt: corrupt)
+            }
+        }
+    }
+
+    private func presentIntegrityResult(corrupt: [SQLiteFirstStartup]) {
+        let alert = NSAlert()
+        guard !corrupt.isEmpty else {
+            alert.messageText = "Index Is Healthy"
+            alert.informativeText = "No problems were found in the session index."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+        alert.messageText = "Index Corruption Detected"
+        alert.informativeText = """
+        Lupen found corruption in its derived session index. Rebuild it now? \
+        Lupen will re-scan your session logs in the background; your logs on disk \
+        are not modified.
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Rebuild Index")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        for startup in corrupt {
             startup.rebuildIndex()
         }
     }
