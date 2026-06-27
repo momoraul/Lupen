@@ -55,6 +55,7 @@ struct UserPromptCardRenderer: BlockRenderer {
 
         let card = CardContainerView(role: .user, tier: block.tier, highlighted: block.isHighlighted)
         card.setBody(stack)
+        card.setCopyText(ConversationBlockCopy.plainText(for: block))
         return card
     }
 }

@@ -170,17 +170,10 @@ final class CodeBlockView: NSView {
         ))
         addSubview(text)
 
-        let copyButton: NSButton
-        if let icon = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy") {
-            copyButton = NSButton(image: icon, target: self, action: #selector(copyCode))
-            copyButton.isBordered = false
-            copyButton.contentTintColor = .secondaryLabelColor
-        } else {
-            copyButton = NSButton(title: "Copy", target: self, action: #selector(copyCode))
-            copyButton.bezelStyle = .accessoryBarAction
-        }
-        copyButton.controlSize = .small
-        copyButton.translatesAutoresizingMaskIntoConstraints = false
+        // Shared per-card copy affordance (D-6) — gives the code block the same
+        // doc.on.doc → checkmark confirmation used across conversation cards and
+        // the Raw tab (the old button gave no success feedback).
+        let copyButton = CardCopyButton.make(copyText: code)
         addSubview(copyButton)
 
         NSLayoutConstraint.activate([
@@ -202,11 +195,6 @@ final class CodeBlockView: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = DetailStyles.conversationCodeFillColor.cgColor
         }
-    }
-
-    @objc private func copyCode() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(code, forType: .string)
     }
 }
 

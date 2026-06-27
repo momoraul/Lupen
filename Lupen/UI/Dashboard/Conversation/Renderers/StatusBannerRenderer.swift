@@ -23,6 +23,7 @@ struct StatusBannerRenderer: BlockRenderer {
 
         let card = CardContainerView(role: .system, tier: block.tier, highlighted: block.isHighlighted)
         card.setBody(label)
+        card.setCopyText(ConversationBlockCopy.plainText(for: block))
         return card
     }
 
