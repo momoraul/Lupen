@@ -191,6 +191,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Store cache the manage window uses to read an inactive provider's index.
     private var managedReadStores: [String: ProviderStore] = [:]
     private var verifyUsageMenuItem: NSMenuItem?
+    /// Guards against overlapping "Check Index Integrity" runs (the scan is
+    /// async; a second trigger would stack alerts and double-rebuild).
+    private var isCheckingIntegrity = false
     private lazy var logWindowController = LogWindowController(logger: LoggerService.shared)
     private let smokeTest = LaunchSmokeTestConfig.current()
     private let launchDiagnosticsConfig = LaunchDiagnosticsConfig.current()
@@ -1245,23 +1248,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// are never touched. Confirm first — on a large history the
     /// background re-index can take a while to fully repopulate.
     @objc func clearCacheAndReparse(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.messageText = "Rebuild Index?"
-        alert.informativeText = """
+        guard confirmRebuildAlert(informativeText: """
         Lupen will clear its derived index and re-scan every session log in the background. \
         The sidebar repopulates as sessions are re-indexed; your provider logs on disk are not modified.
 
         Use this if the numbers look wrong or after a provider format change.
-        """
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Rebuild Index")
-        alert.addButton(withTitle: "Cancel")
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        """) else { return }
 
         for startup in sqliteFirstStartups.values {
             startup.rebuildIndex()
         }
+    }
+
+    /// Shared "Rebuild Index?" confirmation. Returns true when the user
+    /// confirms. Used by `clearCacheAndReparse` (full re-index) and the
+    /// corruption-repair path (A-1).
+    private func confirmRebuildAlert(informativeText: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Rebuild Index?"
+        alert.informativeText = informativeText
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Rebuild Index")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     // MARK: - Index integrity (A-1)
@@ -1270,6 +1279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// main thread (the scan touches every page); on completion reports the
     /// result and, if corruption is found, offers a rebuild + re-scan.
     @objc func checkIndexIntegrity(_ sender: Any?) {
+        guard !isCheckingIntegrity else { return }   // a scan is already running
         let startups = Array(sqliteFirstStartups.values)
         guard !startups.isEmpty else {
             let alert = NSAlert()
@@ -1279,35 +1289,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.runModal()
             return
         }
+        isCheckingIntegrity = true
         DispatchQueue.global(qos: .userInitiated).async {
             let corrupt = startups.filter { !$0.checkIntegrity() }
             DispatchQueue.main.async { [weak self] in
                 self?.presentIntegrityResult(corrupt: corrupt)
+                self?.isCheckingIntegrity = false
             }
         }
     }
 
     private func presentIntegrityResult(corrupt: [SQLiteFirstStartup]) {
-        let alert = NSAlert()
         guard !corrupt.isEmpty else {
+            let alert = NSAlert()
             alert.messageText = "Index Is Healthy"
             alert.informativeText = "No problems were found in the session index."
             alert.addButton(withTitle: "OK")
             alert.runModal()
             return
         }
-        alert.messageText = "Index Corruption Detected"
-        alert.informativeText = """
+        guard confirmRebuildAlert(informativeText: """
         Lupen found corruption in its derived session index. Rebuild it now? \
         Lupen will re-scan your session logs in the background; your logs on disk \
         are not modified.
-        """
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Rebuild Index")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        for startup in corrupt {
-            startup.rebuildIndex()
+        """) else { return }
+        // Re-check liveness: a source may have been switched/removed while the
+        // modal was open. Only repair drivers still owned by AppDelegate, and
+        // use the file-level rebuild (a corrupt b-tree can't be wiped in place).
+        let live = Set(sqliteFirstStartups.values.map { ObjectIdentifier($0) })
+        for startup in corrupt where live.contains(ObjectIdentifier(startup)) {
+            startup.repairCorruptIndex()
         }
     }
 }
