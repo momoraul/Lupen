@@ -72,16 +72,27 @@ enum ReportsCSVExporter {
         return render(header: header, rows: body)
     }
 
-    /// Daily-bucket CSV for the Overview tab. Date is fixed
-    /// `yyyy-MM-dd` in POSIX so Finder sorts chronologically and other
-    /// tools parse it cleanly. A nil `avgCostPerSession` renders as an
-    /// empty cell so downstream formulas treat it as "no value".
-    static func timelineCSV(_ buckets: [UsageTimelineAnalyzer.DailyUsageBucket]) -> String {
-        let header = ["Date", "Cost USD", "Sessions", "Turns", "Requests",
+    /// Timeline-bucket CSV for the Overview tab. The period column is
+    /// fixed `yyyy-MM-dd` (period start) in POSIX so Finder sorts
+    /// chronologically and other tools parse it cleanly; only its header
+    /// label tracks the granularity. A nil `avgCostPerSession` renders as
+    /// an empty cell so downstream formulas treat it as "no value".
+    static func timelineCSV(
+        _ buckets: [UsageTimelineAnalyzer.DailyUsageBucket],
+        granularity: UsageTimelineAnalyzer.Granularity = .day
+    ) -> String {
+        let periodHeader: String
+        switch granularity {
+        case .day:   periodHeader = "Date"
+        case .hour:  periodHeader = "Hour"
+        case .week:  periodHeader = "Week of"
+        case .month: periodHeader = "Month"
+        }
+        let header = [periodHeader, "Cost USD", "Sessions", "Turns", "Requests",
                       "Tokens", "Avg Cost per Session USD"]
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.dateFormat = (granularity == .hour) ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd"
         formatter.timeZone = .autoupdatingCurrent
         let body = buckets.map { b in
             [

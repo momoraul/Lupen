@@ -122,6 +122,20 @@ enum SQLiteReportsProjection {
         range: UsageTimelineAnalyzer.DayRange?,
         calendar: Calendar = .autoupdatingCurrent
     ) -> [UsageTimelineAnalyzer.DailyUsageBucket] {
+        // Week/month are pure rollups of the daily series — compute days
+        // first (reusing the proven SQL path + zero-fill), then fold up.
+        // Keeps one SQL grouping (day/hour) and dodges strftime week/
+        // timezone pitfalls.
+        switch granularity {
+        case .week, .month:
+            let daily = timelineBuckets(
+                store: store, granularity: .day, range: range, calendar: calendar
+            )
+            return UsageTimelineAnalyzer.rollUp(daily, into: granularity, calendar: calendar)
+        case .day, .hour:
+            break
+        }
+
         let hourly = granularity == .hour
         let from = range?.from
         let to = range?.to
