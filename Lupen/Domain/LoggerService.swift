@@ -216,11 +216,12 @@ final class LoggerService {
     /// menu's "Reveal Log File in Finder" can open the directory even
     /// when file logging is disabled and no log file exists yet.
     static var logDirectoryURL: URL {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first!
-        return appSupport.appendingPathComponent("Lupen/Logs")
+        // Defer to the canonical resolver instead of force-unwrapping `.first`
+        // and hardcoding a parallel home-dir fallback. `applicationSupportRoot()`
+        // already handles the no-URL fallback AND the `LUPEN_APP_SUPPORT_DIR`
+        // override (so logs land beside the rest of Lupen's data, not in a
+        // divergent directory). Normal path is unchanged: …/Application Support/Lupen/Logs.
+        LupenPaths.applicationSupportRoot().appendingPathComponent("Logs")
     }
 
     /// Backward-compat alias for the old private accessor.
