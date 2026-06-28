@@ -203,6 +203,13 @@ final class SQLiteFirstStartup: @unchecked Sendable {
         isProjectionActive = false
     }
 
+    /// A-1: user-triggered integrity check — runs `PRAGMA quick_check` on this
+    /// source's index. Returns true when healthy. Safe to call off the main
+    /// thread (the pool is thread-safe). A `false` is repaired by `rebuildIndex()`.
+    func checkIntegrity() -> Bool {
+        coordinator.store.database.integrityCheck()
+    }
+
     /// Plan 5.2: user-triggered "Rebuild Index" — wipe every derived
     /// row and re-scan the source logs in the background. The wipe runs
     /// against the open pool (never delete DB files under a live writer
@@ -211,18 +218,7 @@ final class SQLiteFirstStartup: @unchecked Sendable {
     /// Source JSONL logs are never touched.
     @MainActor
     func rebuildIndex() {
-        if isProjectionActive, let appStore {
-            appStore.sessions = []
-            appStore.sessionListAggregates = [:]
-            appStore.diagnostics.restore(.empty)
-            lastDiagnosticsFingerprint = nil
-            appStore.sqliteTodayUsage = nil
-            appStore.isLoading = true
-            var progress = LaunchProgress()
-            progress.phase = .scanningFiles
-            progress.startedAt = Date()
-            appStore.launchProgress = progress
-        }
+        resetProjectionForRebuild()
         let store = coordinator.store
         let coordinator = self.coordinator
         DispatchQueue.global(qos: .userInitiated).async {
@@ -238,6 +234,50 @@ final class SQLiteFirstStartup: @unchecked Sendable {
             }
             coordinator.requestRescan()
         }
+    }
+
+    /// A-1 repair path for a *corrupt* index. Unlike `rebuildIndex()` — which
+    /// wipes rows through the open pool and would itself throw on a corrupt
+    /// b-tree — this deletes the database files and bootstraps a fresh pool
+    /// (`rebuildStorage()`, the same recovery the coordinator uses on a
+    /// persistent storage failure), then re-scans the source logs. The only
+    /// reliable recovery when the file is structurally damaged.
+    @MainActor
+    func repairCorruptIndex() {
+        resetProjectionForRebuild()
+        let database = coordinator.store.database
+        let coordinator = self.coordinator
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try database.rebuildStorage()
+            } catch {
+                LoggerService.shared.logFromAnyThread(
+                    .error,
+                    "Repair corrupt index: rebuildStorage failed — \(error)",
+                    context: "Store"
+                )
+                return
+            }
+            coordinator.requestRescan()
+        }
+    }
+
+    /// Reset the live sidebar projection to an empty "scanning" state before a
+    /// rebuild/repair re-scans (shared by `rebuildIndex()` and
+    /// `repairCorruptIndex()`).
+    @MainActor
+    private func resetProjectionForRebuild() {
+        guard isProjectionActive, let appStore else { return }
+        appStore.sessions = []
+        appStore.sessionListAggregates = [:]
+        appStore.diagnostics.restore(.empty)
+        lastDiagnosticsFingerprint = nil
+        appStore.sqliteTodayUsage = nil
+        appStore.isLoading = true
+        var progress = LaunchProgress()
+        progress.phase = .scanningFiles
+        progress.startedAt = Date()
+        appStore.launchProgress = progress
     }
 
     /// Routes the conversation outline to this driver's index

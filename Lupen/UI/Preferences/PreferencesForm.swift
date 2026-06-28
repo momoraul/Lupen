@@ -31,6 +31,11 @@ struct PreferencesForm: View {
     /// closure is just a thin trigger.
     let onClearCacheAndReparse: () -> Void
 
+    /// Runs `PRAGMA quick_check` on the index and offers a rebuild only if
+    /// corruption is found. Mirrors `File ▸ Check Index Integrity…`; the
+    /// AppDelegate-side handler runs the scan off-main and shows the result.
+    let onCheckIndexIntegrity: () -> Void
+
     /// Statusline service — optional so callers that don't need
     /// limit-tracking UI (early test paths, partial bring-up) skip the
     /// section. Production AppDelegate always supplies one.
@@ -157,6 +162,12 @@ struct PreferencesForm: View {
                     Label("Reveal Log File in Finder", systemImage: "doc.text.magnifyingglass")
                 }
 
+                Button {
+                    onCheckIndexIntegrity()
+                } label: {
+                    Label("Check Index Integrity…", systemImage: "checkmark.shield")
+                }
+
                 Button(role: .destructive) {
                     onClearCacheAndReparse()
                 } label: {
@@ -165,7 +176,7 @@ struct PreferencesForm: View {
             } header: {
                 Text("Maintenance")
             } footer: {
-                Text("Reveal opens Finder on the Lupen log directory. Rebuild Index clears the derived index and re-scans every session log in the background — useful if numbers look wrong or after a provider format change. Source logs on disk are never modified.")
+                Text("Reveal opens Finder on the Lupen log directory. Check Index Integrity verifies the derived index and offers a rebuild only if it finds corruption. Rebuild Index clears the derived index and re-scans every session log in the background — useful if numbers look wrong or after a provider format change. Source logs on disk are never modified.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

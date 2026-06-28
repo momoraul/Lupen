@@ -28,6 +28,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         settings: AppSettings,
         onRevealLogFile: @escaping () -> Void,
         onClearCacheAndReparse: @escaping () -> Void,
+        onCheckIndexIntegrity: @escaping () -> Void,
         statuslineService: StatuslineConnectionService? = nil
     ) {
         self.settings = settings
@@ -54,6 +55,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
             settings: settings,
             onRevealLogFile: onRevealLogFile,
             onClearCacheAndReparse: onClearCacheAndReparse,
+            onCheckIndexIntegrity: onCheckIndexIntegrity,
             statuslineService: statuslineService
         )
         let hosting = NSHostingController(rootView: root)
