@@ -183,6 +183,27 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.7.0 — _2026-06-29_
+
+Multiple session sources, weekly/monthly reports, and a faster, friendlier Conversation tab.
+
+- **Multiple session sources** — index Claude Code / Codex sessions from more
+  than one root and switch between them; sources are added and managed in
+  Settings.
+- **Weekly & monthly reports** — the Reports Overview now buckets by Day, Week,
+  or Month, each with a period-over-period delta, for long-term trends and
+  monthly expense reporting.
+- **Appearance setting** — pick System, Light, or Dark independently of macOS.
+- **In-conversation Find (⌘F)** — search within the open conversation with match
+  navigation and highlighting.
+- **Per-card Copy** — every conversation card (and code block) has a
+  hover-revealed Copy button with copy confirmation.
+- **Menu-bar action menu** — right-click the menu-bar item for quick actions.
+- **Self-healing index** — File → Check Index Integrity… runs an on-demand
+  SQLite integrity check and repairs a corrupt index in place.
+- **Stability** — removed force-unwraps on hot and launch paths so corrupt input
+  degrades gracefully instead of crashing the app or CLI.
+
 ### v0.6.3 — _2026-06-24_
 
 A calmer Conversation tab and a more reliable menu bar.
