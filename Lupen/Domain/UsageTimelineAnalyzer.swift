@@ -21,13 +21,17 @@ import Foundation
 enum UsageTimelineAnalyzer {
 
     /// Bucket granularity. `.day` keeps the original "one bar per local
-    /// calendar day" behaviour (multi-day ranges, Reports overview for
-    /// weeks/months). `.hour` bucketizes every hour inside the range —
-    /// used by "Today" in Reports so the user sees an intraday
+    /// calendar day" behaviour. `.hour` bucketizes every hour inside the
+    /// range — used by "Today" in Reports so the user sees an intraday
     /// distribution (00:00–23:00 local) rather than a single bar.
+    /// `.week`/`.month` roll days up into local week-of-year / calendar
+    /// month buckets for the Overview's long-term trend view — the bucket
+    /// `day` is the period start (week's first day / month's 1st).
     enum Granularity: Sendable, Equatable {
         case day
         case hour
+        case week
+        case month
     }
 
     struct DailyUsageBucket: Sendable, Equatable, Identifiable {
@@ -119,6 +123,12 @@ enum UsageTimelineAnalyzer {
             case .hour:
                 return calendar.dateInterval(of: .hour, for: ts)?.start
                     ?? calendar.startOfDay(for: ts)
+            case .week:
+                return calendar.dateInterval(of: .weekOfYear, for: ts)?.start
+                    ?? calendar.startOfDay(for: ts)
+            case .month:
+                return calendar.dateInterval(of: .month, for: ts)?.start
+                    ?? calendar.startOfDay(for: ts)
             }
         }
 
@@ -190,10 +200,17 @@ enum UsageTimelineAnalyzer {
         var buckets: [DailyUsageBucket] = []
         var cursor = effectiveFrom
         // Safety cap — defend against pathological calendar math.
-        // Day mode: ~10 years. Hour mode: ~93 days (31 days × 24h is the
-        // typical "Last 30 days" upper bound; padded to absorb DST).
-        let maxIterations = (granularity == .day) ? 3_650 : 24 * 93
-        let stepComponent: Calendar.Component = (granularity == .day) ? .day : .hour
+        // Day: ~10 years. Hour: ~93 days (31 days × 24h is the typical
+        // "Last 30 days" upper bound; padded to absorb DST). Week/Month:
+        // ~10 years' worth of buckets.
+        let maxIterations: Int
+        let stepComponent: Calendar.Component
+        switch granularity {
+        case .day:   maxIterations = 3_650;    stepComponent = .day
+        case .hour:  maxIterations = 24 * 93;  stepComponent = .hour
+        case .week:  maxIterations = 520;      stepComponent = .weekOfYear
+        case .month: maxIterations = 120;      stepComponent = .month
+        }
         var iterations = 0
         while cursor <= effectiveTo, iterations < maxIterations {
             buckets.append(DailyUsageBucket(
@@ -211,5 +228,69 @@ enum UsageTimelineAnalyzer {
             iterations += 1
         }
         return buckets
+    }
+
+    /// Roll day-granularity buckets up into `.week` / `.month` buckets by
+    /// summing every component count. `.day` / `.hour` pass through
+    /// unchanged. Input is assumed to be one bucket per local day (what
+    /// the SQL projection and `aggregate(granularity: .day)` produce);
+    /// because consecutive days always fall inside consecutive
+    /// weeks/months, continuous daily input yields continuous output with
+    /// no separate zero-fill. The bucket `day` becomes the period start
+    /// (week's first day per the calendar's locale / month's 1st). Pure —
+    /// safe to call from `body`.
+    ///
+    /// This is the SQLite-first path's rollup; it produces the same result
+    /// as `aggregate(granularity: .week/.month)` because week/month
+    /// boundaries align to day boundaries (a request's day and its
+    /// week/month never disagree).
+    static func rollUp(
+        _ daily: [DailyUsageBucket],
+        into granularity: Granularity,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> [DailyUsageBucket] {
+        let component: Calendar.Component
+        switch granularity {
+        case .day, .hour:
+            return daily
+        case .week:
+            component = .weekOfYear
+        case .month:
+            component = .month
+        }
+
+        let periodStart: (Date) -> Date = { d in
+            calendar.dateInterval(of: component, for: d)?.start
+                ?? calendar.startOfDay(for: d)
+        }
+
+        var cost: [Date: Double] = [:]
+        var sessions: [Date: Int] = [:]
+        var turns: [Date: Int] = [:]
+        var requests: [Date: Int] = [:]
+        var tokens: [Date: Int] = [:]
+
+        for b in daily {
+            let key = periodStart(b.day)
+            // Unconditional accumulation keeps all five dictionaries on an
+            // identical key set, so iterating `cost.keys` below is complete
+            // even for periods whose only activity is zero-cost.
+            cost[key, default: 0] += b.costUSD
+            sessions[key, default: 0] += b.sessionCount
+            turns[key, default: 0] += b.turnCount
+            requests[key, default: 0] += b.requestCount
+            tokens[key, default: 0] += b.tokenCount
+        }
+
+        return cost.keys.sorted().map { key in
+            DailyUsageBucket(
+                day: key,
+                costUSD: cost[key] ?? 0,
+                sessionCount: sessions[key] ?? 0,
+                turnCount: turns[key] ?? 0,
+                requestCount: requests[key] ?? 0,
+                tokenCount: tokens[key] ?? 0
+            )
+        }
     }
 }

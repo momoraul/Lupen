@@ -137,12 +137,13 @@ struct TimelineOverviewView: View {
 
     private func metricCard(_ metric: Metric) -> some View {
         let isSelected = (metric == selectedMetric)
-        let isMeaningful = (granularity == .day) || metric.meaningfulInHourly
+        // Avg ratios collapse to a denominator of 1 only in hourly mode;
+        // day/week/month all sum real denominators, so they stay meaningful.
+        let isMeaningful = (granularity != .hour) || metric.meaningfulInHourly
         // Cards always show range totals/avg regardless of hover; hover is
         // surfaced only via the hero's RuleMark + readout. Flickering 6
         // values at once would be too noisy.
         let valueText = totalValueText(metric)
-        let captionText = rangeLabel
 
         return Button {
             // Block promotion of ratio metrics in hourly mode — the hero
@@ -167,10 +168,7 @@ struct TimelineOverviewView: View {
                 cardSparkline(metric)
                     .frame(height: 28)
                     .opacity(isMeaningful ? 1 : 0.25)
-                Text(captionText)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                cardCaption(metric)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 8)
@@ -416,6 +414,14 @@ struct TimelineOverviewView: View {
             let target = cal.dateInterval(of: .hour, for: hoveredDay)?.start
                 ?? hoveredDay
             return buckets.first { abs($0.day.timeIntervalSince(target)) < 30 }
+        case .week, .month:
+            // Match the bucket whose period contains the hovered date.
+            let component: Calendar.Component = (granularity == .week) ? .weekOfYear : .month
+            let target = cal.dateInterval(of: component, for: hoveredDay)?.start
+                ?? hoveredDay
+            return buckets.first {
+                (cal.dateInterval(of: component, for: $0.day)?.start ?? $0.day) == target
+            }
         }
     }
 
@@ -425,8 +431,10 @@ struct TimelineOverviewView: View {
         // `let f = DateFormatter()` allocated per call. Two cached
         // formatters cover the granularity branches with zero alloc.
         switch granularity {
-        case .day:  return Self.hoverDayFormatter.string(from: b.day)
-        case .hour: return Self.hoverHourFormatter.string(from: b.day)
+        case .day:   return Self.hoverDayFormatter.string(from: b.day)
+        case .hour:  return Self.hoverHourFormatter.string(from: b.day)
+        case .week:  return "Week of " + Self.hoverDayFormatter.string(from: b.day)
+        case .month: return Self.hoverMonthFormatter.string(from: b.day)
         }
     }
 
@@ -439,6 +447,11 @@ struct TimelineOverviewView: View {
     private static let hoverHourFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MMM d, HH:00"
+        return f
+    }()
+    private static let hoverMonthFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMMM yyyy"
         return f
     }()
 
@@ -460,7 +473,13 @@ struct TimelineOverviewView: View {
     }
 
     private var heroTitle: String {
-        let prefix = (granularity == .hour) ? "Hourly" : "Daily"
+        let prefix: String
+        switch granularity {
+        case .hour: prefix = "Hourly"
+        case .day: prefix = "Daily"
+        case .week: prefix = "Weekly"
+        case .month: prefix = "Monthly"
+        }
         let body: String
         switch selectedMetric {
         case .cost: body = "Cost"
@@ -544,29 +563,190 @@ struct TimelineOverviewView: View {
         var id: Date { day }
     }
 
+    // MARK: - Period delta (week / month)
+
+    /// Card caption: a period-over-period delta chip for week/month
+    /// granularity, otherwise the static range label. The chip compares
+    /// the latest bucket to the one before it for that metric, giving the
+    /// "is this week up or down vs last week?" read ccusage's weekly
+    /// reports surface as a table.
+    @ViewBuilder
+    private func cardCaption(_ metric: Metric) -> some View {
+        if let delta = periodDelta(metric) {
+            HStack(spacing: 2) {
+                Image(systemName: delta.direction.symbol)
+                    .font(.system(size: 8, weight: .bold))
+                Text(delta.label)
+                    .font(.system(size: 9))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(.secondary)
+            .help(delta.tooltip)
+            .accessibilityLabel(delta.accessibilityLabel)
+        } else {
+            Text(rangeLabel)
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+    }
+
+    private struct PeriodDelta {
+        enum Direction {
+            case up, down, flat
+            var symbol: String {
+                switch self {
+                case .up: return "arrow.up"
+                case .down: return "arrow.down"
+                case .flat: return "minus"
+                }
+            }
+        }
+        let direction: Direction
+        let label: String
+        let tooltip: String
+        let accessibilityLabel: String
+    }
+
+    /// Pure percent-change of `current` vs `previous`. nil when there is
+    /// no baseline to compare against (`previous == 0`), so the caller can
+    /// render a "new" badge instead of a divide-by-zero spike. `nonisolated`
+    /// so it's callable from tests without hopping to the main actor.
+    nonisolated static func deltaPercent(current: Double, previous: Double) -> Double? {
+        guard previous != 0 else { return nil }
+        return (current - previous) / previous * 100
+    }
+
+    private func periodDelta(_ metric: Metric) -> PeriodDelta? {
+        guard granularity == .week || granularity == .month else { return nil }
+        guard buckets.count >= 2,
+              let current = metricDouble(buckets[buckets.count - 1], metric),
+              let previous = metricDouble(buckets[buckets.count - 2], metric)
+        else { return nil }
+
+        let periodWord = (granularity == .week) ? "week" : "month"
+        let currentStr = formatMetricValue(current, metric)
+        let previousStr = formatMetricValue(previous, metric)
+        let tooltip = "This \(periodWord): \(currentStr) · last \(periodWord): \(previousStr)"
+
+        guard let pct = Self.deltaPercent(current: current, previous: previous) else {
+            // No baseline last period — only show "new" when there's
+            // actually something this period.
+            guard current > 0 else { return nil }
+            return PeriodDelta(
+                direction: .up, label: "new vs prev", tooltip: tooltip,
+                accessibilityLabel: "new this \(periodWord), \(tooltip)"
+            )
+        }
+
+        let rounded = Int(pct.rounded())
+        if rounded == 0 {
+            return PeriodDelta(
+                direction: .flat, label: "≈ prev", tooltip: tooltip,
+                accessibilityLabel: "about the same as last \(periodWord), \(tooltip)"
+            )
+        }
+        let direction: PeriodDelta.Direction = rounded > 0 ? .up : .down
+        let word = rounded > 0 ? "up" : "down"
+        return PeriodDelta(
+            direction: direction,
+            label: "\(abs(rounded))% vs prev",
+            tooltip: tooltip,
+            accessibilityLabel: "\(word) \(abs(rounded)) percent vs last \(periodWord), \(tooltip)"
+        )
+    }
+
+    /// Metric value for one bucket as a Double, or nil for avg ratios with
+    /// a zero denominator (so the delta drops rather than reads a fake 0).
+    private func metricDouble(
+        _ b: UsageTimelineAnalyzer.DailyUsageBucket, _ metric: Metric
+    ) -> Double? {
+        switch metric {
+        case .cost: return b.costUSD
+        case .sessions: return Double(b.sessionCount)
+        case .turns: return Double(b.turnCount)
+        case .tokens: return Double(b.tokenCount)
+        case .avgCostPerSession: return b.avgCostPerSession
+        case .avgCostPerToken: return b.avgCostPerToken
+        }
+    }
+
+    private func formatMetricValue(_ v: Double, _ metric: Metric) -> String {
+        switch metric {
+        case .cost, .avgCostPerSession: return formatUSD(v)
+        case .sessions, .turns: return String(Int(v.rounded()))
+        case .tokens: return Self.formatTokens(Int(v.rounded()))
+        case .avgCostPerToken: return formatCostPerToken(v)
+        }
+    }
+
     // MARK: - X-axis common
 
     private var xAxisMarks: AxisMarks<some AxisMark> {
-        AxisMarks(values: .automatic(desiredCount: 6)) { value in
+        AxisMarks(values: xAxisMarkValues) { value in
             AxisGridLine()
             AxisTick()
             switch granularity {
-            case .day:
+            case .day, .week:
+                // Week labels the period's start date (e.g. "Apr 24").
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                     .font(.system(size: 9))
             case .hour:
                 AxisValueLabel(format: .dateTime.hour(.twoDigits(amPM: .omitted)))
                     .font(.system(size: 9))
+            case .month:
+                AxisValueLabel(format: .dateTime.month(.abbreviated))
+                    .font(.system(size: 9))
             }
         }
     }
 
+    /// Tick placement per granularity. Day/hour defer to Charts' automatic
+    /// spacing. Week/month stride by the period so each bucket is labelled
+    /// at most once — automatic spacing dropped two ticks inside a single
+    /// month, duplicating its label ("Apr Apr"). The stride count thins
+    /// long ranges down to ~8 ticks.
+    private var xAxisMarkValues: AxisMarkValues {
+        switch granularity {
+        case .day, .hour:
+            return .automatic(desiredCount: 6)
+        case .week:
+            return .stride(
+                by: .weekOfYear,
+                count: Self.axisStrideCount(bucketCount: buckets.count)
+            )
+        case .month:
+            return .stride(
+                by: .month,
+                count: Self.axisStrideCount(bucketCount: buckets.count)
+            )
+        }
+    }
+
+    /// Smallest stride (in periods) that keeps the tick count at or under
+    /// `maxTicks`. `nonisolated` so it's unit-testable off the main actor.
+    nonisolated static func axisStrideCount(bucketCount: Int, maxTicks: Int = 8) -> Int {
+        guard bucketCount > maxTicks, maxTicks > 0 else { return 1 }
+        return Int((Double(bucketCount) / Double(maxTicks)).rounded(.up))
+    }
+
     private var chartUnit: Calendar.Component {
-        granularity == .hour ? .hour : .day
+        switch granularity {
+        case .hour: return .hour
+        case .day: return .day
+        case .week: return .weekOfYear
+        case .month: return .month
+        }
     }
 
     private var xLabel: String {
-        granularity == .hour ? "Hour" : "Day"
+        switch granularity {
+        case .hour: return "Hour"
+        case .day: return "Day"
+        case .week: return "Week"
+        case .month: return "Month"
+        }
     }
 
     // MARK: - Formatters

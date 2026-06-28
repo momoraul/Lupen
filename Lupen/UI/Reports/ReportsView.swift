@@ -22,6 +22,11 @@ struct ReportsView: View {
 
     @State private var selectedTab: Tab = .overview
     @State private var dateRange: DateRangeOption = .allTime
+    /// Overview-only bucket size (Day / Week / Month). Independent of the
+    /// date range so the user can view, say, "All time" by month. Ignored
+    /// for sub-day ranges (Today / Yesterday / Last 24h), which force an
+    /// hourly chart.
+    @State private var overviewPeriod: OverviewPeriod = .day
     /// From/To for the `.custom` range. Default to the last 30 days so the
     /// pickers open on a sensible non-empty window.
     @State private var customFrom: Date =
@@ -69,10 +74,17 @@ struct ReportsView: View {
         return start...end
     }
 
-    /// Overview-chart granularity. Custom ranges render daily bars; presets
-    /// keep their own hour/day choice.
+    /// True when the active range is sub-day (Today / Yesterday / Last 24h):
+    /// the chart is forced to hourly bars and the Day/Week/Month picker is
+    /// disabled — bucketing 24 hours into 1–2 daily bars defeats the point.
+    private var rangeIsHourly: Bool {
+        dateRange != .custom && dateRange.granularity == .hour
+    }
+
+    /// Overview-chart granularity. Sub-day ranges force hourly; everything
+    /// else follows the user's Day/Week/Month pick.
     private var effectiveGranularity: UsageTimelineAnalyzer.Granularity {
-        dateRange == .custom ? .day : dateRange.granularity
+        rangeIsHourly ? .hour : overviewPeriod.granularity
     }
 
     /// Zero-fill window for the Overview chart. Custom fills day-by-day
@@ -352,9 +364,30 @@ struct ReportsView: View {
 
                 Spacer()
 
+                if selectedTab == .overview {
+                    overviewPeriodPicker
+                }
                 dateRangeButton
             }
         }
+    }
+
+    /// Day / Week / Month bucket selector for the Overview chart. Disabled
+    /// (kept in place to avoid layout jumps) for sub-day ranges, where the
+    /// chart is locked to hourly.
+    private var overviewPeriodPicker: some View {
+        Picker("Period", selection: $overviewPeriod) {
+            ForEach(OverviewPeriod.allCases) { period in
+                Text(period.title).tag(period)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .disabled(rangeIsHourly)
+        .help(rangeIsHourly
+              ? "Hourly view is shown for sub-day ranges"
+              : "Bucket the Overview by day, week, or month")
     }
 
     /// Single date-range control: a button labelled with the active range
@@ -709,7 +742,7 @@ struct ReportsView: View {
         let csv: String
         switch selectedTab {
         case .overview:
-            csv = ReportsCSVExporter.timelineCSV(timelineBuckets)
+            csv = ReportsCSVExporter.timelineCSV(timelineBuckets, granularity: effectiveGranularity)
         case .projects:
             csv = ReportsCSVExporter.projectsCSV(projectRows)
         case .skills:
@@ -810,6 +843,27 @@ struct ReportsView: View {
             case .skills: return "Skills"
             case .models: return "Models"
             case .hours: return "Hours"
+            }
+        }
+    }
+
+    /// Overview bucket size. Maps onto the analyzer granularity; hourly is
+    /// not a user choice (it's range-driven), so it's absent here.
+    enum OverviewPeriod: String, CaseIterable, Identifiable {
+        case day, week, month
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .day: return "Day"
+            case .week: return "Week"
+            case .month: return "Month"
+            }
+        }
+        var granularity: UsageTimelineAnalyzer.Granularity {
+            switch self {
+            case .day: return .day
+            case .week: return .week
+            case .month: return .month
             }
         }
     }
