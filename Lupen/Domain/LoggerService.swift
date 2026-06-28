@@ -216,10 +216,15 @@ final class LoggerService {
     /// menu's "Reveal Log File in Finder" can open the directory even
     /// when file logging is disabled and no log file exists yet.
     static var logDirectoryURL: URL {
+        // Force-unwrapping `.first` would trap if the system ever returned no
+        // Application Support URL (sandbox edge cases). Fall back to the home
+        // directory instead — logging must never crash the app. (No log here:
+        // this is the logger's own path accessor.)
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        ).first!
+        ).first ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
         return appSupport.appendingPathComponent("Lupen/Logs")
     }
 

@@ -316,7 +316,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: settings,
             rateLimitSampleStore: rateLimitSampleStore
         )
-        dashboardController = DashboardWindowController(
+        // Bind the local first, then store it — avoids a `dashboardController!`
+        // force-unwrap on the launch path.
+        let dashboard = DashboardWindowController(
             store: store,
             settings: settings,
             autoSelectFirstSessionOnShow: !launchDiagnosticsConfig.dashboardAutoSelectDisabled,
@@ -324,8 +326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.openLogs(nil)
             }
         )
-
-        let dashboard = dashboardController!
+        dashboardController = dashboard
         statusBarController.setClickHandler { _ in
             LoggerService.shared.debug("Click handler executing — calling showDashboard", context: "App")
             dashboard.showDashboard()

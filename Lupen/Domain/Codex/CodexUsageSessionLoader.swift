@@ -1057,10 +1057,17 @@ enum CodexUsageSessionLoader {
                 provider: .codex,
                 rawSessionId: visibleRawSessionId
             ).value
-            let primaryPiece = primaryPiece(
+            guard let primaryPiece = primaryPiece(
                 in: groupPieces,
                 visibleRawSessionId: visibleRawSessionId
-            )
+            ) else {
+                LoggerService.shared.logFromAnyThread(
+                    .warning,
+                    "Codex: skipping empty session group '\(visibleRawSessionId)'",
+                    context: "Store"
+                )
+                continue
+            }
             let assembledPieces = groupPieces.map { piece in
                 AssembledSessionPiece(
                     piece: piece,
@@ -1261,16 +1268,19 @@ enum CodexUsageSessionLoader {
     private static func primaryPiece(
         in pieces: [LoadedSessionPiece],
         visibleRawSessionId: String
-    ) -> LoadedSessionPiece {
+    ) -> LoadedSessionPiece? {
         if let parent = pieces.first(where: { $0.metadata.id == visibleRawSessionId }) {
             return parent
         }
+        // `.first` (not `.first!`): a grouped value is non-empty by construction,
+        // but degrade gracefully (caller skips the group) rather than trap if an
+        // empty group ever reaches here.
         return pieces.sorted { lhs, rhs in
             let lhsTime = lhs.metadata.createdAt ?? .distantPast
             let rhsTime = rhs.metadata.createdAt ?? .distantPast
             if lhsTime != rhsTime { return lhsTime < rhsTime }
             return lhs.metadata.id < rhs.metadata.id
-        }.first!
+        }.first
     }
 
     static func normalizeTurns(
