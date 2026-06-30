@@ -238,7 +238,7 @@ struct HourlyEfficiencyView: View {
         if ratio >= 1.5 {
             return Color(.sRGB, red: 0.36, green: 0.55, blue: 0.85)  // cool: lenient
         } else if ratio <= 0.6 {
-            return Color(.sRGB, red: 0.95, green: 0.60, blue: 0.20)  // warm: tight
+            return .costAttention  // warm: tight (shared cost-attention token)
         } else {
             return Color.accentColor.opacity(0.85)
         }

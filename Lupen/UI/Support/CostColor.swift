@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Decided text + color for a cost figure. Shared single source of truth
 /// for the turn outline's Cost column and the sidebar session row, so the
@@ -22,6 +23,21 @@ enum CostColor {
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         return isDark
             ? NSColor(srgbRed: 232.0 / 255, green: 185.0 / 255, blue: 126.0 / 255, alpha: 1)
+            : NSColor(srgbRed: 255.0 / 255, green: 149.0 / 255, blue: 0.0, alpha: 1)
+    }
+
+    /// Warm "attention" tint for cost figures that need to stand out: an
+    /// over-threshold (session-relative outlier) amount, a provisional (≈)
+    /// estimate, and cost-efficiency callouts elsewhere (e.g. a "tight" hour
+    /// in the Hours report). The single appearance-aware source for that
+    /// orange — it replaces the raw `.systemOrange` and the per-surface inline
+    /// RGBs that used to drift between screens. Light keeps the familiar
+    /// systemOrange value (no light-mode change); dark uses a warmer amber
+    /// that reads clearly against dark rows.
+    static let attention = NSColor(name: "CostAttention") { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(srgbRed: 255.0 / 255, green: 170.0 / 255, blue: 64.0 / 255, alpha: 1)
             : NSColor(srgbRed: 255.0 / 255, green: 149.0 / 255, blue: 0.0, alpha: 1)
     }
 
@@ -52,9 +68,9 @@ enum CostColor {
         }
         let amount = CostFormatter.compact(cost)
         if confidence == .partial {
-            return CostDisplay(text: "\(prefix)≈\(amount)", color: .systemOrange)
+            return CostDisplay(text: "\(prefix)≈\(amount)", color: attention)
         } else if cost >= warningThreshold {
-            return CostDisplay(text: "\(prefix)\(amount)", color: .systemOrange)
+            return CostDisplay(text: "\(prefix)\(amount)", color: attention)
         } else if let exactColor {
             return CostDisplay(text: "\(prefix)\(amount)", color: exactColor)
         } else if let accentColor {
@@ -72,4 +88,11 @@ enum CostColor {
             return CostDisplay(text: "\(prefix)\(amount)", color: .labelColor)
         }
     }
+}
+
+extension Color {
+    /// SwiftUI mirror of the `CostColor.attention` token so the SwiftUI Hours
+    /// report tints its "tight" hour from the same appearance-aware source the
+    /// AppKit cost surfaces use, instead of hardcoding its own orange.
+    static let costAttention = Color(nsColor: CostColor.attention)
 }
