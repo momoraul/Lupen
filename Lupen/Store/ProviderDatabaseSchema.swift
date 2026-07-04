@@ -265,6 +265,10 @@ enum ProviderDatabaseSchema {
             t.primaryKey(["session_id", "uuid"])
         }
         try db.create(index: "idx_parent_links_source", on: "parent_links", columns: ["source_file_id"])
+        // turnLineLocators' recursive merged-line walk seeks children by
+        // (session_id, parent_uuid) once per dequeued row — without this
+        // index every seek degrades to a session-prefix scan.
+        try db.create(index: "idx_parent_links_parent", on: "parent_links", columns: ["session_id", "parent_uuid"])
 
         // MARK: diagnostics
         try db.create(table: "diagnostics") { t in

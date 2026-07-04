@@ -74,7 +74,15 @@ final class ProviderDatabase: @unchecked Sendable {
     ///     drifted behind `request_membership` (Verify Costs flagged the
     ///     billable requestIds as missing). The bump forces a clean rebuild
     ///     so existing drifted rows recover.
-    static let schemaVersion: Int32 = 15
+    /// v16: parent_links gains a (session_id, parent_uuid) index.
+    ///     `turnLineLocators` now walks merged-line chains recursively —
+    ///     an assistant message streams one JSONL line per content block,
+    ///     so parallel tool_use lines sit ≥2 parent hops from their step
+    ///     row and the old one-hop join dropped them from the expand
+    ///     re-decode (Conversation tab lost the ToolGroup; timeline lanes
+    ///     fell back to "Tool"). The walk seeks children per dequeued row
+    ///     and needs the index to stay O(turn).
+    static let schemaVersion: Int32 = 16
 
     enum BootstrapOutcome: Equatable, Sendable {
         /// No database file existed; schema created from scratch.

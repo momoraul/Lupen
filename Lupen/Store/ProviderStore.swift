@@ -238,10 +238,42 @@ extension ProviderStore: ConversationRepository {
     }
 
     func turnLineLocators(sessionId: String, turnId: String) throws -> [StoreTurnLineLocator] {
+        // Two legs: every step row's own line, plus the no-step-row lines
+        // assembly folded into them (meta merges, and assistant messages
+        // split one-line-per-content-block — parallel tool_use). Folded
+        // lines chain off EACH OTHER, not off the step row (block N's
+        // parent is block N-1), so `merged_lines` is a recursive closure
+        // over parent_links; any step row (the next turn's prompt
+        // included) ends the walk, keeping it turn-bounded. parent_links
+        // is single-parent (PK session_id+uuid) so reachable child edges
+        // form a forest — UNION's dedup is a second line of defense, not
+        // a load-bearing cycle guard. The recursion follows links only;
+        // locator-less lines (attachments) are walked through and drop
+        // out at the final raw_locators join. CROSS JOIN pins the queue
+        // as the outer loop — the planner otherwise scans the session's
+        // whole link set once per dequeued row (~0.4s on an 18k-line
+        // session vs ~0ms seeking idx_parent_links_parent).
         try database.pool.read { db in
             try Row.fetchAll(
                 db,
                 sql: """
+                    WITH RECURSIVE merged_lines(uuid) AS (
+                        SELECT p.uuid FROM parent_links p
+                        WHERE p.session_id = ?1
+                          AND p.parent_uuid IN (SELECT uuid FROM steps WHERE session_id = ?1 AND turn_id = ?2)
+                          AND NOT EXISTS (
+                              SELECT 1 FROM steps s2
+                              WHERE s2.session_id = p.session_id AND s2.uuid = p.uuid
+                          )
+                        UNION
+                        SELECT p.uuid FROM merged_lines m
+                        CROSS JOIN parent_links p
+                          ON p.session_id = ?1 AND p.parent_uuid = m.uuid
+                        WHERE NOT EXISTS (
+                              SELECT 1 FROM steps s2
+                              WHERE s2.session_id = p.session_id AND s2.uuid = p.uuid
+                          )
+                    )
                     SELECT l.owner_id AS uuid, s.ordinal AS step_ordinal, f.path AS source_path,
                            l.byte_offset, l.byte_length, f.byte_size, f.modified_at
                     FROM steps s
@@ -254,18 +286,12 @@ extension ProviderStore: ConversationRepository {
                     UNION ALL
                     SELECT l.owner_id, NULL, f.path, l.byte_offset, l.byte_length,
                            f.byte_size, f.modified_at
-                    FROM parent_links p
+                    FROM merged_lines m
                     JOIN raw_locators l
-                      ON l.session_id = p.session_id
+                      ON l.session_id = ?1
                      AND l.owner_kind = 'stepLine'
-                     AND l.owner_id = p.uuid
+                     AND l.owner_id = m.uuid
                     JOIN source_files f ON f.id = l.source_file_id
-                    WHERE p.session_id = ?1
-                      AND p.parent_uuid IN (SELECT uuid FROM steps WHERE session_id = ?1 AND turn_id = ?2)
-                      AND NOT EXISTS (
-                          SELECT 1 FROM steps s2
-                          WHERE s2.session_id = p.session_id AND s2.uuid = p.uuid
-                      )
                     """,
                 arguments: [sessionId, turnId]
             ).map { row in
