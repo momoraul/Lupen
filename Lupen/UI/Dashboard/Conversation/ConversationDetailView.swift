@@ -18,7 +18,10 @@ final class ConversationDetailView: NSView {
     private let documentView = ConversationFlippedDocumentView()
     private let stack = NSStackView()
     private let registry = BlockRendererRegistry()
-    private let renderContext = RenderContext()
+    private var renderContext = RenderContext()
+    /// stepUuid → index of the first arranged card covering it — the C-24
+    /// timeline's click-to-jump target map, rebuilt on every `configure`.
+    private var stepAnchorIndex: [String: Int] = [:]
     /// Leading/trailing constraints of the currently rendered cards —
     /// deactivated in bulk on rebuild (A1). Without tracking, activating every
     /// time leaves dangling constraints that pile up and break layout on fast
@@ -47,6 +50,9 @@ final class ConversationDetailView: NSView {
         registerRenderers()
         setup()
         setupFindBar()
+        renderContext.jumpToStep = { [weak self] uuid in
+            self?.reveal(stepUuid: uuid)
+        }
     }
 
     @available(*, unavailable)
@@ -62,6 +68,7 @@ final class ConversationDetailView: NSView {
         registry.register(ToolGroupCardRenderer())
         registry.register(ThinkingCardRenderer())
         registry.register(ActivityGroupRenderer())
+        registry.register(TimelineCardRenderer())
     }
 
     private func setup() {
@@ -129,6 +136,7 @@ final class ConversationDetailView: NSView {
         let ids = blocks.map(\.id)
         let sameContent = ids == renderedBlockIDs
         renderedBlockIDs = ids
+        rebuildStepAnchors(blocks: blocks)
         var highlightedView: NSView?
         var previous: (view: NSView, tier: BlockTier)?
         for block in blocks {
@@ -171,6 +179,45 @@ final class ConversationDetailView: NSView {
         if isFinding {
             updateFind(query: findBar.query, reveal: false)
         }
+    }
+
+    /// stepUuid → first covering card index, via the story builder's shared
+    /// coverage rules (one source — a diverging copy here would desync jumps
+    /// from highlights). Blocks folded into an ActivityGroup carry no uuids,
+    /// so jumps into a collapsed run are a no-op (safe).
+    private func rebuildStepAnchors(blocks: [ConversationBlock]) {
+        stepAnchorIndex.removeAll()
+        for (index, block) in blocks.enumerated() {
+            for uuid in ConversationStoryBuilder.anchorStepUuids(of: block)
+            where stepAnchorIndex[uuid] == nil {
+                stepAnchorIndex[uuid] = index
+            }
+        }
+    }
+
+    /// Scroll to the card covering `stepUuid` (C-24 timeline segment click),
+    /// then flash it — collapsed tool/thinking rows carry no selection
+    /// border, so without the flash a jump into a tall card is invisible.
+    func reveal(stepUuid: String) {
+        guard let index = stepAnchorIndex[stepUuid],
+              index < stack.arrangedSubviews.count else { return }
+        let target = stack.arrangedSubviews[index]
+        revealHighlighted(target, keepIfVisible: false)
+        flashJumpTarget(target)
+    }
+
+    /// Transient accent wash over the jump target — the same read as
+    /// `LupenAnimatedRowView`'s appearance tint (brief, quiet, reduce-motion
+    /// aware), chosen over a persistent background so it can't be confused
+    /// with the outline-driven selected-step border.
+    private weak var activeJumpFlash: JumpFlashView?
+    private func flashJumpTarget(_ view: NSView) {
+        activeJumpFlash?.removeFromSuperview()
+        let flash = JumpFlashView(frame: view.bounds)
+        flash.autoresizingMask = [.width, .height]
+        view.addSubview(flash)
+        activeJumpFlash = flash
+        flash.play()
     }
 
     /// Scroll only as much as needed to reveal `view`. When `keepIfVisible` (the
@@ -366,4 +413,59 @@ final class ConversationDetailView: NSView {
 /// and every rebind scrolls to the end).
 private final class ConversationFlippedDocumentView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// One-shot accent wash marking a jump target. Layer-hosting (layer assigned
+/// before `wantsLayer`, the reliable mode — see `LupenAnimatedRowView`'s
+/// post-bugfix note), click-through, removes itself when the fade ends.
+/// Reduce Motion gets a brief static tint instead of an animation.
+private final class JumpFlashView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        let hostLayer = CALayer()
+        hostLayer.opacity = 0
+        hostLayer.cornerRadius = 8   // match CardContainerView's radius
+        layer = hostLayer
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func play() {
+        guard let layer else { return }
+        layer.backgroundColor = NSColor.controlAccentColor
+            .withAlphaComponent(0.18).cgColor
+
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.opacity = 1
+            CATransaction.commit()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                self?.removeFromSuperview()
+            }
+            return
+        }
+
+        // Same envelope as the row appearance tint: quick in, brief hold,
+        // gentle out (140/180/460 ms).
+        let anim = CAKeyframeAnimation(keyPath: "opacity")
+        anim.values = [0.0, 1.0, 1.0, 0.0]
+        anim.keyTimes = [0.0, 0.18, 0.41, 1.0]
+        anim.timingFunctions = [
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .linear),
+            CAMediaTimingFunction(controlPoints: 0.4, 0.0, 0.2, 1.0),
+        ]
+        anim.duration = 0.78
+        anim.fillMode = .both
+        anim.isRemovedOnCompletion = false
+        layer.add(anim, forKey: "jumpFlash")
+        DispatchQueue.main.asyncAfter(deadline: .now() + anim.duration + 0.05) { [weak self] in
+            self?.removeFromSuperview()
+        }
+    }
 }
