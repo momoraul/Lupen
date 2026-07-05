@@ -183,6 +183,17 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.8.0 — _2026-07-05_
+
+A turn waterfall timeline, recovered parallel tool calls, and a unified cost color.
+
+- **Turn waterfall timeline** — each turn's activity now renders as a swimlane
+  timeline you can click to jump into, with instant tooltips.
+- **Parallel tool calls recovered** — expanding a turn no longer drops tool calls
+  that ran in parallel.
+- **Consistent cost color** — the "attention" orange for costs is unified into a
+  single token so it reads the same across every surface.
+
 ### v0.7.0 — _2026-06-29_
 
 Multiple session sources, weekly/monthly reports, and a faster, friendlier Conversation tab.
