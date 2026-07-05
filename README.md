@@ -183,6 +183,13 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.8.1 — _2026-07-05_
+
+A Reports fix for relative date ranges.
+
+- **Reports relative-range fix** — the Skills tab no longer gets stuck when you
+  pick a relative date range, and the week range is now a rolling 7 days.
+
 ### v0.8.0 — _2026-07-05_
 
 A turn waterfall timeline, recovered parallel tool calls, and a unified cost color.
