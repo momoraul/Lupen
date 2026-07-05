@@ -11,6 +11,10 @@ import AppKit
 /// add a value here when a new renderer needs one.
 @MainActor
 struct RenderContext {
+    /// Scroll the conversation to the card covering a step (C-24 timeline
+    /// segment click). nil outside the detail view (tests, previews).
+    var jumpToStep: ((String) -> Void)?
+
     /// Reveal a file path (image/attachment) in Finder on click. Ported for parity.
     var revealInFinder: (URL) -> Void = { url in
         let path = url.path

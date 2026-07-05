@@ -44,23 +44,34 @@ enum ConversationStoryBuilder {
                 assemble(turn: turn, neighbor: neighbor, highlight: fallback)
             )
         }
+        // C-24: waterfall timeline card leads qualifying turns (long or busy
+        // ones — `TurnTimeline` owns the threshold; trivial turns get no
+        // card). Built once, and inserted AFTER the collapse so keepHead
+        // still preserves the user's prompt card on oversized turns.
+        if let timeline = TurnTimeline.build(steps: turn.steps) {
+            blocks.insert(TimelineBlock(id: "tl:\(turn.id)", model: timeline), at: 0)
+        }
         return blocks
+    }
+
+    /// Step uuids one block covers — the single source for highlight
+    /// retargeting here AND the detail view's click-jump anchor map. A new
+    /// block type added to only one of the two consumers would silently
+    /// desync jumps from highlights, so both go through this.
+    static func anchorStepUuids(of block: ConversationBlock) -> [String] {
+        switch block {
+        case let b as UserPromptBlock:    return [b.stepUuid]
+        case let b as AssistantTextBlock: return [b.stepUuid]
+        case let b as ThinkingBlock:      return [b.stepUuid]
+        case let b as ToolGroupBlock:     return b.calls.map(\.stepUuid)
+        case let b as StatusBlock:        return b.stepUuid.map { [$0] } ?? []
+        default:                          return []
+        }
     }
 
     /// Step uuids that map to a block (so a highlight on them lands somewhere).
     private static func coveredSteps(in blocks: [ConversationBlock]) -> Set<String> {
-        var covered: Set<String> = []
-        for block in blocks {
-            switch block {
-            case let b as UserPromptBlock:    covered.insert(b.stepUuid)
-            case let b as AssistantTextBlock: covered.insert(b.stepUuid)
-            case let b as ThinkingBlock:      covered.insert(b.stepUuid)
-            case let b as ToolGroupBlock:     b.calls.forEach { covered.insert($0.stepUuid) }
-            case let b as StatusBlock:        if let u = b.stepUuid { covered.insert(u) }
-            default:                          break
-            }
-        }
-        return covered
+        Set(blocks.flatMap(anchorStepUuids(of:)))
     }
 
     /// Nearest Step that maps to a block: the closest preceding one (the user's
