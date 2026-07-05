@@ -180,7 +180,7 @@ fileprivate struct FilterPopoverForm: View {
             case .all:      return "All"
             case .today:    return "Today"
             case .last24h:  return "24h"
-            case .week:     return "Week"
+            case .week:     return "7d"
             case .last30d:  return "30d"
             case .custom:   return "Custom"
             }
@@ -192,7 +192,7 @@ fileprivate struct FilterPopoverForm: View {
             case .today:      self = .today
             case .yesterday:  self = .all   // popover doesn't surface "yesterday"
             case .last24h:    self = .last24h
-            case .thisWeek:   self = .week
+            case .last7Days:  self = .week
             case .last30days: self = .last30d
             case .custom:     self = .custom
             }
@@ -206,7 +206,7 @@ fileprivate struct FilterPopoverForm: View {
             case .all:      return nil
             case .today:    return .today
             case .last24h:  return .last24h
-            case .week:     return .thisWeek
+            case .week:     return .last7Days
             case .last30d:  return .last30days
             case .custom:   return nil
             }

@@ -524,7 +524,7 @@ final class AppStateStore: @unchecked Sendable {
             base = source
         } else {
             // Pre-resolve the dateRange bounds once so we don't pay the
-            // Calendar lookup per session for presets like `.thisWeek`.
+            // Calendar lookup per session for presets like `.last30days`.
             let resolvedBounds = filter.dateRange?.resolveBounds(now: now)
 
             // SQLite-first content search (4.3): one FTS probe per

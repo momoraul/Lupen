@@ -126,7 +126,7 @@ struct SessionFilter: Sendable, Equatable {
         case today
         case yesterday
         case last24h
-        case thisWeek
+        case last7Days
         case last30days
         case custom(from: Date, to: Date)
 
@@ -143,8 +143,8 @@ struct SessionFilter: Sendable, Equatable {
         ///                   yesterday so the closed-interval `contains`
         ///                   call never leaks into today.
         ///   * `last24h` — `now - 24h` → `now`
-        ///   * `thisWeek` — start of this week (locale's first weekday
-        ///                  midnight) → `now`
+        ///   * `last7Days` — `now - 7d` → `now` (rolling, not the
+        ///                   locale calendar week)
         ///   * `last30days` — `now - 30d` → `now`
         ///   * `custom` — the caller's bounds verbatim
         func resolveBounds(now: Date = Date()) -> (start: Date, end: Date) {
@@ -164,14 +164,9 @@ struct SessionFilter: Sendable, Equatable {
                 return (yesterdayStart, yesterdayEnd)
             case .last24h:
                 return (now.addingTimeInterval(-86_400), now)
-            case .thisWeek:
-                // `dateInterval(of:.weekOfYear, for:)` respects the
-                // user's locale first-weekday (Sunday in en_US, Monday
-                // in ko_KR, etc). Fall back to `now - 7d` if the
-                // calendar can't resolve (practically never).
-                if let interval = calendar.dateInterval(of: .weekOfYear, for: now) {
-                    return (interval.start, now)
-                }
+            case .last7Days:
+                // Rolling 7-day window (mirrors `last24h` / `last30days`),
+                // not the locale calendar week.
                 return (now.addingTimeInterval(-7 * 86_400), now)
             case .last30days:
                 return (now.addingTimeInterval(-30 * 86_400), now)

@@ -163,9 +163,35 @@ struct ReportsView: View {
         String(store.sqliteConversationGeneration)
     }
 
+    /// Change token for the async skill task's identity. Keyed on the range
+    /// SELECTION, never the resolved bounds: relative ranges resolve against
+    /// a live `Date()`, so a bounds-based fingerprint changed on every
+    /// re-render — the `.task(id:)` kept cancelling/restarting and its
+    /// completion guard (`skillMetricsTaskID == taskID`) never matched, so
+    /// `skillRowsIsLoading` was never cleared (perpetual "Loading" on any
+    /// relative range, e.g. Last 30 days). `midnightVersion` re-keys once a
+    /// day so a rolling window still refreshes while the window stays open.
     private var requestBoundsFingerprint: String {
-        guard let bounds = requestBounds else { return "all" }
-        return "\(bounds.lowerBound.timeIntervalSinceReferenceDate)-\(bounds.upperBound.timeIntervalSinceReferenceDate)"
+        Self.skillTaskFingerprint(
+            dateRange: dateRange, customFrom: customFrom, customTo: customTo,
+            midnightVersion: midnightVersion
+        )
+    }
+
+    /// Pure — takes no `Date()`, so a fixed selection yields a fixed token no
+    /// matter when it's evaluated. That stability is the whole point (see
+    /// `requestBoundsFingerprint`).
+    nonisolated static func skillTaskFingerprint(
+        dateRange: DateRangeOption, customFrom: Date, customTo: Date, midnightVersion: Int
+    ) -> String {
+        let selection: String
+        switch dateRange {
+        case .custom:
+            selection = "custom:\(customFrom.timeIntervalSinceReferenceDate)-\(customTo.timeIntervalSinceReferenceDate)"
+        default:
+            selection = dateRange.rawValue
+        }
+        return "\(selection)#\(midnightVersion)"
     }
 
     private var codexSkillNamesFingerprint: String {
@@ -869,7 +895,7 @@ struct ReportsView: View {
     }
 
     enum DateRangeOption: String, CaseIterable, Identifiable {
-        case allTime, today, yesterday, last24h, thisWeek, last30days, custom
+        case allTime, today, yesterday, last24h, last7days, last30days, custom
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -877,7 +903,7 @@ struct ReportsView: View {
             case .today: return "Today"
             case .yesterday: return "Yesterday"
             case .last24h: return "Last 24h"
-            case .thisWeek: return "This Week"
+            case .last7days: return "Last 7 days"
             case .last30days: return "Last 30 days"
             case .custom: return "Custom…"
             }
@@ -890,7 +916,7 @@ struct ReportsView: View {
             case .today: return .today
             case .yesterday: return .yesterday
             case .last24h: return .last24h
-            case .thisWeek: return .thisWeek
+            case .last7days: return .last7Days
             case .last30days: return .last30days
             case .custom: return nil
             }
@@ -941,12 +967,13 @@ struct ReportsView: View {
                 let start = cal.date(byAdding: .hour, value: -23, to: currentHour)
                     ?? currentHour.addingTimeInterval(-23 * 3600)
                 return .init(from: start, to: currentHour)
-            case .thisWeek:
-                let comps = cal.dateComponents(
-                    [.yearForWeekOfYear, .weekOfYear], from: now)
-                let start = cal.date(from: comps) ?? cal.startOfDay(for: now)
+            case .last7days:
+                // 7 daily buckets: [startOfDay(now - 6d), startOfDay(now)]
+                // inclusive — a rolling week ending today.
+                let start = cal.startOfDay(
+                    for: now.addingTimeInterval(-6 * 24 * 3600))
                 let end = cal.startOfDay(for: now)
-                return .init(from: cal.startOfDay(for: start), to: end)
+                return .init(from: start, to: end)
             case .last30days:
                 let start = cal.startOfDay(
                     for: now.addingTimeInterval(-30 * 24 * 3600))
