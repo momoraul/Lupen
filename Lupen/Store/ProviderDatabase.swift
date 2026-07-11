@@ -82,7 +82,14 @@ final class ProviderDatabase: @unchecked Sendable {
     ///     re-decode (Conversation tab lost the ToolGroup; timeline lanes
     ///     fell back to "Tool"). The walk seeks children per dequeued row
     ///     and needs the index to stay O(turn).
-    static let schemaVersion: Int32 = 16
+    /// v17: `steps` gains `tool_input_chars` / `tool_result_chars` — the
+    ///     character lengths of tool_use input JSON and tool_result content,
+    ///     captured at import (C-25 context-composition Reports tab). Additive
+    ///     columns force a rebuild so existing rows populate the new counts.
+    /// v18: `steps` gains `tool_summary` — a short "what this call targeted"
+    ///     label (Read path / Bash cmd) captured at import, powering the Top
+    ///     cost-driving tool outputs ranking (C-25).
+    static let schemaVersion: Int32 = 18
 
     enum BootstrapOutcome: Equatable, Sendable {
         /// No database file existed; schema created from scratch.

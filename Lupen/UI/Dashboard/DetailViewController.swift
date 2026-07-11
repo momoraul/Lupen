@@ -35,6 +35,7 @@ final class DetailViewController: NSViewController {
     private let attachmentsView: AttachmentsDetailView
     private let rawView: RawDetailView
     private let usageView: UsageDetailView
+    private let compositionView: CompositionDetailView
     private let finderButton = NSButton(title: "Reveal in Finder", target: nil, action: nil)
     /// Xcode-style "toggle bottom pane" button. Visually indicates
     /// the detail pane's collapse state (filled glyph = visible,
@@ -110,7 +111,7 @@ final class DetailViewController: NSViewController {
     /// (`setupSegmentedControl()`) — the label-to-view mapping is
     /// purely positional via `showTab(index:)`.
     private var currentTabViews: [NSView] {
-        [conversationView, attachmentsView, tokensView, usageView, rawView]
+        [conversationView, attachmentsView, tokensView, compositionView, usageView, rawView]
     }
 
     init(store: AppStateStore) {
@@ -120,6 +121,7 @@ final class DetailViewController: NSViewController {
         self.attachmentsView = AttachmentsDetailView()
         self.rawView = RawDetailView()
         self.usageView = UsageDetailView()
+        self.compositionView = CompositionDetailView()
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -143,15 +145,16 @@ final class DetailViewController: NSViewController {
     // MARK: - Setup
 
     private func setupSegmentedControl() {
-        segmentedControl.segmentCount = 5
+        segmentedControl.segmentCount = 6
         // Tab order — most-used first. `Conversation` is the primary
         // landing tab; `Raw` is a developer escape hatch and lives
         // last. Order must match `currentTabViews`.
         segmentedControl.setLabel("Conversation", forSegment: 0)
         segmentedControl.setLabel("Attachments", forSegment: 1)
         segmentedControl.setLabel("Tokens", forSegment: 2)
-        segmentedControl.setLabel("Usage", forSegment: 3)
-        segmentedControl.setLabel("Raw", forSegment: 4)
+        segmentedControl.setLabel("Composition", forSegment: 3)
+        segmentedControl.setLabel("Usage", forSegment: 4)
+        segmentedControl.setLabel("Raw", forSegment: 5)
         segmentedControl.segmentStyle = .texturedRounded
         segmentedControl.selectedSegment = 0
         segmentedControl.target = self
@@ -526,6 +529,10 @@ final class DetailViewController: NSViewController {
                 self.usageView.configure(rawPayload: rawData)
             }
         }
+
+        setCompositionContent(for: currentSelection, scopeLabel: "this session") { [weak self] in
+            self?.makeSessionComposition(sessionId: request.sessionId) ?? (nil, [])
+        }
     }
 
     /// Skips the re-render when the same Step is bound consecutively
@@ -593,6 +600,10 @@ final class DetailViewController: NSViewController {
             self.rawView.configure(rawPayload: payloads.raw)
             self.usageView.configure(rawPayloadSections: payloads.usage)
         }
+
+        setCompositionContent(for: identity, scopeLabel: "this session") { [weak self] in
+            self?.makeSessionComposition(sessionId: step.sessionId) ?? (nil, [])
+        }
     }
 
     private var currentSessionId: String?
@@ -605,7 +616,56 @@ final class DetailViewController: NSViewController {
     /// no longer fetch anything (memory-audit P1).
     private var pendingRawUsageLoad: (() -> Void)?
     private var pendingRawUsageSelection: DetailSelectionID?
-    private static let lazyTabIndexes: Set<Int> = [3, 4]   // Usage, Raw
+    private static let lazyTabIndexes: Set<Int> = [4, 5]   // Usage, Raw
+
+    // MARK: - Lazy Composition (C-25)
+
+    /// Composition runs scoped SQL aggregates, so — like Raw/Usage — it's
+    /// deferred until the tab is fronted rather than computed on every
+    /// selection.
+    private var pendingCompositionLoad: (() -> Void)?
+    private var pendingCompositionSelection: DetailSelectionID?
+    private static let compositionTabIndex = 3
+
+    private func sqliteStore() -> ProviderStore? {
+        store.sqliteConversationSource?.store
+    }
+
+    /// Parks a loader that builds the scoped `ContextComposition.Result` and
+    /// configures `compositionView`; runs it immediately if the Composition
+    /// tab is already frontmost.
+    private func setCompositionContent(
+        for selection: DetailSelectionID?,
+        scopeLabel: String,
+        load: @escaping () -> (ContextComposition.Result?, [ToolOutputCost])
+    ) {
+        let apply: () -> Void = { [weak self] in
+            let (result, top) = load()
+            self?.compositionView.configure(result: result, scopeLabel: scopeLabel, topToolOutputs: top)
+        }
+        if segmentedControl.selectedSegment == Self.compositionTabIndex {
+            pendingCompositionLoad = nil
+            pendingCompositionSelection = nil
+            apply()
+        } else {
+            pendingCompositionLoad = apply
+            pendingCompositionSelection = selection
+            compositionView.configure(result: nil, scopeLabel: scopeLabel)
+        }
+    }
+
+    /// Whole-session composition + the session's top cost-driving tool outputs
+    /// — the scope for Step / SkillGroup / Request selections (a turn has its
+    /// own in-memory tokens/cost, handled inline).
+    private func makeSessionComposition(
+        sessionId: String?
+    ) -> (ContextComposition.Result?, [ToolOutputCost]) {
+        guard let store = sqliteStore(), let sid = sessionId,
+              let aggregate = try? store.contextCompositionAggregate(sessionId: sid)
+        else { return (nil, []) }
+        let top = (try? store.topToolOutputs(sessionId: sid, limit: 8)) ?? []
+        return (ContextComposition.make(from: aggregate), top)
+    }
 
     /// Installs the Raw/Usage content for the current selection: runs
     /// immediately when one of those tabs is frontmost, otherwise parks
@@ -690,6 +750,18 @@ final class DetailViewController: NSViewController {
                 rawPayloadSections: self.usagePayloads(for: turn.steps, fallbackRaw: rawPayload)
             )
         }
+
+        // Turn scope: the outline already handed us the turn's real billed
+        // tokens/cost; only the content-character split needs a scoped query.
+        setCompositionContent(for: currentSelection, scopeLabel: "this turn") { [weak self] in
+            guard let self, let store = self.sqliteStore() else { return (nil, []) }
+            let chars = (try? store.contextCompositionContentChars(
+                sessionId: turn.sessionId, turnId: turn.id)) ?? .zero
+            let aggregate = StoreContextCompositionAggregate.turn(
+                tokens: displayTokens, cost: displayCost, chars: chars)
+            // No per-turn "top drivers" — carry cost is a multi-turn concept.
+            return (ContextComposition.make(from: aggregate), [])
+        }
     }
 
     func showSkillGroup(
@@ -737,6 +809,10 @@ final class DetailViewController: NSViewController {
             self.usageView.configure(
                 rawPayloadSections: self.usagePayloads(for: group.steps, fallbackRaw: rawPayload)
             )
+        }
+
+        setCompositionContent(for: currentSelection, scopeLabel: "this session") { [weak self] in
+            self?.makeSessionComposition(sessionId: sessionId) ?? (nil, [])
         }
     }
 
@@ -787,6 +863,9 @@ final class DetailViewController: NSViewController {
         currentSelection = nil
         pendingRawUsageLoad = nil
         pendingRawUsageSelection = nil
+        pendingCompositionLoad = nil
+        pendingCompositionSelection = nil
+        compositionView.configure(result: nil, scopeLabel: "this session")
         emptyTitleLabel.stringValue = "No Selection"
         emptySubtitleLabel.stringValue = "Select a Turn or Step from the list above\nto view its details."
         updateVisibility()
@@ -818,6 +897,15 @@ final class DetailViewController: NSViewController {
            pendingRawUsageSelection == currentSelection {
             pendingRawUsageLoad = nil
             pendingRawUsageSelection = nil
+            load()
+        }
+        // First visit to Composition for this selection: run its parked
+        // aggregate loader.
+        if index == Self.compositionTabIndex,
+           let load = pendingCompositionLoad,
+           pendingCompositionSelection == currentSelection {
+            pendingCompositionLoad = nil
+            pendingCompositionSelection = nil
             load()
         }
         for (i, tabView) in currentTabViews.enumerated() {

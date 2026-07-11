@@ -760,6 +760,11 @@ struct CodexDetailImporter: Sendable {
             }
 
             for (stepOrdinal, step) in turn.steps.enumerated() {
+                // Context-composition (C-25): measure tool payload lengths from
+                // the full in-memory strings, before snapshot truncation.
+                // `unicodeScalars.count` (code points) matches SQLite `length()`.
+                let toolInputChars = step.toolCalls.reduce(0) { $0 + $1.inputJSON.unicodeScalars.count }
+                let toolResultChars = step.toolResult?.content.unicodeScalars.count ?? 0
                 payload.steps.append(StoreStepRow(
                     sessionId: plan.scopedSessionId,
                     turnId: turn.id,
@@ -773,7 +778,10 @@ struct CodexDetailImporter: Sendable {
                     text: step.text,
                     thinkingText: step.thinkingText,
                     toolName: step.toolCalls.first?.name,
-                    toolUseId: step.toolCalls.first?.id ?? step.toolResult?.toolUseId
+                    toolUseId: step.toolCalls.first?.id ?? step.toolResult?.toolUseId,
+                    toolInputChars: toolInputChars,
+                    toolResultChars: toolResultChars,
+                    toolSummary: step.toolCalls.first.map { $0.abbreviatedInput(limit: 100) }
                 ))
                 outcome.stepRows += 1
 

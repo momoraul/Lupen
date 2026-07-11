@@ -216,6 +216,19 @@ enum ProviderDatabaseSchema {
             t.column("thinking_text", .text)
             t.column("tool_name", .text)
             t.column("tool_use_id", .text)
+            // Context-composition (C-25): character lengths of the tool_use
+            // input JSON and tool_result content, captured at import from the
+            // full (pre-truncation) strings. `text` / `thinking_text` lengths
+            // are derived at query time via SQL length(); these two are stored
+            // because Step persists only truncated tool payloads to snapshot,
+            // and the steps table never carried the raw tool content at all.
+            t.column("tool_input_chars", .integer).notNull().defaults(to: 0)
+            t.column("tool_result_chars", .integer).notNull().defaults(to: 0)
+            // Short "what did this call target" summary (Read path, Bash cmd,
+            // …) captured at import from the tool_use input, so the Top
+            // cost-driving tool outputs list (C-25) can name each output
+            // without re-decoding the raw tool input. On the tool_use step.
+            t.column("tool_summary", .text)
             t.primaryKey(["session_id", "uuid"])
         }
         try db.create(index: "idx_steps_turn", on: "steps", columns: ["session_id", "turn_id", "ordinal"])

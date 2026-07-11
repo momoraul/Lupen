@@ -643,6 +643,256 @@ extension ProviderStore: ReportsRepository {
         }
     }
 
+    /// Context-composition sums over a scope (C-25): a date range (both nil
+    /// `sessionId`), one whole session (`sessionId` set, dates nil), or — via
+    /// `contextCompositionContentChars` — one turn. Combines actual billed
+    /// tokens (`requests`) and component costs (`turns`) with measured content
+    /// character lengths (`steps`). Four small aggregate reads share one
+    /// snapshot: output/reasoning tokens, the per-session context floor
+    /// (Σ of each session's MIN context = system + tools + initial context),
+    /// output/context component costs, and content character lengths.
+    ///
+    /// `requests` are filtered to real models (drops `<synthetic>` API-error
+    /// placeholders) to match the other Reports aggregates; `steps` are not
+    /// model-filtered because user prompts / tool results legitimately carry
+    /// no model. All include sub-agent rows, mirroring the cost totals; the
+    /// baseline alone excludes sub-agents (a session-startup concept).
+    func contextCompositionAggregate(
+        sessionId: String? = nil, from: Date? = nil, to: Date? = nil
+    ) throws -> StoreContextCompositionAggregate {
+        try database.pool.read { db in
+            let tokenRow = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                           COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning_tokens
+                    FROM requests
+                    WHERE model IS NOT NULL AND model != '<synthetic>'
+                      AND (? IS NULL OR session_id = ?)
+                      AND (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
+                    """,
+                arguments: [sessionId, sessionId, from, from, to, to]
+            )
+
+            let baselineRow = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT COALESCE(SUM(floor_tokens), 0) AS baseline FROM (
+                        SELECT MIN(input_tokens + cache_creation_input_tokens
+                                   + cache_read_input_tokens) AS floor_tokens
+                        FROM requests
+                        WHERE model IS NOT NULL AND model != '<synthetic>'
+                          AND is_sidechain = 0
+                          AND (? IS NULL OR session_id = ?)
+                          AND (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
+                        GROUP BY session_id
+                    )
+                    """,
+                arguments: [sessionId, sessionId, from, from, to, to]
+            )
+
+            let costRow = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT COALESCE(SUM(agg_cost_output_usd), 0) AS output_cost,
+                           COALESCE(SUM(agg_cost_input_usd + agg_cost_cache_1h_usd
+                               + agg_cost_cache_5m_usd + agg_cost_cache_read_usd), 0) AS context_cost
+                    FROM turns
+                    WHERE sidechain_only = 0
+                      AND (? IS NULL OR session_id = ?)
+                      AND (? IS NULL OR start_time >= ?) AND (? IS NULL OR start_time <= ?)
+                    """,
+                arguments: [sessionId, sessionId, from, from, to, to]
+            )
+
+            let contentRow = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT
+                      \(Self.contentCharsSelectList)
+                    FROM steps
+                    WHERE (? IS NULL OR session_id = ?)
+                      AND (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)
+                    """,
+                arguments: [sessionId, sessionId, from, from, to, to]
+            )
+
+            // Aggregate SUM queries always yield exactly one row; guard defends
+            // only against an empty/absent table and returns all-zero.
+            guard let tokenRow, let baselineRow, let costRow, let contentRow else {
+                return StoreContextCompositionAggregate(
+                    outputTokens: 0, reasoningTokens: 0, sessionBaselineTokens: 0,
+                    outputCostUSD: 0, contextCostUSD: 0,
+                    promptChars: 0, replyChars: 0, thinkingChars: 0,
+                    toolInputChars: 0, toolOutputChars: 0
+                )
+            }
+            return StoreContextCompositionAggregate(
+                outputTokens: tokenRow["output_tokens"],
+                reasoningTokens: tokenRow["reasoning_tokens"],
+                sessionBaselineTokens: baselineRow["baseline"],
+                outputCostUSD: costRow["output_cost"],
+                contextCostUSD: costRow["context_cost"],
+                promptChars: contentRow["prompt_chars"],
+                replyChars: contentRow["reply_chars"],
+                thinkingChars: contentRow["thinking_chars"],
+                toolInputChars: contentRow["tool_input_chars"],
+                toolOutputChars: contentRow["tool_output_chars"]
+            )
+        }
+    }
+
+    /// Shared SELECT list for the five content-character sums, so the range/
+    /// session aggregate and the per-turn `contextCompositionContentChars`
+    /// measure content identically.
+    private static let contentCharsSelectList = """
+        COALESCE(SUM(CASE WHEN kind = 'prompt' AND text IS NOT NULL
+                          THEN length(text) ELSE 0 END), 0) AS prompt_chars,
+        COALESCE(SUM(CASE WHEN kind IN ('reply', 'thought', 'stop') AND text IS NOT NULL
+                          THEN length(text) ELSE 0 END), 0) AS reply_chars,
+        COALESCE(SUM(CASE WHEN thinking_text IS NOT NULL
+                          THEN length(thinking_text) ELSE 0 END), 0) AS thinking_chars,
+        COALESCE(SUM(tool_input_chars), 0) AS tool_input_chars,
+        COALESCE(SUM(tool_result_chars), 0) AS tool_output_chars
+        """
+
+    /// Per-turn content character sums (C-25). The Detail view combines these
+    /// with the turn's in-memory `TokenBreakdown` / `CostBreakdown` (the
+    /// turn's real billed totals) to build a turn-scoped composition without a
+    /// second tokens/cost query.
+    func contextCompositionContentChars(
+        sessionId: String, turnId: String
+    ) throws -> StoreContextCompositionAggregate.ContentChars {
+        try database.pool.read { db in
+            let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT
+                      \(Self.contentCharsSelectList)
+                    FROM steps
+                    WHERE session_id = ? AND turn_id = ?
+                    """,
+                arguments: [sessionId, turnId]
+            )
+            guard let row else { return .zero }
+            return StoreContextCompositionAggregate.ContentChars(
+                promptChars: row["prompt_chars"],
+                replyChars: row["reply_chars"],
+                thinkingChars: row["thinking_chars"],
+                toolInputChars: row["tool_input_chars"],
+                toolOutputChars: row["tool_output_chars"]
+            )
+        }
+    }
+
+    /// Top cost-driving tool outputs over a scope (C-25). A tool result is
+    /// re-read from cache every subsequent turn, so its lifetime cost scales
+    /// with `size × turns carried`. Joins each result to its tool_use step
+    /// (for the name + target label) and its turn (for the ordinal), then
+    /// hands the raw rows to the pure `ToolOutputRanker` with per-session
+    /// last-ordinal and effective cache-read rate. Sub-agent turns are
+    /// excluded from the session context (mirrors the cost aggregate).
+    func topToolOutputs(
+        sessionId: String? = nil, from: Date? = nil, to: Date? = nil, limit: Int = 8
+    ) throws -> [ToolOutputCost] {
+        try database.pool.read { db in
+            // Candidates: main-chain tool results (never sub-agent, whose
+            // outputs live in the sub-agent's own context). Pre-filtered by
+            // raw size — the LIMIT is a safety cap well beyond any real
+            // session's tool-result count; the ranker re-ranks by weight.
+            // `res_uuid` lets us drop the rare duplicate a replayed tool_use_id
+            // could produce through the LEFT JOIN.
+            var seenResults = Set<String>()
+            let candidates = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT res.session_id AS session_id,
+                           res.uuid AS res_uuid,
+                           COALESCE(call.tool_name, 'tool') AS tool_name,
+                           call.tool_summary AS tool_summary,
+                           res.tool_result_chars AS output_chars,
+                           rt.ordinal AS turn_ordinal
+                    FROM steps res
+                    LEFT JOIN steps call
+                           ON call.session_id = res.session_id
+                          AND call.tool_use_id = res.tool_use_id
+                          AND call.tool_name IS NOT NULL
+                    JOIN turns rt ON rt.session_id = res.session_id AND rt.id = res.turn_id
+                    WHERE res.tool_result_chars > 0
+                      AND res.agent_id IS NULL
+                      AND rt.sidechain_only = 0
+                      AND (? IS NULL OR res.session_id = ?)
+                      AND (? IS NULL OR res.timestamp >= ?) AND (? IS NULL OR res.timestamp <= ?)
+                    ORDER BY res.tool_result_chars DESC
+                    LIMIT 10000
+                    """,
+                arguments: [sessionId, sessionId, from, from, to, to]
+            ).compactMap { row -> ToolOutputRanker.Candidate? in
+                let sid: String = row["session_id"]
+                let uuid: String = row["res_uuid"]
+                guard seenResults.insert("\(sid)#\(uuid)").inserted else { return nil }
+                return ToolOutputRanker.Candidate(
+                    sessionId: sid,
+                    toolName: row["tool_name"],
+                    summary: row["tool_summary"],
+                    outputChars: row["output_chars"],
+                    turnOrdinal: row["turn_ordinal"]
+                )
+            }
+
+            // Carry length is a whole-session concept, so max ordinal + the
+            // cache-read rate are computed over the full session (no date
+            // filter) — a range only selects which outputs to show, not how
+            // long each was carried.
+            let ordinalRows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT session_id, MAX(ordinal) AS max_ordinal
+                    FROM turns
+                    WHERE sidechain_only = 0 AND (? IS NULL OR session_id = ?)
+                    GROUP BY session_id
+                    """,
+                arguments: [sessionId, sessionId]
+            )
+            var maxOrdinal: [String: Int] = [:]
+            for row in ordinalRows { maxOrdinal[row["session_id"]] = row["max_ordinal"] }
+
+            let rateRows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT session_id,
+                           COALESCE(SUM(agg_cost_cache_read_usd), 0) AS cost,
+                           COALESCE(SUM(agg_cache_read_tokens), 0) AS tokens
+                    FROM turns
+                    WHERE sidechain_only = 0 AND (? IS NULL OR session_id = ?)
+                    GROUP BY session_id
+                    """,
+                arguments: [sessionId, sessionId]
+            )
+            var rateBySession: [String: Double] = [:]
+            var totalCost = 0.0
+            var totalTokens = 0.0
+            for row in rateRows {
+                let cost: Double = row["cost"]
+                let tokens: Double = row["tokens"]
+                totalCost += cost
+                totalTokens += tokens
+                if tokens > 0 { rateBySession[row["session_id"]] = cost / tokens }
+            }
+            let fallbackRate = totalTokens > 0 ? totalCost / totalTokens : 0
+
+            return ToolOutputRanker.rank(
+                ToolOutputRanker.Input(
+                    candidates: candidates,
+                    maxOrdinalBySession: maxOrdinal,
+                    cacheReadRateBySession: rateBySession,
+                    fallbackCacheReadRate: fallbackRate
+                ),
+                limit: limit
+            )
+        }
+    }
+
     private static func bucketExpr(_ column: String, hourly: Bool) -> String {
         hourly
             ? "strftime('%Y-%m-%d %H:00:00', \(column), 'localtime')"
@@ -1342,14 +1592,16 @@ extension ProviderStore: ImportWriting {
                     INSERT INTO steps (
                         session_id, turn_id, uuid, source_file_id, ordinal, kind,
                         timestamp, model, request_id, agent_id, text, thinking_text,
-                        tool_name, tool_use_id
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        tool_name, tool_use_id, tool_input_chars, tool_result_chars,
+                        tool_summary
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT DO NOTHING
                     """,
                 arguments: [
                     step.sessionId, step.turnId, step.uuid, sourceId, step.ordinal,
                     step.kind, step.timestamp, step.model, step.requestId, step.agentId,
-                    step.text, step.thinkingText, step.toolName, step.toolUseId
+                    step.text, step.thinkingText, step.toolName, step.toolUseId,
+                    step.toolInputChars, step.toolResultChars, step.toolSummary
                 ]
             )
         case .subagentLink(let link):

@@ -21,6 +21,9 @@ struct ReportsView: View {
     let onDismiss: () -> Void
 
     @State private var selectedTab: Tab = .overview
+    /// Composition lens, owned here so the footer + CSV export track what the
+    /// (internally-toggled) `CompositionView` is showing.
+    @State private var compositionMode: CompositionView.Mode = .cost
     @State private var dateRange: DateRangeOption = .allTime
     /// Overview-only bucket size (Day / Week / Month). Independent of the
     /// date range so the user can view, say, "All time" by month. Ignored
@@ -482,8 +485,50 @@ struct ReportsView: View {
             skillsTable
         case .models:
             modelsTable
+        case .composition:
+            compositionTab
         case .hours:
             hoursTab
+        }
+    }
+
+    /// Context-composition breakdown for the active range (C-25). One cheap
+    /// SQL read (3 aggregate sums) — computed synchronously like the projects
+    /// / models tabs; the calculator is pure.
+    private var compositionResult: ContextComposition.Result? {
+        guard let sqlStore = sqliteReportsStore else { return nil }
+        guard let aggregate = try? sqlStore.contextCompositionAggregate(
+            from: requestBounds?.lowerBound,
+            to: requestBounds?.upperBound
+        ) else { return nil }
+        return ContextComposition.make(from: aggregate)
+    }
+
+    /// Top cost-driving tool outputs for the active range (C-25). One cheap
+    /// query alongside the composition aggregate.
+    private var compositionTopToolOutputs: [ToolOutputCost] {
+        guard let sqlStore = sqliteReportsStore else { return [] }
+        return (try? sqlStore.topToolOutputs(
+            from: requestBounds?.lowerBound,
+            to: requestBounds?.upperBound,
+            limit: 8
+        )) ?? []
+    }
+
+    @ViewBuilder
+    private var compositionTab: some View {
+        if let result = compositionResult, result.hasData {
+            CompositionView(
+                result: result,
+                topToolOutputs: compositionTopToolOutputs,
+                initialMode: compositionMode,
+                onModeChange: { compositionMode = $0 }
+            )
+        } else {
+            emptyState(
+                title: "No composition data",
+                subtitle: "No \(activeProviderName) billable requests match the selected date range."
+            )
         }
     }
 
@@ -741,6 +786,20 @@ struct ReportsView: View {
             return "\(formatUSD(footer.totalCostUSD)) total · \(footer.invocationCount) skill invocations · \(scope)"
         case .models:
             return "\(formatUSD(total)) across \(reqCount) requests · \(scope)"
+        case .composition:
+            guard let result = compositionResult, result.hasData else {
+                return "No composition data · \(scope)"
+            }
+            // Track the visible lens: Cost leads with dollars + the top driver;
+            // Tokens leads with output volume.
+            if compositionMode == .cost, result.hasCostData, let top = result.topCost {
+                let share = Int((top.share * 100).rounded())
+                return "\(formatUSD(result.totalCostUSD)) total · \(share)% \(top.category.label.lowercased()) · \(scope)"
+            }
+            let thinking = result.thinkingShare.map {
+                " · \(Int(($0 * 100).rounded()))% thinking"
+            } ?? ""
+            return "\(TimelineOverviewView.formatTokens(result.generationTokens)) output tokens\(thinking) · \(scope)"
         case .hours:
             // Hours uses its own rolling window; the footer reports
             // sample count rather than dollar totals.
@@ -758,6 +817,7 @@ struct ReportsView: View {
         case .projects: return projectRows.isEmpty
         case .skills:   return skillRowsIsLoading || skillRows.isEmpty
         case .models:   return modelRows.isEmpty
+        case .composition: return compositionResult?.hasData != true
         case .hours:    return (activeSampleStore?.samples.isEmpty ?? true)
         }
     }
@@ -775,6 +835,8 @@ struct ReportsView: View {
             csv = ReportsCSVExporter.skillsCSV(skillRows, provider: activeProvider)
         case .models:
             csv = ReportsCSVExporter.modelsCSV(modelRows)
+        case .composition:
+            csv = compositionCSV(compositionResult)
         case .hours:
             // CSV export for Hours not implemented; button disabled.
             csv = ""
@@ -810,6 +872,30 @@ struct ReportsView: View {
         } else {
             completion(panel.runModal())
         }
+    }
+
+    /// Composition tab CSV — includes BOTH lenses (cost + tokens) so the export
+    /// always contains whatever the user is looking at, regardless of the
+    /// current toggle. `value` is USD for the cost rows, est tokens otherwise.
+    private func compositionCSV(_ result: ContextComposition.Result?) -> String {
+        guard let result, result.hasData else { return "" }
+        var lines = ["lens,group,category,value,unit,kind,share_percent"]
+        func share(_ v: Double, _ total: Double) -> Int {
+            total > 0 ? Int((v / total * 100).rounded()) : 0
+        }
+        // Cost lens — the unified $ bar.
+        for slice in result.cost {
+            lines.append("cost,Total,\(slice.category.label),\(String(format: "%.4f", slice.costUSD)),USD,estimate,\(share(slice.costUSD, result.totalCostUSD))")
+        }
+        // Tokens lens — the two bars.
+        func emitTokens(_ group: String, _ slices: [ContextComposition.Slice], total: Int) {
+            for slice in slices.sorted(by: { $0.estTokens > $1.estTokens }) {
+                lines.append("tokens,\(group),\(slice.category.label),\(slice.estTokens),tokens,\(slice.isEstimate ? "estimate" : "actual"),\(share(Double(slice.estTokens), Double(total)))")
+            }
+        }
+        emitTokens("Generation", result.generation, total: result.generationTokens)
+        emitTokens("Context", result.context, total: result.contextTokens)
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Helpers
@@ -860,7 +946,7 @@ struct ReportsView: View {
     // MARK: - Enums
 
     enum Tab: String, CaseIterable, Identifiable {
-        case overview, projects, skills, models, hours
+        case overview, projects, skills, models, composition, hours
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -868,6 +954,7 @@ struct ReportsView: View {
             case .projects: return "Projects"
             case .skills: return "Skills"
             case .models: return "Models"
+            case .composition: return "Composition"
             case .hours: return "Hours"
             }
         }

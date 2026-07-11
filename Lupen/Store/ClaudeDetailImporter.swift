@@ -584,6 +584,14 @@ struct ClaudeDetailImporter: Sendable {
                 for (stepOrdinal, step) in turn.steps.enumerated() {
                     let origin = originByKey[OriginKey(sessionId: rawSessionId, uuid: step.uuid)]
                         ?? rootOrigin
+                    // Context-composition (C-25): measure the tool payload
+                    // lengths from the FULL in-memory strings here, before the
+                    // snapshot/Raw path truncates them. Sum across parallel
+                    // tool_use blocks in one step. `unicodeScalars.count` (code
+                    // points) matches SQLite `length()`, which the aggregate uses
+                    // for the text/thinking categories — keeps units uniform.
+                    let toolInputChars = step.toolCalls.reduce(0) { $0 + $1.inputJSON.unicodeScalars.count }
+                    let toolResultChars = step.toolResult?.content.unicodeScalars.count ?? 0
                     payloads[origin].steps.append(StoreStepRow(
                         sessionId: scopedSessionId,
                         turnId: turn.id,
@@ -597,7 +605,10 @@ struct ClaudeDetailImporter: Sendable {
                         text: step.text,
                         thinkingText: step.thinkingText,
                         toolName: step.toolCalls.first?.name,
-                        toolUseId: step.toolCalls.first?.id ?? step.toolResult?.toolUseId
+                        toolUseId: step.toolCalls.first?.id ?? step.toolResult?.toolUseId,
+                        toolInputChars: toolInputChars,
+                        toolResultChars: toolResultChars,
+                        toolSummary: step.toolCalls.first.map { $0.abbreviatedInput(limit: 100) }
                     ))
                     outcome.stepRows += 1
                 }

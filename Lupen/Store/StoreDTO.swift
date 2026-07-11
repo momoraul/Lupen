@@ -300,6 +300,53 @@ struct StoreStepRow: Sendable, Equatable {
     let thinkingText: String?
     let toolName: String?
     let toolUseId: String?
+    /// Context-composition (C-25): character length of this step's tool_use
+    /// input JSON (summed across parallel tool calls), captured from the full
+    /// pre-truncation string at import. 0 for non-tool steps.
+    let toolInputChars: Int
+    /// Character length of this step's tool_result content, pre-truncation.
+    /// 0 for non-result steps.
+    let toolResultChars: Int
+    /// Short "what this call targeted" label (Read path / Bash cmd) from the
+    /// tool_use input, for the Top cost-driving tool outputs ranking. On the
+    /// tool_use step; nil elsewhere.
+    let toolSummary: String?
+
+    init(
+        sessionId: String,
+        turnId: String,
+        uuid: String,
+        ordinal: Int,
+        kind: String,
+        timestamp: Date?,
+        model: String?,
+        requestId: String?,
+        agentId: String?,
+        text: String?,
+        thinkingText: String?,
+        toolName: String?,
+        toolUseId: String?,
+        toolInputChars: Int = 0,
+        toolResultChars: Int = 0,
+        toolSummary: String? = nil
+    ) {
+        self.sessionId = sessionId
+        self.turnId = turnId
+        self.uuid = uuid
+        self.ordinal = ordinal
+        self.kind = kind
+        self.timestamp = timestamp
+        self.model = model
+        self.requestId = requestId
+        self.agentId = agentId
+        self.text = text
+        self.thinkingText = thinkingText
+        self.toolName = toolName
+        self.toolUseId = toolUseId
+        self.toolInputChars = toolInputChars
+        self.toolResultChars = toolResultChars
+        self.toolSummary = toolSummary
+    }
 }
 
 /// One raw line of a turn for scoped re-decode (4.1): where the bytes
@@ -393,6 +440,103 @@ struct StoreModelUsageAggregate: Sendable, Equatable {
     let usageCount: Int
     let costUSD: Double
     let fastCount: Int
+}
+
+/// Context-composition raw sums over a scope — a date range, one session, or
+/// one turn (C-25). Mixes actual billed-token totals (`requests`) and
+/// component costs (`turns`) with measured content character lengths
+/// (`steps`); the pure `ContextComposition` calculator turns these into the
+/// Generation / Context (token) bars and the unified Cost bar. All fields are
+/// 0 for an empty scope.
+struct StoreContextCompositionAggregate: Sendable, Equatable {
+    // Actual billed tokens (from `requests`).
+    /// Σ output_tokens — the model's generated tokens (reply + tool calls +,
+    /// for Claude, thinking, which the API folds into output).
+    let outputTokens: Int
+    /// Σ reasoning_output_tokens — separately-billed thinking (Codex).
+    let reasoningTokens: Int
+    /// Σ over sessions of MIN(input + cache_creation + cache_read) — the
+    /// per-session context floor ≈ system prompt + tool schemas + initial
+    /// context. The one "not individually measurable" block. 0 for turn scope.
+    let sessionBaselineTokens: Int
+    // Actual component costs (USD, from `turns`).
+    /// Σ agg_cost_output_usd — the $ cost of generated output tokens.
+    let outputCostUSD: Double
+    /// Σ (agg_cost_input + cache_creation + cache_read) — the $ cost of
+    /// carrying / re-reading context.
+    let contextCostUSD: Double
+    // Measured content character lengths (from `steps`), each counted once.
+    let promptChars: Int
+    let replyChars: Int
+    let thinkingChars: Int
+    let toolInputChars: Int
+    let toolOutputChars: Int
+
+    init(
+        outputTokens: Int,
+        reasoningTokens: Int,
+        sessionBaselineTokens: Int,
+        outputCostUSD: Double = 0,
+        contextCostUSD: Double = 0,
+        promptChars: Int,
+        replyChars: Int,
+        thinkingChars: Int,
+        toolInputChars: Int,
+        toolOutputChars: Int
+    ) {
+        self.outputTokens = outputTokens
+        self.reasoningTokens = reasoningTokens
+        self.sessionBaselineTokens = sessionBaselineTokens
+        self.outputCostUSD = outputCostUSD
+        self.contextCostUSD = contextCostUSD
+        self.promptChars = promptChars
+        self.replyChars = replyChars
+        self.thinkingChars = thinkingChars
+        self.toolInputChars = toolInputChars
+        self.toolOutputChars = toolOutputChars
+    }
+
+    /// Per-scope measured content character lengths only (from `steps`) —
+    /// combined with in-memory turn tokens/cost to build a turn-scoped
+    /// aggregate in the Detail view.
+    struct ContentChars: Sendable, Equatable {
+        let promptChars: Int
+        let replyChars: Int
+        let thinkingChars: Int
+        let toolInputChars: Int
+        let toolOutputChars: Int
+        static let zero = ContentChars(
+            promptChars: 0, replyChars: 0, thinkingChars: 0,
+            toolInputChars: 0, toolOutputChars: 0
+        )
+    }
+
+    /// Build a turn-scoped aggregate from the turn's in-memory billed totals
+    /// (`TokenBreakdown` / `CostBreakdown`, already decoded by the outline)
+    /// plus its measured content characters. No per-turn session baseline —
+    /// the system floor is a whole-session concept.
+    static func turn(
+        tokens: TokenBreakdown,
+        cost: CostBreakdown?,
+        chars: ContentChars
+    ) -> StoreContextCompositionAggregate {
+        let contextCost = cost.map {
+            $0.inputCostUSD + $0.cacheCreate1hCostUSD
+                + $0.cacheCreate5mCostUSD + $0.cacheReadCostUSD
+        } ?? 0
+        return StoreContextCompositionAggregate(
+            outputTokens: tokens.outputTokens,
+            reasoningTokens: tokens.reasoningOutputTokens,
+            sessionBaselineTokens: 0,
+            outputCostUSD: cost?.outputCostUSD ?? 0,
+            contextCostUSD: contextCost,
+            promptChars: chars.promptChars,
+            replyChars: chars.replyChars,
+            thinkingChars: chars.thinkingChars,
+            toolInputChars: chars.toolInputChars,
+            toolOutputChars: chars.toolOutputChars
+        )
+    }
 }
 
 /// One local-time bucket of request activity. `bucketKey` is
