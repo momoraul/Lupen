@@ -28,26 +28,62 @@ struct CodexSessionDiscovery: Sendable {
     }
 
     func discoverRolloutFiles() -> [URL] {
-        discoverRolloutFiles(in: sessionsDirectory)
+        discoverRolloutFilesWithDiagnostics().files
     }
 
     func discoverRolloutFiles(in directory: URL) -> [URL] {
+        discoverRolloutFilesWithDiagnostics(in: directory).files
+    }
+
+    func discoverRolloutFilesWithDiagnostics() -> DiscoveryResult<URL> {
+        discoverRolloutFilesWithDiagnostics(in: sessionsDirectory)
+    }
+
+    func discoverRolloutFilesWithDiagnostics(
+        in directory: URL
+    ) -> DiscoveryResult<URL> {
+        var failures: [DiscoveryFailure] = []
         guard let enumerator = FileManager.default.enumerator(
             at: directory,
             includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { location, _ in
+                failures.append(DiscoveryFailure(
+                    location: location.standardizedFileURL,
+                    operation: .enumerateDirectory
+                ))
+                return true
+            }
         ) else {
-            return []
+            if failures.isEmpty {
+                failures.append(DiscoveryFailure(
+                    location: directory.standardizedFileURL,
+                    operation: .enumerateDirectory
+                ))
+            }
+            return DiscoveryResult(files: [], failures: failures)
         }
 
         var results: [URL] = []
         for case let url as URL in enumerator {
             guard isCodexRolloutFile(url) else { continue }
-            let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
-            guard values?.isRegularFile == true else { continue }
+            let values: URLResourceValues
+            do {
+                values = try url.resourceValues(forKeys: [.isRegularFileKey])
+            } catch {
+                failures.append(DiscoveryFailure(
+                    location: url.standardizedFileURL,
+                    operation: .inspectItem
+                ))
+                continue
+            }
+            guard values.isRegularFile == true else { continue }
             results.append(url)
         }
-        return results.sorted { $0.path < $1.path }
+        return DiscoveryResult(
+            files: results.sorted { $0.path < $1.path },
+            failures: failures
+        )
     }
 
     private func isCodexRolloutFile(_ url: URL) -> Bool {

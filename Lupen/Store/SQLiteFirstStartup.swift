@@ -95,6 +95,7 @@ final class SQLiteFirstStartup: @unchecked Sendable {
     /// `AppStateStore`; activating it re-projects instantly from SQLite.
     /// Main-actor access only.
     private var isProjectionActive = true
+    private var metadataInventoryIncomplete = false
     private var didRecordSidebarReady = false
     /// 5.3c: cheap change guard so the diagnostics snapshot rebuild
     /// (3 reads + 20-row map) runs only when the persisted issue
@@ -197,6 +198,9 @@ final class SQLiteFirstStartup: @unchecked Sendable {
         guard let appStore else { return }
         appStore.hasInitialData = true
         appStore.isLoading = false
+        if metadataInventoryIncomplete {
+            presentIncompleteMetadataState(on: appStore)
+        }
     }
 
     /// Background indexing continues; only the store writes stop.
@@ -290,7 +294,8 @@ final class SQLiteFirstStartup: @unchecked Sendable {
         appStore?.sqliteConversationSource = SQLiteConversationSource(
             store: coordinator.store,
             provider: provider,
-            sourceId: sourceId
+            sourceId: sourceId,
+            indexedRoot: source.root
         )
         appStore?.prioritizeSessionImport = { [weak self] rawSessionId in
             self?.prioritizeSelectedSession(rawSessionId)
@@ -470,7 +475,21 @@ final class SQLiteFirstStartup: @unchecked Sendable {
                 "SQLite-first import failed for \(sessionRawId): \(message)",
                 context: "Store"
             )
+            if sessionRawId == "(metadata-scan)" {
+                metadataInventoryIncomplete = true
+            }
+            if metadataInventoryIncomplete,
+               isProjectionActive,
+               let appStore {
+                // Keep the last complete projection visible, but never leave
+                // a failed refresh presented as Ready. A later complete scan
+                // replaces this indeterminate state through the normal event.
+                presentIncompleteMetadataState(on: appStore)
+            }
             return
+        }
+        if case .metadataScanCompleted = event {
+            metadataInventoryIncomplete = false
         }
         if case .idle = event {
             // Pricing-table bumps without a schema bump leave imported
@@ -536,6 +555,12 @@ final class SQLiteFirstStartup: @unchecked Sendable {
         case .unitFailed:
             break   // handled (and logged) before the projection guard
         }
+    }
+
+    @MainActor
+    private func presentIncompleteMetadataState(on appStore: AppStateStore) {
+        appStore.loadingProgress = "Source scan incomplete; waiting to retry."
+        appStore.launchProgress = .transition(to: .scanningFiles)
     }
 
     /// Phase 3 startup budget surface (plan 0.5): the first moment this

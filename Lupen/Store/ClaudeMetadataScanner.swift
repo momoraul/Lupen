@@ -47,6 +47,7 @@ struct ClaudeMetadataScanner: Sendable {
     }
 
     struct Summary: Equatable, Sendable {
+        var inventoryComplete = true
         var discoveredFiles = 0
         var newSources = 0
         var changedSources = 0
@@ -64,7 +65,9 @@ struct ClaudeMetadataScanner: Sendable {
 
     @discardableResult
     func scan(projectsDirectory: URL) throws -> Summary {
-        let discovered = FileDiscovery().discoverJSONLFiles(in: projectsDirectory)
+        let inventory = FileDiscovery()
+            .discoverJSONLFilesWithDiagnostics(in: projectsDirectory)
+        let discovered = inventory.files
         var summary = Summary()
         summary.discoveredFiles = discovered.count
 
@@ -150,10 +153,13 @@ struct ClaudeMetadataScanner: Sendable {
         try writer.seedSessionShells(shellRows)
         summary.seededSessions = shellRows.count
 
-        let vanished = known.map(\.path).filter { !discoveredPaths.contains($0) }
-        try writer.deleteSources(paths: vanished)
-        summary.prunedSources = vanished.count
-        summary.prunedSessions = try writer.pruneSessionsWithoutSources()
+        summary.inventoryComplete = inventory.isComplete && summary.skippedUnreadable == 0
+        if summary.inventoryComplete {
+            let vanished = known.map(\.path).filter { !discoveredPaths.contains($0) }
+            try writer.deleteSources(paths: vanished)
+            summary.prunedSources = vanished.count
+            summary.prunedSessions = try writer.pruneSessionsWithoutSources()
+        }
 
         return summary
     }

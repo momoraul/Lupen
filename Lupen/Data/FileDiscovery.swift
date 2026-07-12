@@ -1,5 +1,24 @@
 import Foundation
 
+struct DiscoveryFailure: Sendable, Equatable {
+    enum Operation: Sendable, Equatable {
+        case enumerateDirectory
+        case inspectItem
+    }
+
+    let location: URL
+    let operation: Operation
+}
+
+struct DiscoveryResult<Element: Sendable>: Sendable {
+    let files: [Element]
+    let failures: [DiscoveryFailure]
+
+    var isComplete: Bool {
+        failures.isEmpty
+    }
+}
+
 struct FileDiscovery {
     enum SubagentKind: String, Sendable, Equatable {
         case legacy
@@ -30,32 +49,63 @@ struct FileDiscovery {
     }
 
     func discoverJSONLFiles() -> [DiscoveredFile] {
-        discoverJSONLFiles(in: projectsDirectory)
+        discoverJSONLFilesWithDiagnostics().files
     }
 
     func discoverJSONLFiles(in projectsDir: URL) -> [DiscoveredFile] {
+        discoverJSONLFilesWithDiagnostics(in: projectsDir).files
+    }
+
+    func discoverJSONLFilesWithDiagnostics() -> DiscoveryResult<DiscoveredFile> {
+        discoverJSONLFilesWithDiagnostics(in: projectsDirectory)
+    }
+
+    func discoverJSONLFilesWithDiagnostics(
+        in projectsDir: URL
+    ) -> DiscoveryResult<DiscoveredFile> {
         let fm = FileManager.default
-        guard let projectDirs = try? fm.contentsOfDirectory(
-            at: projectsDir,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: .skipsHiddenFiles
-        ) else {
-            return []
+        let projectDirs: [URL]
+        do {
+            projectDirs = try fm.contentsOfDirectory(
+                at: projectsDir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: .skipsHiddenFiles
+            )
+        } catch {
+            return DiscoveryResult(
+                files: [],
+                failures: [DiscoveryFailure(
+                    location: projectsDir.standardizedFileURL,
+                    operation: .enumerateDirectory
+                )]
+            )
         }
 
         var results: [DiscoveredFile] = []
+        var failures: [DiscoveryFailure] = []
         for projectDir in projectDirs {
-            guard (try? projectDir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            let values: URLResourceValues
+            do {
+                values = try projectDir.resourceValues(forKeys: [.isDirectoryKey])
+            } catch {
+                failures.append(DiscoveryFailure(
+                    location: projectDir.standardizedFileURL,
+                    operation: .inspectItem
+                ))
+                continue
+            }
+            guard values.isDirectory == true else { continue }
             let projectName = projectDir.lastPathComponent
             scan(
                 directory: projectDir,
                 projectName: projectName,
                 isSubagent: false,
                 into: &results,
+                failures: &failures,
                 fm: fm
             )
         }
-        return results
+        return DiscoveryResult(files: results, failures: failures)
     }
 
     /// Real Claude Code layout (Apr 2026):
@@ -85,15 +135,37 @@ struct FileDiscovery {
         subagentKind: SubagentKind? = nil,
         subagentParentSessionId: String? = nil,
         workflowRunId: String? = nil,
-        into results: inout [DiscoveredFile], fm: FileManager
+        into results: inout [DiscoveredFile],
+        failures: inout [DiscoveryFailure],
+        fm: FileManager
     ) {
-        guard let contents = try? fm.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles
-        ) else { return }
+        let contents: [URL]
+        do {
+            contents = try fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: .skipsHiddenFiles
+            )
+        } catch {
+            failures.append(DiscoveryFailure(
+                location: directory.standardizedFileURL,
+                operation: .enumerateDirectory
+            ))
+            return
+        }
 
         for item in contents {
-            let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-            if isDir {
+            let values: URLResourceValues
+            do {
+                values = try item.resourceValues(forKeys: [.isDirectoryKey])
+            } catch {
+                failures.append(DiscoveryFailure(
+                    location: item.standardizedFileURL,
+                    operation: .inspectItem
+                ))
+                continue
+            }
+            if values.isDirectory == true {
                 if item.lastPathComponent == "subagents" {
                     scan(
                         directory: item,
@@ -101,6 +173,7 @@ struct FileDiscovery {
                         isSubagent: true,
                         subagentKind: .legacy,
                         into: &results,
+                        failures: &failures,
                         fm: fm
                     )
                 } else if isSubagent,
@@ -111,6 +184,7 @@ struct FileDiscovery {
                         projectName: projectName,
                         parentSessionId: subagentParentSessionId,
                         into: &results,
+                        failures: &failures,
                         fm: fm
                     )
                 } else if !isSubagent {
@@ -121,17 +195,27 @@ struct FileDiscovery {
                     // project level (isSubagent == false) so we don't
                     // recurse infinitely from inside subagents/ itself.
                     let nested = item.appendingPathComponent("subagents")
-                    var isDirObjC: ObjCBool = false
-                    if fm.fileExists(atPath: nested.path, isDirectory: &isDirObjC), isDirObjC.boolValue {
-                        scan(
-                            directory: nested,
-                            projectName: projectName,
-                            isSubagent: true,
-                            subagentKind: .legacy,
-                            subagentParentSessionId: item.lastPathComponent,
-                            into: &results,
-                            fm: fm
-                        )
+                    do {
+                        let nestedValues = try nested.resourceValues(forKeys: [.isDirectoryKey])
+                        if nestedValues.isDirectory == true {
+                            scan(
+                                directory: nested,
+                                projectName: projectName,
+                                isSubagent: true,
+                                subagentKind: .legacy,
+                                subagentParentSessionId: item.lastPathComponent,
+                                into: &results,
+                                failures: &failures,
+                                fm: fm
+                            )
+                        }
+                    } catch {
+                        if !Self.isMissingPathError(error) {
+                            failures.append(DiscoveryFailure(
+                                location: nested.standardizedFileURL,
+                                operation: .inspectItem
+                            ))
+                        }
                     }
                 }
             } else if item.pathExtension == "jsonl" {
@@ -160,16 +244,36 @@ struct FileDiscovery {
         projectName: String,
         parentSessionId: String?,
         into results: inout [DiscoveredFile],
+        failures: inout [DiscoveryFailure],
         fm: FileManager
     ) {
-        guard let runs = try? fm.contentsOfDirectory(
-            at: workflowsDirectory,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: .skipsHiddenFiles
-        ) else { return }
+        let runs: [URL]
+        do {
+            runs = try fm.contentsOfDirectory(
+                at: workflowsDirectory,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: .skipsHiddenFiles
+            )
+        } catch {
+            failures.append(DiscoveryFailure(
+                location: workflowsDirectory.standardizedFileURL,
+                operation: .enumerateDirectory
+            ))
+            return
+        }
 
         for runDir in runs {
-            guard (try? runDir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+            let values: URLResourceValues
+            do {
+                values = try runDir.resourceValues(forKeys: [.isDirectoryKey])
+            } catch {
+                failures.append(DiscoveryFailure(
+                    location: runDir.standardizedFileURL,
+                    operation: .inspectItem
+                ))
+                continue
+            }
+            guard values.isDirectory == true else {
                 continue
             }
             let runId = runDir.lastPathComponent
@@ -181,6 +285,7 @@ struct FileDiscovery {
                 subagentParentSessionId: parentSessionId,
                 workflowRunId: runId,
                 into: &results,
+                failures: &failures,
                 fm: fm
             )
         }
@@ -210,6 +315,23 @@ struct FileDiscovery {
                components[index + 1] == "workflows" {
                 return true
             }
+        }
+        return false
+    }
+
+    private static func isMissingPathError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain,
+           (nsError.code == CocoaError.Code.fileNoSuchFile.rawValue
+            || nsError.code == CocoaError.Code.fileReadNoSuchFile.rawValue) {
+            return true
+        }
+        if nsError.domain == NSPOSIXErrorDomain,
+           nsError.code == Int(POSIXErrorCode.ENOENT.rawValue) {
+            return true
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return isMissingPathError(underlying)
         }
         return false
     }

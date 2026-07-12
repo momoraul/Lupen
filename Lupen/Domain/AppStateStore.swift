@@ -210,7 +210,8 @@ final class AppStateStore: @unchecked Sendable {
         let identity = VerificationSourceIdentity(source: source)
         guard let indexSource = sqliteConversationSource,
               indexSource.provider == source.kind,
-              indexSource.sourceId == source.id else {
+              indexSource.sourceId == source.id,
+              indexSource.indexedRoot == source.root else {
             completion(.failure(.indexUnavailable(identity)))
             return
         }
@@ -326,6 +327,7 @@ final class AppStateStore: @unchecked Sendable {
         }
         return indexSource.provider == source.kind
             && indexSource.sourceId == source.id
+            && indexSource.indexedRoot == source.root
             && indexSource.store === store
     }
 

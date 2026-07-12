@@ -19,6 +19,18 @@ enum ProviderIndexSource: Sendable, Equatable {
         }
     }
 
+    /// Normalized root this driver scans. Verification compares this value
+    /// with the active `SessionSource.root` so an id reused for another folder
+    /// cannot make an older index look like the selected source's index.
+    var root: URL {
+        let value: URL
+        switch self {
+        case .claude(let projectsDirectory): value = projectsDirectory
+        case .codex(let codexHome): value = codexHome
+        }
+        return SessionSource.normalizedRoot(value)
+    }
+
     /// Build the index source a session source feeds the pipeline: the
     /// scanner reads `source.root` keyed by `source.kind` — Claude scans the
     /// projects directory directly, Codex uses the codexHome (parent of
@@ -96,9 +108,14 @@ final class ProviderIndexCoordinator: @unchecked Sendable {
     private var lifecycleGeneration: UInt64 = 0
     private var isRunning = false
     private var isWorking = false
+    /// Prevents a failed or partial metadata scan from turning an empty/stale
+    /// store into an apparently settled index via the queue's idle event.
+    private var hasCompleteMetadataScan = false
     private var isPumpSuspended = false
     private var isScanSuspended = false
-    private var parkedScanGenerations: [UInt64] = []
+    private var parkedScanRequests: [(generation: UInt64, requestId: UInt64)] = []
+    private var latestMetadataScanRequestId: UInt64 = 0
+    private var pendingMetadataScanRequests = 0
     /// Priority buckets, drained in order; FIFO within a bucket.
     private var selectedQueue: [String] = []
     private var todayQueue: [String] = []
@@ -128,20 +145,24 @@ final class ProviderIndexCoordinator: @unchecked Sendable {
     /// detail imports. Safe to call again (rescan); stale work from the
     /// previous generation stops at its next cancellation boundary.
     func start(eventSink: @escaping EventSink) {
-        let generation: UInt64 = withState {
+        withState {
             lifecycleGeneration += 1
             isRunning = true
+            hasCompleteMetadataScan = false
+            latestMetadataScanRequestId &+= 1
+            pendingMetadataScanRequests = 1
             self.eventSink = eventSink
             selectedQueue.removeAll()
             todayQueue.removeAll()
             backfillQueue.removeAll()
             pendingIds.removeAll()
-            return lifecycleGeneration
-        }
-        idleGroup.enter()
-        queue.async { [weak self] in
-            defer { self?.idleGroup.leave() }
-            self?.scanAndEnqueue(generation: generation)
+            let generation = lifecycleGeneration
+            let requestId = latestMetadataScanRequestId
+            idleGroup.enter()
+            queue.async { [weak self] in
+                defer { self?.idleGroup.leave() }
+                self?.scanAndEnqueue(generation: generation, requestId: requestId)
+            }
         }
     }
 
@@ -149,12 +170,18 @@ final class ProviderIndexCoordinator: @unchecked Sendable {
     /// non-imported (changed sources were demoted by the scanner).
     /// Same generation — in-flight units keep running.
     func requestRescan() {
-        let generation: UInt64? = withState { isRunning ? lifecycleGeneration : nil }
-        guard let generation else { return }
-        idleGroup.enter()
-        queue.async { [weak self] in
-            defer { self?.idleGroup.leave() }
-            self?.scanAndEnqueue(generation: generation)
+        withState {
+            guard isRunning else { return }
+            latestMetadataScanRequestId &+= 1
+            pendingMetadataScanRequests += 1
+            hasCompleteMetadataScan = false
+            let generation = lifecycleGeneration
+            let requestId = latestMetadataScanRequestId
+            idleGroup.enter()
+            queue.async { [weak self] in
+                defer { self?.idleGroup.leave() }
+                self?.scanAndEnqueue(generation: generation, requestId: requestId)
+            }
         }
     }
 
@@ -185,6 +212,8 @@ final class ProviderIndexCoordinator: @unchecked Sendable {
         withState {
             lifecycleGeneration += 1
             isRunning = false
+            hasCompleteMetadataScan = false
+            pendingMetadataScanRequests = 0
             eventSink = nil
             selectedQueue.removeAll()
             todayQueue.removeAll()
@@ -219,50 +248,94 @@ final class ProviderIndexCoordinator: @unchecked Sendable {
     }
 
     func resumeScanningForTesting() {
-        let parked: [UInt64] = withState {
+        withState {
             isScanSuspended = false
-            let generations = parkedScanGenerations
-            parkedScanGenerations.removeAll()
-            return generations
-        }
-        for generation in parked {
-            idleGroup.enter()
-            queue.async { [weak self] in
-                defer { self?.idleGroup.leave() }
-                self?.scanAndEnqueue(generation: generation)
+            let requests = parkedScanRequests
+            parkedScanRequests.removeAll()
+            for request in requests {
+                idleGroup.enter()
+                queue.async { [weak self] in
+                    defer { self?.idleGroup.leave() }
+                    self?.scanAndEnqueue(
+                        generation: request.generation,
+                        requestId: request.requestId
+                    )
+                }
             }
         }
     }
 
     // MARK: - Scan + enqueue
 
-    private func scanAndEnqueue(generation: UInt64) {
+    private func scanAndEnqueue(generation: UInt64, requestId: UInt64) {
         let parked: Bool = withState {
             guard isScanSuspended else { return false }
-            parkedScanGenerations.append(generation)
+            parkedScanRequests.append((generation, requestId))
             return true
         }
         if parked { return }
-        guard isCurrent(generation) else { return }
+        var supersededCurrentGeneration = false
+        let shouldScan: Bool = withState {
+            guard isRunning, lifecycleGeneration == generation else { return false }
+            guard requestId == latestMetadataScanRequestId else {
+                pendingMetadataScanRequests = max(0, pendingMetadataScanRequests - 1)
+                supersededCurrentGeneration = true
+                return false
+            }
+            hasCompleteMetadataScan = false
+            return true
+        }
+        guard shouldScan else {
+            if supersededCurrentGeneration { pump() }
+            return
+        }
         do {
+            let inventoryComplete: Bool
             switch source {
             case .claude(let projectsDirectory):
-                try ClaudeMetadataScanner(writer: store)
+                inventoryComplete = try ClaudeMetadataScanner(writer: store)
                     .scan(projectsDirectory: projectsDirectory)
+                    .inventoryComplete
             case .codex(let codexHome):
-                try CodexMetadataScanner(writer: store).scan(codexHome: codexHome)
+                inventoryComplete = try CodexMetadataScanner(writer: store)
+                    .scan(codexHome: codexHome)
+                    .inventoryComplete
+            }
+            guard inventoryComplete else {
+                guard let sink = metadataScanEventSink(
+                    generation: generation,
+                    requestId: requestId,
+                    complete: false
+                ) else { return }
+                sink(.unitFailed(
+                    provider: source.provider,
+                    sessionRawId: "(metadata-scan)",
+                    message: "Source inventory could not be scanned completely."
+                ))
+                pump()
+                return
             }
 
             let sources = try store.allSourceFiles()
             let pendingUnits = enqueueUnits(from: sources, generation: generation)
-            guard isCurrent(generation) else { return }
-            emit(.metadataScanCompleted(
+            let coverage = try store.coverage()
+            guard let sink = metadataScanEventSink(
+                generation: generation,
+                requestId: requestId,
+                complete: true
+            ) else { return }
+            sink(.metadataScanCompleted(
                 provider: source.provider,
                 pendingUnits: pendingUnits,
-                coverage: try store.coverage()
+                coverage: coverage
             ))
         } catch {
-            emit(.unitFailed(
+            guard let sink = metadataScanEventSink(
+                generation: generation,
+                requestId: requestId,
+                complete: false
+            ) else { return }
+            sink(.unitFailed(
                 provider: source.provider,
                 sessionRawId: "(metadata-scan)",
                 message: String(describing: error)
@@ -503,7 +576,8 @@ final class ProviderIndexCoordinator: @unchecked Sendable {
 
     private func emitIdleIfDrained() {
         let shouldEmit: Bool = withState {
-            isRunning && !isWorking && !isPumpSuspended
+            isRunning && hasCompleteMetadataScan && !isWorking && !isPumpSuspended
+                && pendingMetadataScanRequests == 0
                 && selectedQueue.isEmpty && todayQueue.isEmpty && backfillQueue.isEmpty
         }
         guard shouldEmit, let coverage = try? store.coverage() else { return }
@@ -515,6 +589,22 @@ final class ProviderIndexCoordinator: @unchecked Sendable {
     private func emit(_ event: ProviderIndexEvent) {
         let sink: EventSink? = withState { eventSink }
         sink?(event)
+    }
+
+    /// Atomically rejects stale scans before they can overwrite a newer
+    /// generation's completeness state or emit into its event sink.
+    private func metadataScanEventSink(
+        generation: UInt64,
+        requestId: UInt64,
+        complete: Bool
+    ) -> EventSink? {
+        withState {
+            guard isRunning, lifecycleGeneration == generation else { return nil }
+            pendingMetadataScanRequests = max(0, pendingMetadataScanRequests - 1)
+            guard requestId == latestMetadataScanRequestId else { return nil }
+            hasCompleteMetadataScan = complete
+            return eventSink
+        }
     }
 
     private func isCurrent(_ generation: UInt64) -> Bool {

@@ -41,7 +41,13 @@ struct VerifyCommand: ParsableCommand {
         // prune its existing derived index. The full truth report is computed
         // afterwards, keeping its O(usage-lines) memory out of the importer's
         // transient working set and including files created during refresh.
-        let engine = try CLIEngine.open(source: source, refresh: options.refresh)
+        let engine: CLIEngine
+        do {
+            engine = try CLIEngine.open(source: source, refresh: options.refresh)
+        } catch {
+            try emit(indexFailureReport(source: source))
+            throw ExitCode(3)
+        }
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
         if options.periodLabel != "all time" {
             CLIOutput.note("verify audits all sessions; period filters are ignored.")
@@ -139,6 +145,18 @@ struct VerifyCommand: ParsableCommand {
             failureDescription: failure
         )
     }
+
+    private func indexFailureReport(source: SessionSource) -> CLIVerifyReport {
+        CLIVerifyReport(
+            source: VerificationSourceIdentity(source: source),
+            filesScanned: 0,
+            verifiedSessionCount: 0,
+            rows: [],
+            pendingCount: 0,
+            issueCount: 0,
+            failureDescription: "The source index could not be opened."
+        )
+    }
 }
 
 /// Data + rendering for `lupen verify`.
@@ -181,6 +199,13 @@ struct CLIVerifyReport {
     var errorRows: [Row] { rows.filter(\.hasError) }
     /// Sessions whose only findings are warnings (unknown pricing / zero-usage).
     var warningOnlyRows: [Row] { rows.filter { !$0.hasError } }
+
+    /// Sessions considered across both directions of the audit. Truth-backed
+    /// sessions retain the existing verified count; index-only sessions are
+    /// additive so existing JSON and CSV consumers keep their semantics.
+    var auditedSessionCount: Int {
+        verifiedSessionCount + rows.filter { $0.kinds.contains("missingInTruth") }.count
+    }
 
     /// Accounting-drift flag: warnings and pending imports are represented
     /// separately and do not get mislabeled as numerical drift.
@@ -297,7 +322,7 @@ struct CLIVerifyReport {
             )
             CLIOutput.line(table.render(color: color))
             CLIOutput.line()
-            CLIOutput.line("✗ \(errorRows.count) of \(verifiedSessionCount) session(s) diverge from the recomputed truth.")
+            CLIOutput.line("✗ \(errorRows.count) of \(auditedSessionCount) session(s) diverge from the recomputed truth.")
         } else {
             CLIOutput.line("Index import is incomplete; no clean verdict is available yet.")
         }
@@ -324,6 +349,7 @@ struct CLIVerifyReport {
                 "filesScanned": filesScanned,
             ],
             "verifiedSessions": verifiedSessionCount,
+            "auditedSessions": auditedSessionCount,
             "drift": hasDrift,
             "errorSessions": errorRows.count,
             "warningSessions": warningOnlyRows.count,

@@ -41,6 +41,7 @@ struct CodexMetadataScanner: Sendable {
     }
 
     struct Summary: Equatable, Sendable {
+        var inventoryComplete = true
         var discoveredFiles = 0
         var newSources = 0
         var changedSources = 0
@@ -63,7 +64,8 @@ struct CodexMetadataScanner: Sendable {
     @discardableResult
     func scan(codexHome: URL) throws -> Summary {
         let discovery = CodexSessionDiscovery(codexHome: codexHome)
-        let files = discovery.discoverRolloutFiles()
+        let inventory = discovery.discoverRolloutFilesWithDiagnostics()
+        let files = inventory.files
         let titleIndex = CodexSessionTitleIndexReader.read(
             from: discovery.codexHome.appendingPathComponent("session_index.jsonl")
         )
@@ -96,7 +98,6 @@ struct CodexMetadataScanner: Sendable {
                 let metadata = try? CodexSessionMetadataReader.readMetadata(
                     from: url, maxFirstLineBytes: configuration.maxFirstLineBytes
                 )
-                if metadata == nil { summary.failedSources += 1 }
                 scanned.append(ScannedFile(
                     path: url.standardizedFileURL.path,
                     byteSize: stat.byteSize,
@@ -109,9 +110,20 @@ struct CodexMetadataScanner: Sendable {
             }
         }
 
+        // Codex group membership is a fileset-global fact. If discovery or
+        // stat was incomplete, regrouping only the readable subset can detach
+        // a child from a temporarily hidden parent and rewrite imported source
+        // ownership. Keep the last complete index intact until a full scan can
+        // recompute every identity group together.
+        summary.inventoryComplete = inventory.isComplete && summary.skippedUnreadable == 0
+        guard summary.inventoryComplete else {
+            return summary
+        }
+
         // Pass 2: identity groups over the readable metadata (legacy
         // loader rules — see `rootRawSessionId`).
         let goodMetadata = scanned.compactMap(\.metadata)
+        summary.failedSources = scanned.count - goodMetadata.count
         let knownRawIds = Set(goodMetadata.map(\.id))
         let parentByRawId = Self.parentMap(for: goodMetadata)
         let groups = Dictionary(grouping: goodMetadata) { metadata in
@@ -199,7 +211,8 @@ struct CodexMetadataScanner: Sendable {
         try writer.applySessionVisibility(visibilityUpdates)
         summary.visibleSessions = visibilityUpdates.filter(\.visible).count
 
-        // Prune: vanished rollouts, then unanchored shells.
+        // Prune: vanished rollouts, then unanchored shells. The completeness
+        // guard above makes this safe for the globally regrouped inventory.
         let vanished = known.map(\.path).filter { !discoveredPaths.contains($0) }
         try writer.deleteSources(paths: vanished)
         summary.prunedSources = vanished.count

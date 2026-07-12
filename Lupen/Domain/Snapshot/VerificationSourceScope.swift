@@ -93,6 +93,7 @@ enum VerificationSourceError: Error, LocalizedError, Sendable, Equatable {
     case rootMissing(VerificationSourceIdentity)
     case rootNotDirectory(VerificationSourceIdentity)
     case rootUnreadable(VerificationSourceIdentity)
+    case discoveryIncomplete(VerificationSourceIdentity)
     case noLogs(VerificationSourceIdentity)
     case sourceChangedDuringVerification(VerificationSourceIdentity)
 
@@ -103,6 +104,7 @@ enum VerificationSourceError: Error, LocalizedError, Sendable, Equatable {
         case .rootMissing(let source),
              .rootNotDirectory(let source),
              .rootUnreadable(let source),
+             .discoveryIncomplete(let source),
              .noLogs(let source),
              .sourceChangedDuringVerification(let source):
             return source
@@ -119,6 +121,8 @@ enum VerificationSourceError: Error, LocalizedError, Sendable, Equatable {
             return "Verification source '\(source.name)' (\(source.id)) does not point to a directory."
         case .rootUnreadable(let source):
             return "Verification source '\(source.name)' (\(source.id)) is not readable."
+        case .discoveryIncomplete(let source):
+            return "Verification source '\(source.name)' (\(source.id)) could not be scanned completely."
         case .noLogs(let source):
             return "Verification source '\(source.name)' (\(source.id)) contains no session logs."
         case .sourceChangedDuringVerification(let source):
@@ -136,15 +140,23 @@ enum VerificationSourceScope {
         case .claudeCode:
             // FileDiscovery preserves filesystem enumeration order, so impose
             // the verifier's deterministic ordering exactly once here.
-            return FileDiscovery()
-                .discoverJSONLFiles(in: source.root)
+            let discovery = FileDiscovery()
+                .discoverJSONLFilesWithDiagnostics(in: source.root)
+            guard discovery.isComplete else {
+                throw VerificationSourceError.discoveryIncomplete(identity)
+            }
+            return discovery.files
                 .map(\.url)
                 .sorted { $0.path < $1.path }
         case .codex:
             // SessionSource's Codex root contract is codexHome. The discovery
             // implementation performs its single deterministic path sort.
-            return CodexSessionDiscovery(codexHome: source.root)
-                .discoverRolloutFiles()
+            let discovery = CodexSessionDiscovery(codexHome: source.root)
+                .discoverRolloutFilesWithDiagnostics()
+            guard discovery.isComplete else {
+                throw VerificationSourceError.discoveryIncomplete(identity)
+            }
+            return discovery.files
         }
     }
 
