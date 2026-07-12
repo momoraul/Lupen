@@ -16,9 +16,11 @@ import Foundation
 enum CodexSourceLabelFormatter {
 
     /// `"<nickname> · <role>"` when both are present, one alone when only one
-    /// is, or `nil` when neither — the caller then keeps its short-id fallback.
+    /// is, else the session-index `titleHint`, or `nil` when a piece carries
+    /// none of them — the caller then keeps its short-id fallback.
     static func label(for metadata: CodexSessionMetadata) -> String? {
         label(nickname: metadata.agentNickname, role: metadata.agentRole)
+            ?? nonEmpty(metadata.titleHint)
     }
 
     static func label(nickname: String?, role: String?) -> String? {

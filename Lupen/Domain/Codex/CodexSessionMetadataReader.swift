@@ -64,7 +64,10 @@ enum CodexSessionMetadataReader {
 
         let timestamp = envelope.payload?.timestamp ?? envelope.timestamp
         let threadSource = envelope.payload?.threadSource ?? envelope.threadSource
-        let agentNickname = envelope.payload?.agentNickname ?? envelope.agentNickname
+        let agentNickname = envelope.payload?.agentNickname
+            ?? envelope.payload?.subagentAgentNickname
+            ?? envelope.agentNickname
+            ?? envelope.subagentAgentNickname
         let agentRole = envelope.payload?.agentRole
             ?? envelope.payload?.subagentAgentRole
             ?? envelope.agentRole
@@ -153,6 +156,10 @@ enum CodexSessionMetadataReader {
             source?.subagent?.threadSpawn?.agentRole
         }
 
+        var subagentAgentNickname: String? {
+            source?.subagent?.threadSpawn?.agentNickname
+        }
+
         enum CodingKeys: String, CodingKey {
             case type, timestamp, id, cwd, originator, model, payload
             case sessionId = "session_id"
@@ -186,6 +193,10 @@ enum CodexSessionMetadataReader {
 
         var subagentAgentRole: String? {
             source?.subagent?.threadSpawn?.agentRole
+        }
+
+        var subagentAgentNickname: String? {
+            source?.subagent?.threadSpawn?.agentNickname
         }
 
         enum CodingKeys: String, CodingKey {
@@ -233,10 +244,12 @@ enum CodexSessionMetadataReader {
     private struct ThreadSpawn: Decodable {
         let parentThreadId: String?
         let agentRole: String?
+        let agentNickname: String?
 
         enum CodingKeys: String, CodingKey {
             case parentThreadId = "parent_thread_id"
             case agentRole = "agent_role"
+            case agentNickname = "agent_nickname"
         }
     }
 }

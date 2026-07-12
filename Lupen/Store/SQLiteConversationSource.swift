@@ -147,7 +147,7 @@ struct SQLiteConversationSource: Sendable {
             uuids: links.map(\.parentAssistantUuid)
         )
         let sourceLabels = provider == .codex
-            ? ((try? store.codexSourceLabels(sessionId: sessionId)) ?? [:])
+            ? try store.codexSourceLabels(sessionId: sessionId)
             : [:]
 
         return Snapshot(

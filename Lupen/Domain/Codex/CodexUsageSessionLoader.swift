@@ -1206,22 +1206,17 @@ enum CodexUsageSessionLoader {
         sourceDiscriminator: String?
     ) -> String? {
         guard metadata.id != visibleRawSessionId || sourceDiscriminator != nil else { return nil }
-        if let nickname = nonEmpty(metadata.agentNickname) {
-            return nickname
-        }
-        if let title = nonEmpty(metadata.titleHint) {
-            return title
-        }
-        return "subagent \(shortSessionId(metadata.id))"
+        // Single label rule shared with the persisted turn-outline path
+        // (CodexSourceLabelFormatter): nickname · role → title → distinctive
+        // short id. `distinctiveShortId` avoids the prefix(8) collision for
+        // sibling UUIDv7 subagents spawned in the same window.
+        return CodexSourceLabelFormatter.label(for: metadata)
+            ?? "subagent \(CodexSourceLabelFormatter.distinctiveShortId(metadata.id))"
     }
 
     private static func nonEmpty(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
-    }
-
-    private static func shortSessionId(_ id: String) -> String {
-        String(id.prefix(8))
     }
 
     private static func visibleRawSessionId(
