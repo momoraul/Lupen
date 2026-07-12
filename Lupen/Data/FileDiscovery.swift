@@ -72,6 +72,11 @@ struct FileDiscovery {
                 options: .skipsHiddenFiles
             )
         } catch {
+            // A missing top-level `projects/` is an empty, COMPLETE scan (the
+            // source simply hasn't been used yet), not a failure.
+            if Self.isMissingPathError(error) {
+                return DiscoveryResult(files: [], failures: [])
+            }
             return DiscoveryResult(
                 files: [],
                 failures: [DiscoveryFailure(
@@ -147,10 +152,7 @@ struct FileDiscovery {
                 options: .skipsHiddenFiles
             )
         } catch {
-            failures.append(DiscoveryFailure(
-                location: directory.standardizedFileURL,
-                operation: .enumerateDirectory
-            ))
+            Self.record(error, location: directory, operation: .enumerateDirectory, into: &failures)
             return
         }
 
@@ -159,10 +161,7 @@ struct FileDiscovery {
             do {
                 values = try item.resourceValues(forKeys: [.isDirectoryKey])
             } catch {
-                failures.append(DiscoveryFailure(
-                    location: item.standardizedFileURL,
-                    operation: .inspectItem
-                ))
+                Self.record(error, location: item, operation: .inspectItem, into: &failures)
                 continue
             }
             if values.isDirectory == true {
@@ -210,12 +209,7 @@ struct FileDiscovery {
                             )
                         }
                     } catch {
-                        if !Self.isMissingPathError(error) {
-                            failures.append(DiscoveryFailure(
-                                location: nested.standardizedFileURL,
-                                operation: .inspectItem
-                            ))
-                        }
+                        Self.record(error, location: nested, operation: .inspectItem, into: &failures)
                     }
                 }
             } else if item.pathExtension == "jsonl" {
@@ -255,10 +249,7 @@ struct FileDiscovery {
                 options: .skipsHiddenFiles
             )
         } catch {
-            failures.append(DiscoveryFailure(
-                location: workflowsDirectory.standardizedFileURL,
-                operation: .enumerateDirectory
-            ))
+            Self.record(error, location: workflowsDirectory, operation: .enumerateDirectory, into: &failures)
             return
         }
 
@@ -267,10 +258,7 @@ struct FileDiscovery {
             do {
                 values = try runDir.resourceValues(forKeys: [.isDirectoryKey])
             } catch {
-                failures.append(DiscoveryFailure(
-                    location: runDir.standardizedFileURL,
-                    operation: .inspectItem
-                ))
+                Self.record(error, location: runDir, operation: .inspectItem, into: &failures)
                 continue
             }
             guard values.isDirectory == true else {
@@ -319,7 +307,27 @@ struct FileDiscovery {
         return false
     }
 
-    private static func isMissingPathError(_ error: Error) -> Bool {
+    /// Records a discovery failure UNLESS the error is a missing-path (ENOENT)
+    /// error. A path that doesn't exist is an empty subtree, not a failed scan
+    /// — conflating the two makes a source that hasn't been used yet (no
+    /// `projects/` or `sessions/` dir) look like a partially-unreadable corpus,
+    /// which the verify path hard-fails on and the index coordinator never
+    /// settles from. Genuine read errors (EACCES, etc.) are still recorded so
+    /// verify keeps failing closed on a truly partial scan.
+    static func record(
+        _ error: Error,
+        location: URL,
+        operation: DiscoveryFailure.Operation,
+        into failures: inout [DiscoveryFailure]
+    ) {
+        guard !isMissingPathError(error) else { return }
+        failures.append(DiscoveryFailure(
+            location: location.standardizedFileURL,
+            operation: operation
+        ))
+    }
+
+    static func isMissingPathError(_ error: Error) -> Bool {
         let nsError = error as NSError
         if nsError.domain == NSCocoaErrorDomain,
            (nsError.code == CocoaError.Code.fileNoSuchFile.rawValue

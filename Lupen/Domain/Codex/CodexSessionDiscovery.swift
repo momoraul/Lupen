@@ -47,11 +47,10 @@ struct CodexSessionDiscovery: Sendable {
             at: directory,
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants],
-            errorHandler: { location, _ in
-                failures.append(DiscoveryFailure(
-                    location: location.standardizedFileURL,
-                    operation: .enumerateDirectory
-                ))
+            errorHandler: { location, error in
+                // A missing `sessions/` dir (Codex never run yet) is an empty,
+                // COMPLETE scan, not a failure — mirror FileDiscovery.
+                FileDiscovery.record(error, location: location, operation: .enumerateDirectory, into: &failures)
                 return true
             }
         ) else {
@@ -71,10 +70,7 @@ struct CodexSessionDiscovery: Sendable {
             do {
                 values = try url.resourceValues(forKeys: [.isRegularFileKey])
             } catch {
-                failures.append(DiscoveryFailure(
-                    location: url.standardizedFileURL,
-                    operation: .inspectItem
-                ))
+                FileDiscovery.record(error, location: url, operation: .inspectItem, into: &failures)
                 continue
             }
             guard values.isRegularFile == true else { continue }

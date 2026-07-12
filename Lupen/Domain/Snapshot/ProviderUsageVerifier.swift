@@ -22,20 +22,54 @@ extension ProviderUsageVerifier {
         try validatedSourceFiles(source: source).identity
     }
 
+    /// Recompute the ground-truth report and its file-generation manifest from
+    /// a SINGLE, stable generation.
+    ///
+    /// The report parse takes seconds on a large corpus, and a *live* session
+    /// appends to its JSONL the whole time (the app's core use case). Capturing
+    /// the manifest before the parse and requiring exact equality afterwards
+    /// would fail the entire audit on any benign append. Instead we bracket the
+    /// parse (manifest before → parse → manifest after, re-discovering to catch
+    /// added/removed files, not just torn reads) and, if the source moved under
+    /// us, re-parse from the settled generation. Bounded so a continuously
+    /// churning source still terminates with `sourceChangedDuringVerification`.
+    ///
+    /// The caller's `validateSourceUnchanged` still guards the (short) window
+    /// between this scan and the index read — that generation check is
+    /// unchanged; only the long parse window is now retried instead of fatal.
     func scan(source: SessionSource) throws -> ProviderVerificationScan {
-        let prepared = try validatedSourceFiles(source: source)
-        let manifest: VerificationSourceManifest
-        do {
-            manifest = try VerificationSourceManifest(files: prepared.files)
-        } catch {
-            throw VerificationSourceError.sourceChangedDuringVerification(prepared.identity)
+        let maxAttempts = 3
+        var attempt = 0
+        while true {
+            attempt += 1
+            let prepared = try validatedSourceFiles(source: source)
+            do {
+                let before = try VerificationSourceManifest(files: prepared.files)
+                let report = computeReport(files: prepared.files)
+                let after = try VerificationSourceScope.manifest(for: source)
+                if before == after {
+                    return ProviderVerificationScan(
+                        source: prepared.identity,
+                        filesScanned: prepared.files.count,
+                        report: report,
+                        sourceManifest: after
+                    )
+                }
+                // Source moved during the parse — fall through and retry.
+            } catch let error as VerificationSourceError {
+                // Re-discovery surfaced a real problem (e.g. a subtree became
+                // unreadable) — propagate, don't retry.
+                throw error
+            } catch {
+                // A file vanished mid-stat — treat as a concurrent change and
+                // retry from the settled state.
+            }
+            guard attempt < maxAttempts else {
+                throw VerificationSourceError.sourceChangedDuringVerification(
+                    VerificationSourceIdentity(source: source)
+                )
+            }
         }
-        return ProviderVerificationScan(
-            source: prepared.identity,
-            filesScanned: prepared.files.count,
-            report: computeReport(files: prepared.files),
-            sourceManifest: manifest
-        )
     }
 
     /// The raw source and SQLite snapshot are read sequentially. Re-check the
