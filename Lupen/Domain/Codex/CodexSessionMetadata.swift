@@ -11,6 +11,9 @@ struct CodexSessionMetadata: Equatable, Sendable {
     let forkedFromId: String?
     let threadSource: String?
     let agentNickname: String?
+    /// `session_meta` subagent role (`agent_role`, e.g. "reviewer-architecture").
+    /// Paired with `agentNickname` to label a merged subagent in the turn outline.
+    let agentRole: String?
     let subagentParentThreadId: String?
     let titleHint: String?
     /// `session_meta.payload.git.branch` — the checked-out branch when the
@@ -28,6 +31,7 @@ struct CodexSessionMetadata: Equatable, Sendable {
         forkedFromId: String?,
         threadSource: String? = nil,
         agentNickname: String? = nil,
+        agentRole: String? = nil,
         subagentParentThreadId: String? = nil,
         titleHint: String?,
         gitBranch: String? = nil
@@ -42,6 +46,7 @@ struct CodexSessionMetadata: Equatable, Sendable {
         self.forkedFromId = forkedFromId
         self.threadSource = threadSource
         self.agentNickname = agentNickname
+        self.agentRole = agentRole
         self.subagentParentThreadId = subagentParentThreadId
         self.titleHint = titleHint
         self.gitBranch = gitBranch
@@ -80,6 +85,7 @@ struct CodexSessionMetadata: Equatable, Sendable {
             forkedFromId: forkedFromId,
             threadSource: threadSource,
             agentNickname: agentNickname,
+            agentRole: agentRole,
             subagentParentThreadId: subagentParentThreadId,
             titleHint: titleHint,
             gitBranch: gitBranch

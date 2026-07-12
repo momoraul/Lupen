@@ -146,6 +146,10 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// `✂ compacted` badge on the affected Turn header. See
     /// `Turn.wasCompactedAway` for the detection rule.
     private var compactedAwayTurnIds: Set<String> = []
+    /// Codex source identity key → "<nickname> · <role>" for merged subagent
+    /// turns. Consulted by `codexSourceLabel` so a real agent name wins over
+    /// the `subagent <shortId>` fallback. Empty for Claude sessions.
+    private var codexSourceLabelsByIdentity: [String: String] = [:]
     /// Suppresses delegate callbacks during programmatic select/deselect.
     private var isProgrammaticSelectionChange: Bool = false
     /// Indices into `turns` whose prompt matches `highlightQuery`.
@@ -1244,6 +1248,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         sqliteTurnIdByParentStepUuid = [:]
         materializedTurnIds = []
         subAgentMaterializedSteps = [:]
+        codexSourceLabelsByIdentity = [:]
     }
 
     private func reloadTurnsFromSQLite(
@@ -1289,6 +1294,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         recomputeCostOutlierThreshold()
         updateContextWindowColumnVisibility()
         compactedAwayTurnIds = snapshot.compactedAwayTurnIds
+        codexSourceLabelsByIdentity = snapshot.sourceLabelsByIdentity
         // Turn-level cold-cache marks from the sidecar times; each
         // turn's steps classify incrementally when they materialize.
         cacheClassification = Self.sqliteTurnCacheClassification(
@@ -2152,7 +2158,10 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
               identityKey != currentSessionId else {
             return nil
         }
-        return Self.fallbackCodexSourceLabel(forIdentityKey: identityKey)
+        // A real "<nickname> · <role>" (persisted at import) wins over the
+        // short-id fallback, which collides for sibling UUIDv7 subagents.
+        return codexSourceLabelsByIdentity[identityKey]
+            ?? Self.fallbackCodexSourceLabel(forIdentityKey: identityKey)
     }
 
     static func codexSourceIdentityKey(for turn: Turn) -> String? {
@@ -2184,7 +2193,9 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     private static func fallbackCodexSourceLabel(forIdentityKey identityKey: String) -> String? {
         let components = CodexSourceDiscriminator.sourceIdentityComponents(from: identityKey)
         let rawID = ProviderScopedID.rawID(from: components.scopedSessionId)
-        let shortRaw = String(rawID.prefix(8))
+        // `distinctiveShortId` pairs the UUIDv7 timestamp anchor with a random
+        // tail so siblings spawned in the same window don't collapse to one id.
+        let shortRaw = CodexSourceLabelFormatter.distinctiveShortId(rawID)
         if let sourceKey = components.sourceKey {
             return "source \(shortRaw)#\(sourceKey.prefix(6))"
         }

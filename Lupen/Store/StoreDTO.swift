@@ -419,6 +419,15 @@ struct StoreSkillRow: Sendable, Equatable {
     let skillName: String
 }
 
+/// A merged Codex subagent piece's display label ("<nickname> · <role>"),
+/// keyed by the render-time source identity key so the turn outline resolves
+/// it over the "subagent <shortId>" fallback.
+struct StoreCodexSourceLabelRow: Sendable, Equatable {
+    let sessionId: String
+    let sourceIdentityKey: String
+    let label: String
+}
+
 // MARK: - Reports aggregates (4.4)
 
 struct StoreProjectAggregate: Sendable, Equatable {
@@ -684,6 +693,7 @@ struct StoreSourcePayload: Sendable, Equatable {
     var diagnostics: [StoreDiagnosticRow] = []
     var rawLocators: [StoreRawLocatorRow] = []
     var skills: [StoreSkillRow] = []
+    var codexSourceLabels: [StoreCodexSourceLabelRow] = []
     var searchEntries: [StoreSearchEntry] = []
 
     init() {}

@@ -84,11 +84,14 @@ struct SQLiteConversationSource: Sendable {
         /// Turns whose reply was compacted away (header badge) —
         /// computed here because stubs cannot answer step-count checks.
         let compactedAwayTurnIds: Set<String>
+        /// Codex source identity key → "<nickname> · <role>" for merged
+        /// subagent turns; empty for Claude. Turn outline label lookup.
+        let sourceLabelsByIdentity: [String: String]
 
         static let empty = Snapshot(
             turns: [], aggregates: [:], links: [],
             agentIdByTurnId: [:], turnIdByParentStepUuid: [:],
-            compactedAwayTurnIds: []
+            compactedAwayTurnIds: [], sourceLabelsByIdentity: [:]
         )
     }
 
@@ -143,6 +146,9 @@ struct SQLiteConversationSource: Sendable {
             sessionId: sessionId,
             uuids: links.map(\.parentAssistantUuid)
         )
+        let sourceLabels = provider == .codex
+            ? ((try? store.codexSourceLabels(sessionId: sessionId)) ?? [:])
+            : [:]
 
         return Snapshot(
             turns: stubs,
@@ -150,7 +156,8 @@ struct SQLiteConversationSource: Sendable {
             links: links,
             agentIdByTurnId: agentIdByTurnId,
             turnIdByParentStepUuid: turnIdByParentStepUuid,
-            compactedAwayTurnIds: compacted
+            compactedAwayTurnIds: compacted,
+            sourceLabelsByIdentity: sourceLabels
         )
     }
 

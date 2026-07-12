@@ -89,7 +89,10 @@ final class ProviderDatabase: @unchecked Sendable {
     /// v18: `steps` gains `tool_summary` — a short "what this call targeted"
     ///     label (Read path / Bash cmd) captured at import, powering the Top
     ///     cost-driving tool outputs ranking (C-25).
-    static let schemaVersion: Int32 = 18
+    /// v19: new `codex_source_labels` table — per-subagent "<nickname> · <role>"
+    ///     display labels so the turn outline names merged Codex subagents
+    ///     instead of the colliding "subagent <shortId>" fallback.
+    static let schemaVersion: Int32 = 19
 
     enum BootstrapOutcome: Equatable, Sendable {
         /// No database file existed; schema created from scratch.

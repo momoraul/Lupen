@@ -32,6 +32,10 @@ protocol ConversationRepository: Sendable {
 
     func subagentLinks(sessionId: String) throws -> [StoreSubagentLinkRow]
 
+    /// Merged Codex subagent display labels keyed by source identity key —
+    /// resolves a real "<nickname> · <role>" over the short-id fallback.
+    func codexSourceLabels(sessionId: String) throws -> [String: String]
+
     /// Raw-line locators for one turn's scoped re-decode (4.1): the
     /// turn's step lines plus their direct child lines that produced no
     /// step row (meta entries the assembler merges into prompt steps).

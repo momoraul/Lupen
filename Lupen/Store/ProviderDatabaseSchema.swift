@@ -326,6 +326,25 @@ enum ProviderDatabaseSchema {
         try db.create(index: "idx_skills_name", on: "skills", columns: ["skill_name"])
         try db.create(index: "idx_skills_source", on: "skills", columns: ["source_file_id"])
 
+        // MARK: codex_source_labels — display label ("<nickname> · <role>")
+        // for a merged Codex subagent piece, keyed by the same source
+        // identity key the turn outline derives from a rendered child turn.
+        // Lets the outline resolve a real agent name over the colliding
+        // "subagent <shortId>" fallback. Cascade-owned by the source file.
+        try db.create(table: "codex_source_labels") { t in
+            t.column("session_id", .text).notNull()
+                .references("sessions", onDelete: .cascade)
+            t.column("source_file_id", .integer).notNull()
+                .references("source_files", onDelete: .cascade)
+            t.column("source_identity_key", .text).notNull()   // "codex:<childRaw>[:source:<disc>]"
+            t.column("label", .text).notNull()
+            t.primaryKey(["session_id", "source_identity_key"])
+        }
+        try db.create(
+            index: "idx_codex_source_labels_source",
+            on: "codex_source_labels", columns: ["source_file_id"]
+        )
+
         // MARK: search_fts — reserved in Phase 1 (Decision 3): prompt
         // previews populate it in Phase 2, full step text in Phase 4.
         try db.create(virtualTable: "search_fts", using: FTS5()) { t in

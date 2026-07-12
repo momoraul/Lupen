@@ -237,6 +237,21 @@ extension ProviderStore: ConversationRepository {
         }
     }
 
+    /// Merged Codex subagent labels for a session, keyed by the source
+    /// identity key the turn outline derives from a child turn. Empty for
+    /// Claude / label-less sessions — the outline keeps its short-id fallback.
+    func codexSourceLabels(sessionId: String) throws -> [String: String] {
+        try database.pool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: "SELECT source_identity_key, label FROM codex_source_labels WHERE session_id = ?",
+                arguments: [sessionId]
+            ).reduce(into: [String: String]()) { map, row in
+                map[row["source_identity_key"]] = row["label"]
+            }
+        }
+    }
+
     func turnLineLocators(sessionId: String, turnId: String) throws -> [StoreTurnLineLocator] {
         // Two legs: every step row's own line, plus the no-step-row lines
         // assembly folded into them (meta merges, and assistant messages
@@ -1540,6 +1555,7 @@ extension ProviderStore: ImportWriting {
         case diagnostic(StoreDiagnosticRow)
         case rawLocator(StoreRawLocatorRow)
         case skill(StoreSkillRow)
+        case codexSourceLabel(StoreCodexSourceLabelRow)
         case searchEntry(StoreSearchEntry)
     }
 
@@ -1549,7 +1565,8 @@ extension ProviderStore: ImportWriting {
             payload.requests.count + payload.turns.count + payload.steps.count
                 + payload.subagentLinks.count + payload.parentLinks.count
                 + payload.diagnostics.count + payload.rawLocators.count
-                + payload.skills.count + payload.searchEntries.count
+                + payload.skills.count + payload.codexSourceLabels.count
+                + payload.searchEntries.count
         )
         rows.append(contentsOf: payload.requests.map(PayloadRow.request))
         rows.append(contentsOf: payload.turns.map(PayloadRow.turn))
@@ -1559,6 +1576,7 @@ extension ProviderStore: ImportWriting {
         rows.append(contentsOf: payload.diagnostics.map(PayloadRow.diagnostic))
         rows.append(contentsOf: payload.rawLocators.map(PayloadRow.rawLocator))
         rows.append(contentsOf: payload.skills.map(PayloadRow.skill))
+        rows.append(contentsOf: payload.codexSourceLabels.map(PayloadRow.codexSourceLabel))
         rows.append(contentsOf: payload.searchEntries.map(PayloadRow.searchEntry))
         return rows
     }
@@ -1731,6 +1749,16 @@ extension ProviderStore: ImportWriting {
                     ON CONFLICT DO NOTHING
                     """,
                 arguments: [skill.sessionId, skill.turnId, sourceId, skill.skillName]
+            )
+        case .codexSourceLabel(let label):
+            try db.execute(
+                sql: """
+                    INSERT INTO codex_source_labels
+                        (session_id, source_file_id, source_identity_key, label)
+                    VALUES (?,?,?,?)
+                    ON CONFLICT DO NOTHING
+                    """,
+                arguments: [label.sessionId, sourceId, label.sourceIdentityKey, label.label]
             )
         case .searchEntry(let entry):
             try db.execute(
