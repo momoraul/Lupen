@@ -135,7 +135,9 @@ enum PricingTable {
     /// Bump on ANY change to `table` or the fallback behavior.
     /// v2: claude-fable-5 + claude-opus-4-8 entries; fable tier fallback
     ///     (fable requests had been $0/unavailable — no tier prefix matched).
-    static let version = 2
+    /// v3: gpt-5.6 family (sol/terra/luna), flat rate with no long-context
+    ///     tier — Codex `gpt-5.6-sol` had been unpriced (cost shown as "—").
+    static let version = 3
 
     // Logging routed through `LoggerService.shared.logFromAnyThread`
     // so the in-app Diagnostics window picks it up alongside the
@@ -273,6 +275,16 @@ enum PricingTable {
         "gpt-5-codex": openAIRates(input: 1.25, cachedInput: 0.125, output: 10.00),
         "gpt-5.1-codex-mini": openAIRates(input: 0.25, cachedInput: 0.025, output: 2.00),
         "codex-mini-latest": openAIRates(input: 1.50, cachedInput: 0.375, output: 6.00),
+        // GPT-5.6 family (GA 2026-07-09, rates verified 2026-07-12).
+        // Unlike gpt-5.5, the 5.6 line DROPS the >272k long-context
+        // surcharge entirely — a single flat rate at any prompt length
+        // (context window 1,050,000). `gpt-5.6-sol` is the flagship tier
+        // observed in Codex logs; terra/luna are the balanced/fast tiers,
+        // listed for family completeness.
+        // developers.openai.com/api/docs/models/gpt-5.6-sol
+        "gpt-5.6-sol": openAIRates(input: 5.00, cachedInput: 0.50, output: 30.00),
+        "gpt-5.6-terra": openAIRates(input: 2.50, cachedInput: 0.25, output: 15.00),
+        "gpt-5.6-luna": openAIRates(input: 1.00, cachedInput: 0.10, output: 6.00),
         "gpt-5.5": openAIRates(
             input: 5.00,
             cachedInput: 0.50,
