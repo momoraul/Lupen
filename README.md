@@ -183,6 +183,22 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.9.0 — _2026-07-13_
+
+Cost forensics, source-scoped audits, and Codex GPT-5.6 pricing.
+
+- **Context composition breakdown** — a new Reports view shows what fills the
+  context window by category, with a Tokens/Cost toggle, per-session and
+  per-turn detail, and a ranking of the top cost-driving tool outputs.
+- **Source-scoped cost verification** — Verify Costs (and `lupen verify`) now
+  audit exactly the selected session source, so a multi-source setup no longer
+  mixes one source's ground truth with another's index.
+- **Codex GPT-5.6 pricing** — the GPT-5.6 family (Sol / Terra / Luna) now shows
+  a cost instead of "—".
+- **Named Codex subagents** — merged subagents in the turn outline now read as
+  their agent nickname and role (e.g. "Galileo · reviewer-architecture")
+  instead of an identical short id.
+
 ### v0.8.1 — _2026-07-05_
 
 A Reports fix for relative date ranges.
