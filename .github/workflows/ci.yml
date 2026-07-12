@@ -51,10 +51,18 @@ jobs:
 
       - name: Test
         if: steps.toolchain.outputs.skip != 'true'
+        # `-parallel-testing-enabled NO` runs the tests in a single test-host
+        # process. xcodebuild's default clones the bundle into several worker
+        # processes; on the hosted runner (few cores) the @MainActor / CLI
+        # subprocess verification suites contend for the main thread across
+        # those workers and deadlock (the run hangs indefinitely). A single
+        # host avoids the cross-process contention — verified locally: 2255
+        # tests pass this way. Locally, developers still get parallel runs.
         run: >
           xcodebuild test
           -project Lupen.xcodeproj
           -scheme Lupen
           -destination 'platform=macOS'
           -configuration Debug
+          -parallel-testing-enabled NO
           CODE_SIGNING_ALLOWED=NO
