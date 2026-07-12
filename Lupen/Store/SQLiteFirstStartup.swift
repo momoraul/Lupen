@@ -63,6 +63,7 @@ final class SQLiteFirstStartup: @unchecked Sendable {
     private weak var appStore: AppStateStore?
     private let source: ProviderIndexSource
     private let provider: ProviderKind
+    private let sourceId: String
     /// Whether this launch wiped-and-rebuilt (schema bump) or created the
     /// index fresh — surfaced to `AppStateStore.didRebuildThisLaunch` so the
     /// UI can flag the full backfill (menu-bar placeholder, sidebar footer).
@@ -132,6 +133,7 @@ final class SQLiteFirstStartup: @unchecked Sendable {
         self.appStore = appStore
         self.source = source
         self.provider = source.provider
+        self.sourceId = resolvedSourceId
         self.refreshThrottle = refreshThrottle
         self.rescanDebounce = rescanDebounce
         self.isFileWatchingEnabled = isFileWatchingEnabled
@@ -287,7 +289,8 @@ final class SQLiteFirstStartup: @unchecked Sendable {
     private func installConversationSource() {
         appStore?.sqliteConversationSource = SQLiteConversationSource(
             store: coordinator.store,
-            provider: provider
+            provider: provider,
+            sourceId: sourceId
         )
         appStore?.prioritizeSessionImport = { [weak self] rawSessionId in
             self?.prioritizeSelectedSession(rawSessionId)

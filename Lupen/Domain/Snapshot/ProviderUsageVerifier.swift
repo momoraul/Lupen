@@ -10,15 +10,81 @@ protocol ProviderUsageVerifier: Sendable {
     func verify(
         report: GroundTruth.Report,
         againstSQLite store: ProviderStore
-    ) -> GroundTruthVerifier.SQLiteVerification
+    ) throws -> GroundTruthVerifier.SQLiteVerification
 }
 
 extension ProviderUsageVerifier {
+    /// Cheap fail-loud gate for callers that may mutate a derived index before
+    /// the full truth calculation. It performs discovery but does not parse or
+    /// retain JSONL contents.
+    @discardableResult
+    func preflight(source: SessionSource) throws -> VerificationSourceIdentity {
+        try validatedSourceFiles(source: source).identity
+    }
+
+    func scan(source: SessionSource) throws -> ProviderVerificationScan {
+        let prepared = try validatedSourceFiles(source: source)
+        let manifest: VerificationSourceManifest
+        do {
+            manifest = try VerificationSourceManifest(files: prepared.files)
+        } catch {
+            throw VerificationSourceError.sourceChangedDuringVerification(prepared.identity)
+        }
+        return ProviderVerificationScan(
+            source: prepared.identity,
+            filesScanned: prepared.files.count,
+            report: computeReport(files: prepared.files),
+            sourceManifest: manifest
+        )
+    }
+
+    /// The raw source and SQLite snapshot are read sequentially. Re-check the
+    /// cheap file-generation marker after the DB comparison so a concurrent
+    /// append/import/prune cannot produce a verdict from mixed generations.
+    func validateSourceUnchanged(
+        scan: ProviderVerificationScan,
+        source: SessionSource
+    ) throws {
+        let identity = VerificationSourceIdentity(source: source)
+        guard scan.source == identity else {
+            throw VerificationSourceError.sourceChangedDuringVerification(scan.source)
+        }
+        let current: VerificationSourceManifest
+        do {
+            current = try VerificationSourceScope.manifest(for: source)
+        } catch let error as VerificationSourceError {
+            throw error
+        } catch {
+            throw VerificationSourceError.sourceChangedDuringVerification(scan.source)
+        }
+        guard current == scan.sourceManifest else {
+            throw VerificationSourceError.sourceChangedDuringVerification(scan.source)
+        }
+    }
+
+    private func validatedSourceFiles(
+        source: SessionSource
+    ) throws -> (identity: VerificationSourceIdentity, files: [URL]) {
+        guard source.kind == provider else {
+            throw VerificationSourceError.providerMismatch(
+                expected: provider,
+                actual: source.kind
+            )
+        }
+
+        let identity = VerificationSourceIdentity(source: source)
+        let files = try VerificationSourceScope.files(for: source)
+        guard !files.isEmpty else {
+            throw VerificationSourceError.noLogs(identity)
+        }
+        return (identity, files)
+    }
+
     func verify(
         report: GroundTruth.Report,
         againstSQLite store: ProviderStore
-    ) -> GroundTruthVerifier.SQLiteVerification {
-        GroundTruthVerifier.verify(report: report, againstSQLite: store)
+    ) throws -> GroundTruthVerifier.SQLiteVerification {
+        try GroundTruthVerifier.verify(report: report, againstSQLite: store)
     }
 }
 

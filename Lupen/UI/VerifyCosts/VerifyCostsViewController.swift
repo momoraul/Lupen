@@ -72,7 +72,7 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 560))
         view.wantsLayer = true
-        statusLabel.stringValue = idleStatusText(for: store.activeProvider)
+        statusLabel.stringValue = idleStatusText(for: store.activeSource)
 
         // MARK: Toolbar strip
         runButton.bezelStyle = .push
@@ -238,26 +238,49 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
 
     @objc private func runTapped() {
         guard !isRunning else { return }
+        let source = VerificationSourceIdentity(source: store.activeSource)
         isRunning = true
         runButton.isEnabled = false
         copyButton.isEnabled = false
         progressIndicator.startAnimation(nil)
-        statusLabel.stringValue = "Scanning \(store.activeProvider.descriptor.displayName) JSONL files independently…"
+        statusLabel.stringValue = "Scanning \(Self.outputSafe(source.name)) independently…"
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.toolTip = Self.sourceProvenance(source: source, filesScanned: nil)
         summaryLabel.stringValue = ""
         detailTextView.string = ""
         tableView.deselectAll(nil)
+        result = nil
+        rollups = []
+        filtered = []
+        tableView.reloadData()
+        view.window?.title = Self.windowTitle(for: source)
 
-        store.verifyActiveProviderUsage { [weak self] result in
+        store.verifyActiveProviderUsage { [weak self] outcome in
             guard let self else { return }
             self.isRunning = false
             self.runButton.isEnabled = true
             self.progressIndicator.stopAnimation(nil)
-            self.result = result
-            self.rollups = result.rollups(withStore: self.store)
-            self.applyFilter()
-            self.updateSummary(for: result)
+            switch outcome {
+            case .success(let result):
+                self.result = result
+                self.rollups = result.rollups()
+                self.applyFilter()
+                self.updateSummary(for: result)
+                self.copyButton.isEnabled = !self.filtered.isEmpty
+                self.view.window?.title = Self.windowTitle(for: result.source)
+            case .failure(let error):
+                let message = Self.outputSafe(error.localizedDescription)
+                self.result = nil
+                self.rollups = []
+                self.filtered = []
+                self.summaryLabel.stringValue = ""
+                self.statusLabel.stringValue = message
+                self.statusLabel.textColor = .systemOrange
+                self.statusLabel.toolTip = message
+                self.detailTextView.string = "Verification did not complete. Resolve the issue and run again."
+                self.copyButton.isEnabled = false
+            }
             self.tableView.reloadData()
-            self.copyButton.isEnabled = !self.filtered.isEmpty
         }
     }
 
@@ -312,18 +335,27 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
             clean: clean, warnings: warnings, errors: errors, pending: pending, result: result
         )
         let shortName = result.provider.descriptor.shortDisplayName
+        let provenance = Self.sourceProvenance(
+            source: result.source,
+            filesScanned: result.filesScanned,
+            shortHash: true
+        )
+        statusLabel.toolTip = Self.sourceProvenance(
+            source: result.source,
+            filesScanned: result.filesScanned
+        )
         if errors == 0, warnings == 0, pending == 0 {
-            statusLabel.stringValue = "All \(shortName) sessions match independent ground truth."
+            statusLabel.stringValue = "All \(shortName) sessions match — \(provenance)."
             statusLabel.textColor = .systemGreen
         } else if errors == 0 {
             // Only warnings (estimation limits) and/or pending — nothing drifted.
             var note = "No errors"
             if warnings > 0 { note += " — \(warnings) warning(s)" }
             if pending > 0 { note += "\(warnings > 0 ? "," : " —") \(pending) still indexing" }
-            statusLabel.stringValue = note + "."
+            statusLabel.stringValue = note + " — \(provenance)."
             statusLabel.textColor = .secondaryLabelColor
         } else {
-            statusLabel.stringValue = "\(errors) \(shortName) session(s) differ from independent ground truth."
+            statusLabel.stringValue = "\(errors) \(shortName) session(s) differ — \(provenance)."
             statusLabel.textColor = .systemOrange
         }
     }
@@ -356,7 +388,10 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
             return
         }
         let rollup = filtered[row]
-        let sessionDivs = result.divergences.filter { $0.sessionId == rollup.sessionId }
+        let sessionId = result.canonicalSessionID(rollup.sessionId)
+        let sessionDivs = result.divergences.filter {
+            result.canonicalSessionID($0.sessionId) == sessionId
+        }
         if rollup.indexPending {
             detailTextView.string = "Session \(rollup.sessionId) is still being indexed — "
                 + "comparisons are skipped until its import completes. Re-run afterwards."
@@ -498,6 +533,44 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
         return (String(format: "$%+.4f", d), true)
     }
 
+    nonisolated static func outputSafe(_ value: String) -> String {
+        let withoutControls = value.unicodeScalars.map { scalar in
+            CharacterSet.controlCharacters.contains(scalar) ? " " : String(scalar)
+        }.joined()
+        let normalized = withoutControls
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        return normalized.isEmpty ? "Unnamed Source" : normalized
+    }
+
+    nonisolated static func sourceProvenance(
+        source: VerificationSourceIdentity,
+        filesScanned: Int?,
+        shortHash: Bool = false
+    ) -> String {
+        let hash = shortHash ? String(source.rootHash.prefix(12)) : "sha256:\(source.rootHash)"
+        var parts = [
+            "\(outputSafe(source.name)) [\(outputSafe(source.id))]",
+            "root \(hash)"
+        ]
+        if let filesScanned {
+            parts.append("\(filesScanned) file\(filesScanned == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    nonisolated static func windowTitle(for source: VerificationSourceIdentity) -> String {
+        "\(source.provider.verificationWindowTitle) — \(outputSafe(source.name))"
+    }
+
+    nonisolated private static func markdownSafe(_ value: String) -> String {
+        var escaped = outputSafe(value).replacingOccurrences(of: "\\", with: "\\\\")
+        for marker in ["`", "*", "_", "[", "]", "<", ">"] {
+            escaped = escaped.replacingOccurrences(of: marker, with: "\\\(marker)")
+        }
+        return escaped
+    }
+
     nonisolated static func buildMarkdownReport(
         result: VerifyCostsResult,
         rollups: [VerifyCostsResult.SessionRollup],
@@ -511,6 +584,9 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
         out.append("# \(Self.reportTitle(for: result.provider))")
         out.append("")
         out.append("Provider: \(result.provider.descriptor.displayName)")
+        out.append("Source: \(Self.markdownSafe(result.source.name)) (\(Self.markdownSafe(result.source.id)))")
+        out.append("Root: `sha256:\(result.source.rootHash)`")
+        out.append("Files: \(result.filesScanned)")
         out.append("")
         out.append(Self.summaryText(clean: clean, warnings: warnings, errors: errors, pending: pending, result: result))
         if result.provider == .codex {
@@ -532,13 +608,15 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
         // paste round-trips the information needed to localise drift.
         // Fenced code blocks keep the monospaced layout intact across
         // chat renderers.
-        let bySession = Dictionary(grouping: result.divergences, by: { $0.sessionId })
+        let bySession = Dictionary(grouping: result.divergences) {
+            result.canonicalSessionID($0.sessionId)
+        }
         let rowsWithDivergences = rollups.filter { !$0.matchesView && !$0.indexPending }
         if !rowsWithDivergences.isEmpty {
             out.append("")
             out.append("## Divergences")
             for r in rowsWithDivergences {
-                let divs = bySession[r.sessionId] ?? []
+                let divs = bySession[result.canonicalSessionID(r.sessionId)] ?? []
                 out.append("")
                 out.append("### \(r.sessionId)")
                 out.append("")
@@ -698,8 +776,8 @@ final class VerifyCostsViewController: NSViewController, NSTableViewDataSource, 
         return "⚠ \(rollup.warningCount)"
     }
 
-    private func idleStatusText(for provider: ProviderKind) -> String {
-        "Click Run to verify \(provider.descriptor.shortDisplayName) usage."
+    private func idleStatusText(for source: SessionSource) -> String {
+        "Click Run to verify \(Self.outputSafe(source.name)) usage."
     }
 
     nonisolated private static func reportTitle(for provider: ProviderKind) -> String {

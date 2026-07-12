@@ -52,9 +52,21 @@ enum GroundTruthCalculator {
 
     static func compute(files: [URL]) -> GroundTruth.Report {
         var usageLines: [GroundTruth.UsageLine] = []
+        var issues: [GroundTruth.ReportIssue] = []
 
         for url in files {
-            guard let content = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let content: String
+            do {
+                content = try String(contentsOf: url, encoding: .utf8)
+            } catch {
+                issues.append(GroundTruth.ReportIssue(
+                    sessionId: url.deletingPathExtension().lastPathComponent,
+                    kind: .sourceRejected(
+                        reason: "Unable to read UTF-8 JSONL file '\(url.lastPathComponent)'."
+                    )
+                ))
+                continue
+            }
 
             var lineNumber = 0
             var sessionIdFromFile: String? = nil  // path-derived fallback
@@ -156,7 +168,12 @@ enum GroundTruthCalculator {
             ? usageLines
             : usageLines.filter { (owner[$0.requestId ?? $0.uuid] ?? $0.sessionId) == $0.sessionId }
         let perSession = aggregate(usageLines: kept)
-        return GroundTruth.Report(provider: .claudeCode, usageLines: kept, perSession: perSession)
+        return GroundTruth.Report(
+            provider: .claudeCode,
+            usageLines: kept,
+            perSession: perSession,
+            issues: issues
+        )
     }
 
     // MARK: - Aggregate

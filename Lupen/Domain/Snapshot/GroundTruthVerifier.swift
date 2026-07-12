@@ -35,6 +35,7 @@ enum GroundTruthVerifier {
             case requestCountMismatch(view: Int, truth: Int)
             case missingPickedRequestId(requestId: String)
             case sessionMissingInView(sessionId: String)
+            case sessionMissingInTruth(sessionId: String)
             case missingUsageEvent(lineNumber: Int)
             case unknownPricing(model: String)
             case sourceRejected(reason: String)
@@ -60,6 +61,7 @@ enum GroundTruthVerifier {
                  .requestCountMismatch,
                  .missingPickedRequestId,
                  .sessionMissingInView,
+                 .sessionMissingInTruth,
                  .sourceRejected,
                  .parserRejectedLine:
                 return .error
@@ -93,6 +95,8 @@ enum GroundTruthVerifier {
                 return "session=\(sessionId) missing billable requestId \(rid.prefix(12))…"
             case .sessionMissingInView(let sid):
                 return "session=\(sid) absent from view"
+            case .sessionMissingInTruth(let sid):
+                return "session=\(sid) present in index but absent from source truth"
             case .missingUsageEvent(let lineNumber):
                 return "session=\(sessionId) token_count line \(lineNumber) has no usable token usage"
             case .unknownPricing(let model):
@@ -122,6 +126,14 @@ enum GroundTruthVerifier {
     struct SQLiteVerification: Sendable {
         let divergences: [Divergence]
         let pendingSessionIds: Set<String>
+        /// Session shells captured in the same GRDB snapshot as aggregates and
+        /// request ids. UI rollups must use this set instead of an earlier
+        /// in-memory projection that may change while the source scan runs.
+        let indexedSessionIds: Set<String>
+        /// The exact aggregate snapshot used for this verification. Keeping it
+        /// with the verdict lets Verify Costs build rows without querying a
+        /// potentially different active store after a source switch.
+        let sessionUsageAggregatesById: [String: StoreSessionUsageAggregate]
     }
 
     /// SQLite-first verification (plan 4.5): session presence,
@@ -131,27 +143,33 @@ enum GroundTruthVerifier {
     static func verify(
         report: GroundTruth.Report,
         againstSQLite store: ProviderStore
-    ) -> SQLiteVerification {
+    ) throws -> SQLiteVerification {
         var pending: Set<String> = []
         var out = report.issues.map { issue in
             Divergence(sessionId: issue.sessionId, kind: Self.kind(for: issue.kind))
         }
 
-        let aggregatesBySession: [String: StoreSessionUsageAggregate] = {
-            guard let aggregates = try? store.sessionUsageAggregates() else { return [:] }
-            return Dictionary(uniqueKeysWithValues: aggregates.map { ($0.sessionId, $0) })
-        }()
+        var expectedRequestIdsBySessionId: [String: Set<String>] = [:]
+        for (sessionId, truth) in report.perSession {
+            expectedRequestIdsBySessionId[sessionId] = truth.pickedRequestIds
+            expectedRequestIdsBySessionId[ProviderScopedID.normalize(
+                sessionId,
+                defaultProvider: report.provider
+            )] = truth.pickedRequestIds
+        }
+        let snapshot = try store.usageVerificationSnapshot(
+            expectedRequestIdsBySessionId: expectedRequestIdsBySessionId
+        )
+        let aggregatesBySession = snapshot.usageAggregatesBySessionId
 
         for (sessionId, truth) in report.perSession {
             let scopedSessionId = ProviderScopedID.normalize(
                 sessionId, defaultProvider: report.provider
             )
             let viewSessionId: String
-            if aggregatesBySession[scopedSessionId] != nil
-                || (try? store.session(id: scopedSessionId)) ?? nil != nil {
+            if snapshot.indexedSessionIds.contains(scopedSessionId) {
                 viewSessionId = scopedSessionId
-            } else if aggregatesBySession[sessionId] != nil
-                || (try? store.session(id: sessionId)) ?? nil != nil {
+            } else if snapshot.indexedSessionIds.contains(sessionId) {
                 viewSessionId = sessionId
             } else {
                 out.append(Divergence(
@@ -163,14 +181,13 @@ enum GroundTruthVerifier {
 
             // Backfill still owes this session detail rows — every
             // comparison below would just enumerate the gap (6.8).
-            let shellState = ((try? store.session(id: viewSessionId)) ?? nil)?.detailState
+            let shellState = snapshot.detailStateBySessionId[viewSessionId]
             if shellState != .complete {
                 pending.insert(viewSessionId)
                 continue
             }
 
-            let viewRequestIds = Set((try? store.requestIds(sessionId: viewSessionId)) ?? [])
-            for rid in truth.pickedRequestIds where !viewRequestIds.contains(rid) {
+            for rid in snapshot.missingRequestIdsBySessionId[viewSessionId] ?? [] {
                 out.append(Divergence(
                     sessionId: viewSessionId,
                     kind: .missingPickedRequestId(requestId: rid)
@@ -254,7 +271,32 @@ enum GroundTruthVerifier {
             }
         }
 
-        return SQLiteVerification(divergences: out, pendingSessionIds: pending)
+        // Verify coverage in both directions. An index-only session with one
+        // or more request rows means the selected source no longer contains
+        // data the stale index still bills; `--no-refresh` must report drift
+        // instead of silently declaring the truth subset clean. Metadata-only
+        // shells have no aggregate and remain informational rather than drift.
+        let truthSessionIds = Set(report.perSession.keys.map {
+            ProviderScopedID.normalize($0, defaultProvider: report.provider)
+        })
+        for sessionId in aggregatesBySession.keys.sorted() {
+            let canonicalSessionId = ProviderScopedID.normalize(
+                sessionId,
+                defaultProvider: report.provider
+            )
+            guard !truthSessionIds.contains(canonicalSessionId) else { continue }
+            out.append(Divergence(
+                sessionId: sessionId,
+                kind: .sessionMissingInTruth(sessionId: sessionId)
+            ))
+        }
+
+        return SQLiteVerification(
+            divergences: out,
+            pendingSessionIds: pending,
+            indexedSessionIds: snapshot.indexedSessionIds,
+            sessionUsageAggregatesById: aggregatesBySession
+        )
     }
 
     private static func kind(for issue: GroundTruth.ReportIssue.Kind) -> Divergence.Kind {

@@ -34,6 +34,20 @@ struct SQLiteConversationSource: Sendable {
 
     let store: ProviderStore
     let provider: ProviderKind
+    /// Stable `SessionSource.id` whose index this store represents. Keeping
+    /// the id beside the store prevents two custom roots of the same provider
+    /// from being treated as interchangeable during verification.
+    let sourceId: String
+
+    init(
+        store: ProviderStore,
+        provider: ProviderKind,
+        sourceId: String? = nil
+    ) {
+        self.store = store
+        self.provider = provider
+        self.sourceId = sourceId ?? provider.rawValue
+    }
 
     // MARK: - Snapshot (top level)
 

@@ -16,7 +16,9 @@ final class VerifyCostsWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = ProviderKind.claudeCode.verificationWindowTitle
+        window.title = VerifyCostsViewController.windowTitle(
+            for: VerificationSourceIdentity(source: store.activeSource)
+        )
         window.minSize = NSSize(width: 720, height: 420)
         window.center()
         window.isReleasedWhenClosed = false
@@ -31,7 +33,9 @@ final class VerifyCostsWindowController: NSWindowController {
     }
 
     func show() {
-        window?.title = store.activeProvider.verificationWindowTitle
+        window?.title = VerifyCostsViewController.windowTitle(
+            for: VerificationSourceIdentity(source: store.activeSource)
+        )
         showWindow(nil)
         window?.bringToFront()
     }

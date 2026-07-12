@@ -89,6 +89,25 @@ enum StartupDataLoadPlan: Equatable, Sendable {
     }
 }
 
+/// Immutable activation input for a built-in source. The caller resolves the
+/// provider's effective root once; this value then derives both the source
+/// identity projected by `AppStateStore` and the index driver's scan root from
+/// that same normalized URL.
+struct BuiltinSourceActivationPlan: Equatable, Sendable {
+    let sessionSource: SessionSource
+    let indexSource: ProviderIndexSource
+
+    init(provider: ProviderKind, resolvedRoot: URL) {
+        let source = SessionSourceRegistry.builtinSource(
+            for: provider,
+            claudeRoot: resolvedRoot,
+            codexRoot: resolvedRoot
+        )
+        self.sessionSource = source
+        self.indexSource = ProviderIndexSource(source)
+    }
+}
+
 enum HeadlessSmokeTestRunner {
     /// Plan 5.1: smoke runs measure the SQLite-first startup — the only
     /// data path left. The driver is event-driven, so the runner pumps
@@ -107,19 +126,25 @@ enum HeadlessSmokeTestRunner {
             metadata: config.checkpointMetadata(["provider": provider.rawValue])
         )
 
-        let source: ProviderIndexSource
+        let resolvedRoot: URL
         switch provider {
         case .claudeCode:
-            source = .claude(projectsDirectory: FileDiscovery().projectsDirectory)
+            resolvedRoot = FileDiscovery().projectsDirectory
         case .codex:
-            source = .codex(
-                codexHome: CodexSessionDiscovery(codexHome: config.codexHome).codexHome
-            )
+            resolvedRoot = CodexSessionDiscovery(codexHome: config.codexHome).codexHome
         }
-        store.setActiveProviderForProjectionSwap(provider)
+        let activation = BuiltinSourceActivationPlan(
+            provider: provider,
+            resolvedRoot: resolvedRoot
+        )
+        store.setActiveSourceForProjectionSwap(activation.sessionSource)
         let startup: SQLiteFirstStartup
         do {
-            startup = try SQLiteFirstStartup(source: source, appStore: store)
+            startup = try SQLiteFirstStartup(
+                source: activation.indexSource,
+                appStore: store,
+                sourceId: activation.sessionSource.id
+            )
         } catch {
             let line = "LUPEN_SMOKE_TEST_FAILED provider=\(provider.rawValue) dbOpenError=\(error)"
             fputs(line + "\n", stderr)
@@ -442,17 +467,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// drivers keep importing with their store writes muted.
     private func sqliteFirstActivate(provider: ProviderKind, codexHome: URL?) {
         guard let store else { return }
-        let sourceId = provider.rawValue
+        let resolvedRoot: URL
+        switch provider {
+        case .claudeCode:
+            resolvedRoot = FileDiscovery().projectsDirectory
+        case .codex:
+            resolvedRoot = CodexSessionDiscovery(codexHome: codexHome).codexHome
+        }
+        let activation = BuiltinSourceActivationPlan(
+            provider: provider,
+            resolvedRoot: resolvedRoot
+        )
+        let sourceId = activation.sessionSource.id
         for (key, startup) in sqliteFirstStartups where key != sourceId {
             startup.deactivateProjection()
         }
-        store.setActiveProviderForProjectionSwap(provider)
+        store.setActiveSourceForProjectionSwap(activation.sessionSource)
 
         if provider == .codex {
             // Ungated: the 3.8 supervised trial proved the streaming
             // import bounded on the real 100 GB corpus (the legacy
             // full-load entry points were deleted in 5.1).
-            let resolvedHome = CodexSessionDiscovery(codexHome: codexHome).codexHome
+            let resolvedHome = activation.sessionSource.root
             if sqliteFirstStartups[sourceId] != nil, sqliteFirstCodexHome != resolvedHome {
                 sqliteFirstStartups[sourceId]?.stop()
                 sqliteFirstStartups[sourceId] = nil
@@ -465,24 +501,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let source: ProviderIndexSource
-        switch provider {
-        case .claudeCode:
-            source = .claude(projectsDirectory: FileDiscovery().projectsDirectory)
-        case .codex:
-            source = .codex(
-                codexHome: sqliteFirstCodexHome
-                    ?? CodexSessionDiscovery(codexHome: nil).codexHome
-            )
-        }
         do {
-            let startup = try SQLiteFirstStartup(source: source, appStore: store, sourceId: sourceId)
+            let startup = try SQLiteFirstStartup(
+                source: activation.indexSource,
+                appStore: store,
+                sourceId: sourceId
+            )
             sqliteFirstStartups[sourceId] = startup
             startup.start()   // a fresh driver starts with its projection active
             LaunchMemoryCheckpoint.record(
                 "app.sqliteFirst.startupBegan",
                 config: launchDiagnosticsConfig,
-                metadata: ["provider": source.provider.rawValue]
+                metadata: ["provider": activation.indexSource.provider.rawValue]
             )
         } catch {
             // Derived-cache DB failed to open (disk issues — version

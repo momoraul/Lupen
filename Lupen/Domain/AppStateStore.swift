@@ -1,6 +1,26 @@
 import Foundation
 import Observation
 
+enum UsageVerificationError: Error, LocalizedError, Sendable {
+    case source(VerificationSourceError)
+    case indexUnavailable(VerificationSourceIdentity)
+    case sourceChanged(VerificationSourceIdentity)
+    case unexpected(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .source(let error):
+            return error.localizedDescription
+        case .indexUnavailable(let source):
+            return "The index for \(source.name) is not available yet."
+        case .sourceChanged(let source):
+            return "The active source changed while \(source.name) was being verified. Run verification again."
+        case .unexpected(let message):
+            return "Verification failed: \(message)"
+        }
+    }
+}
+
 @Observable
 final class AppStateStore: @unchecked Sendable {
 
@@ -96,17 +116,23 @@ final class AppStateStore: @unchecked Sendable {
     }
 
     private let launchDiagnosticsConfig: LaunchDiagnosticsConfig
+    private let usageVerificationQueue: DispatchQueue
 
     // MARK: - Init
 
     init(
         projectsDirectory: URL? = nil,
         launchDiagnosticsConfig: LaunchDiagnosticsConfig = .current(),
-        claudeProvider: ClaudeProvider = ClaudeProvider()
+        claudeProvider: ClaudeProvider = ClaudeProvider(),
+        usageVerificationQueue: DispatchQueue = DispatchQueue(
+            label: "io.lupen.usage-verification",
+            qos: .userInitiated
+        )
     ) {
         self.projectsDirectoryOverride = projectsDirectory
         self.claudeProvider = claudeProvider
         self.launchDiagnosticsConfig = launchDiagnosticsConfig
+        self.usageVerificationQueue = usageVerificationQueue
         // Default active source = the Claude Code built-in. Roots are derived
         // from the init params (not `self`'s computed accessors, which aren't
         // usable until init completes); `effectiveProjectsDirectory` honours
@@ -163,102 +189,149 @@ final class AppStateStore: @unchecked Sendable {
     /// active source so `activeProvider`, the per-source DB id, and the picker
     /// selection all agree.
     func setActiveSourceForProjectionSwap(_ source: SessionSource) {
+        if activeSource != source {
+            // A newly selected source may need a new driver. Do not leave the
+            // previous source's index available during that activation gap.
+            sqliteConversationSource = nil
+        }
         activeSource = source
     }
 
-    /// Public entry point for the active provider usage audit engine.
-    ///
-    /// Invoked when the user clicks "Run" in the Verify Costs window.
-    /// **Not** run automatically — auto-running adds tens of seconds to
-    /// every launch and floods the diagnostics panel with noise the
-    /// user never asked for.
-    ///
-    /// Steps:
-    ///   1. Enumerate active-provider JSONL files.
-    ///   2. Background: provider verifier independently computes per-session
-    ///      cost / tokens / pickedRequestIds.
-    ///   3. Main: compare against the live store state.
-    ///   4. Delivers a `VerifyCostsResult` via completion (UI renders
-    ///      the divergence table).
-    ///
-    /// Results are **not** written to ParseDiagnostics — they surface
-    /// only in the Verify Costs window. Keeps the Diagnostics window
-    /// focused on JSONL format drift and free of audit noise.
+    /// Public entry point for the active source usage audit. The source and its
+    /// index store are captured together before background work starts; a
+    /// source swap can therefore cancel a stale result but can never redirect
+    /// it to another source's database.
+    @MainActor
     func verifyActiveProviderUsage(
-        completion: @escaping @MainActor (VerifyCostsResult) -> Void
+        completion: @escaping @MainActor (Result<VerifyCostsResult, UsageVerificationError>) -> Void
     ) {
         let log = LoggerService.shared
-        let provider = activeProvider
-        let verifier = usageVerifier(for: provider)
-        let urls = verificationSourceURLs(for: provider)
-        let totalFiles = urls.count
-        let providerName = provider.descriptor.displayName
-        log.logFromAnyThread(
-            .info,
-            "Verify Usage (\(providerName)): starting on \(totalFiles) files (background scan)…",
-            context: "UsageVerification"
-        )
+        let source = activeSource
+        let identity = VerificationSourceIdentity(source: source)
+        guard let indexSource = sqliteConversationSource,
+              indexSource.provider == source.kind,
+              indexSource.sourceId == source.id else {
+            completion(.failure(.indexUnavailable(identity)))
+            return
+        }
+        let indexStore = indexSource.store
+        let verifier = usageVerifier(for: source.kind)
+        let providerName = source.kind.descriptor.displayName
         let startedAt = Date()
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self, verifier] in
-            let scanStart = CFAbsoluteTimeGetCurrent()
-            let report = verifier.computeReport(files: urls)
-            let scanElapsed = CFAbsoluteTimeGetCurrent() - scanStart
-            log.logFromAnyThread(
-                .info,
-                String(
-                    format: "Verify Usage (%@): scan complete in %.2fs (%d usage lines, %d sessions, %d source issues). Verifying against view…",
-                    providerName, scanElapsed, report.usageLines.count, report.perSession.count, report.issues.count
-                ),
-                context: "UsageVerification"
-            )
+        log.logFromAnyThread(
+            .info,
+            "Verify Usage (\(providerName), source=\(source.id)): starting background scan…",
+            context: "UsageVerification"
+        )
 
-            DispatchQueue.main.async {
-                guard let self else { return }
+        usageVerificationQueue.async { [weak self, verifier, source, indexStore] in
+            let scanStart = CFAbsoluteTimeGetCurrent()
+            do {
+                let scan = try verifier.scan(source: source)
+                let scanElapsed = CFAbsoluteTimeGetCurrent() - scanStart
+                log.logFromAnyThread(
+                    .info,
+                    String(
+                        format: "Verify Usage (%@, source=%@): scan complete in %.2fs (%d files, %d usage lines, %d sessions, %d source issues). Verifying against index…",
+                        providerName, source.id, scanElapsed, scan.filesScanned,
+                        scan.report.usageLines.count, scan.report.perSession.count,
+                        scan.report.issues.count
+                    ),
+                    context: "UsageVerification"
+                )
+
                 let verifyStart = CFAbsoluteTimeGetCurrent()
-                // SQLite-first: the in-memory graphs are shells — compare
-                // against the provider index instead (plan 4.5).
-                let verification: GroundTruthVerifier.SQLiteVerification =
-                    self.sqliteConversationSource.map {
-                        verifier.verify(report: report, againstSQLite: $0.store)
-                    } ?? GroundTruthVerifier.SQLiteVerification(
-                        divergences: [], pendingSessionIds: []
-                    )
-                let divergences = verification.divergences
+                let verification = try verifier.verify(
+                    report: scan.report,
+                    againstSQLite: indexStore
+                )
+                try verifier.validateSourceUnchanged(scan: scan, source: source)
                 let verifyElapsed = CFAbsoluteTimeGetCurrent() - verifyStart
                 let completedAt = Date()
                 let totalElapsed = completedAt.timeIntervalSince(startedAt)
-
+                let divergences = verification.divergences
                 let summary = String(
                     format: "Verify Usage (%@): COMPLETE in %.2fs (scan=%.2fs verify=%.2fs) — %d divergences, %d sessions pending import",
                     providerName, totalElapsed, scanElapsed, verifyElapsed,
                     divergences.count, verification.pendingSessionIds.count
                 )
-                if divergences.isEmpty {
-                    log.logFromAnyThread(.success, summary, context: "UsageVerification")
-                } else {
-                    log.logFromAnyThread(.warning, summary, context: "UsageVerification")
-                }
+                log.logFromAnyThread(
+                    divergences.isEmpty ? .success : .warning,
+                    summary,
+                    context: "UsageVerification"
+                )
 
                 let result = VerifyCostsResult(
-                    provider: provider,
+                    source: scan.source,
                     startedAt: startedAt,
                     completedAt: completedAt,
                     scanElapsed: scanElapsed,
                     verifyElapsed: verifyElapsed,
-                    filesScanned: totalFiles,
-                    report: report,
+                    filesScanned: scan.filesScanned,
+                    report: scan.report,
                     divergences: divergences,
-                    viewSessionIds: Set(self.sessions.map(\.id)),
-                    pendingSessionIds: verification.pendingSessionIds
+                    viewSessionIds: verification.indexedSessionIds,
+                    pendingSessionIds: verification.pendingSessionIds,
+                    sessionUsageAggregatesById: verification.sessionUsageAggregatesById
                 )
-                completion(result)
+
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard self.isActiveVerificationTarget(
+                        source: source,
+                        store: indexStore
+                    ) else {
+                        completion(.failure(.sourceChanged(scan.source)))
+                        return
+                    }
+                    completion(.success(result))
+                }
+            } catch let error as VerificationSourceError {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard self.isActiveVerificationTarget(
+                        source: source,
+                        store: indexStore
+                    ) else {
+                        completion(.failure(.sourceChanged(identity)))
+                        return
+                    }
+                    completion(.failure(.source(error)))
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard self.isActiveVerificationTarget(
+                        source: source,
+                        store: indexStore
+                    ) else {
+                        completion(.failure(.sourceChanged(identity)))
+                        return
+                    }
+                    completion(.failure(.unexpected(error.localizedDescription)))
+                }
             }
         }
     }
 
+    @MainActor
+    private func isActiveVerificationTarget(
+        source: SessionSource,
+        store: ProviderStore
+    ) -> Bool {
+        guard activeSource == source,
+              let indexSource = sqliteConversationSource else {
+            return false
+        }
+        return indexSource.provider == source.kind
+            && indexSource.sourceId == source.id
+            && indexSource.store === store
+    }
+
+    @MainActor
     func verifyAgainstGroundTruth(
-        completion: @escaping @MainActor (VerifyCostsResult) -> Void
+        completion: @escaping @MainActor (Result<VerifyCostsResult, UsageVerificationError>) -> Void
     ) {
         verifyActiveProviderUsage(completion: completion)
     }
@@ -269,19 +342,6 @@ final class AppStateStore: @unchecked Sendable {
             return ClaudeUsageVerifier()
         case .codex:
             return CodexUsageVerifier()
-        }
-    }
-
-    private func verificationSourceURLs(for provider: ProviderKind) -> [URL] {
-        switch provider {
-        case .claudeCode:
-            return claudeProvider.discoverFiles(in: effectiveProjectsDirectory).map(\.url)
-        case .codex:
-            // SQLite-first: the index's source registry IS the rollout
-            // list (the legacy in-memory map died with the graphs).
-            let paths = (try? sqliteConversationSource?.store.allSourceFiles()) ?? []
-            return paths.map { URL(fileURLWithPath: $0.path) }
-                .sorted { $0.path < $1.path }
         }
     }
 

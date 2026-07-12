@@ -18,7 +18,11 @@ import Foundation
 /// read-only. A cross-process lock (`CLIProcessLock`) keeps two concurrent
 /// `lupen` refreshes from doing duplicate work.
 struct CLIEngine {
-    let provider: ProviderKind
+    /// The exact source whose per-source index was opened. Keeping the full
+    /// value prevents callers from accidentally reducing a custom source to
+    /// its provider kind and later rediscovering logs from the built-in root.
+    let source: SessionSource
+    var provider: ProviderKind { source.kind }
     let store: ProviderStore
     let bootstrapOutcome: ProviderDatabase.BootstrapOutcome
     /// Whether a refresh was requested (false under `--no-refresh`).
@@ -76,7 +80,7 @@ struct CLIEngine {
         }
 
         return CLIEngine(
-            provider: source.kind,
+            source: source,
             store: store,
             bootstrapOutcome: database.outcome,
             didRefresh: refresh,

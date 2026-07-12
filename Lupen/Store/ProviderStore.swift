@@ -1220,39 +1220,97 @@ extension ProviderStore: DiagnosticsRepository {
 // MARK: - VerificationRepository
 
 extension ProviderStore: VerificationRepository {
+    func usageVerificationSnapshot(
+        expectedRequestIdsBySessionId: [String: Set<String>]
+    ) throws -> StoreUsageVerificationSnapshot {
+        try database.pool.read { db in
+            let sessionRows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, detail_state FROM sessions ORDER BY id"
+            )
+            var indexedSessionIds: Set<String> = []
+            var detailStateBySessionId: [String: StoreDetailState] = [:]
+            indexedSessionIds.reserveCapacity(sessionRows.count)
+            detailStateBySessionId.reserveCapacity(sessionRows.count)
+            for row in sessionRows {
+                let sessionId: String = row["id"]
+                indexedSessionIds.insert(sessionId)
+                detailStateBySessionId[sessionId] =
+                    StoreDetailState(rawValue: row["detail_state"]) ?? .metadata
+            }
+
+            let aggregates = try Self.sessionUsageAggregates(in: db)
+            let usageAggregatesBySessionId = Dictionary(
+                uniqueKeysWithValues: aggregates.map { ($0.sessionId, $0) }
+            )
+
+            var missingRequestIdsBySessionId: [String: Set<String>] = [:]
+            for (sessionId, expectedRequestIds) in expectedRequestIdsBySessionId
+                where detailStateBySessionId[sessionId] == .complete
+                    && !expectedRequestIds.isEmpty {
+                let indexedRequestIds = Set(try String.fetchAll(
+                    db,
+                    sql: "SELECT id FROM requests WHERE session_id = ?",
+                    arguments: [sessionId]
+                ))
+                var missingRequestIds: Set<String> = []
+                for requestId in expectedRequestIds
+                    where !indexedRequestIds.contains(requestId) {
+                    missingRequestIds.insert(requestId)
+                }
+                if !missingRequestIds.isEmpty {
+                    missingRequestIdsBySessionId[sessionId] = missingRequestIds
+                }
+            }
+
+            return StoreUsageVerificationSnapshot(
+                indexedSessionIds: indexedSessionIds,
+                detailStateBySessionId: detailStateBySessionId,
+                usageAggregatesBySessionId: usageAggregatesBySessionId,
+                missingRequestIdsBySessionId: missingRequestIdsBySessionId
+            )
+        }
+    }
+
     func sessionUsageAggregates() throws -> [StoreSessionUsageAggregate] {
         try database.pool.read { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT session_id,
-                           COUNT(*) AS request_count,
-                           SUM(input_tokens) AS input_tokens,
-                           SUM(output_tokens) AS output_tokens,
-                           SUM(reasoning_output_tokens) AS reasoning_output_tokens,
-                           SUM(cache_creation_input_tokens) AS cache_creation_input_tokens,
-                           SUM(cache_read_input_tokens) AS cache_read_input_tokens,
-                           SUM(cache_creation_ephemeral_1h) AS cache_creation_ephemeral_1h,
-                           SUM(cache_creation_ephemeral_5m) AS cache_creation_ephemeral_5m,
-                           COALESCE(SUM(COALESCE(final_cost_usd, provisional_cost_usd, 0)), 0) AS cost_usd
-                    FROM requests
-                    GROUP BY session_id
-                    ORDER BY session_id
-                    """
-            ).map { row in
-                StoreSessionUsageAggregate(
-                    sessionId: row["session_id"],
-                    requestCount: row["request_count"],
-                    inputTokens: row["input_tokens"],
-                    outputTokens: row["output_tokens"],
-                    reasoningOutputTokens: row["reasoning_output_tokens"],
-                    cacheCreationInputTokens: row["cache_creation_input_tokens"],
-                    cacheReadInputTokens: row["cache_read_input_tokens"],
-                    cacheCreationEphemeral1h: row["cache_creation_ephemeral_1h"],
-                    cacheCreationEphemeral5m: row["cache_creation_ephemeral_5m"],
-                    costUSD: row["cost_usd"]
-                )
-            }
+            try Self.sessionUsageAggregates(in: db)
+        }
+    }
+
+    private static func sessionUsageAggregates(
+        in db: Database
+    ) throws -> [StoreSessionUsageAggregate] {
+        try Row.fetchAll(
+            db,
+            sql: """
+                SELECT session_id,
+                       COUNT(*) AS request_count,
+                       SUM(input_tokens) AS input_tokens,
+                       SUM(output_tokens) AS output_tokens,
+                       SUM(reasoning_output_tokens) AS reasoning_output_tokens,
+                       SUM(cache_creation_input_tokens) AS cache_creation_input_tokens,
+                       SUM(cache_read_input_tokens) AS cache_read_input_tokens,
+                       SUM(cache_creation_ephemeral_1h) AS cache_creation_ephemeral_1h,
+                       SUM(cache_creation_ephemeral_5m) AS cache_creation_ephemeral_5m,
+                       COALESCE(SUM(COALESCE(final_cost_usd, provisional_cost_usd, 0)), 0) AS cost_usd
+                FROM requests
+                GROUP BY session_id
+                ORDER BY session_id
+                """
+        ).map { row in
+            StoreSessionUsageAggregate(
+                sessionId: row["session_id"],
+                requestCount: row["request_count"],
+                inputTokens: row["input_tokens"],
+                outputTokens: row["output_tokens"],
+                reasoningOutputTokens: row["reasoning_output_tokens"],
+                cacheCreationInputTokens: row["cache_creation_input_tokens"],
+                cacheReadInputTokens: row["cache_read_input_tokens"],
+                cacheCreationEphemeral1h: row["cache_creation_ephemeral_1h"],
+                cacheCreationEphemeral5m: row["cache_creation_ephemeral_5m"],
+                costUSD: row["cost_usd"]
+            )
         }
     }
 

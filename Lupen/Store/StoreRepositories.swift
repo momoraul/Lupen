@@ -101,6 +101,14 @@ protocol DiagnosticsRepository: Sendable {
 }
 
 protocol VerificationRepository: Sendable {
+    /// Captures every value Verify combines inside one GRDB read transaction.
+    /// Expected request ids are compared one session at a time inside the
+    /// snapshot; only missing ids are retained. Index presence and aggregates
+    /// cover the whole index for reverse drift checks.
+    func usageVerificationSnapshot(
+        expectedRequestIdsBySessionId: [String: Set<String>]
+    ) throws -> StoreUsageVerificationSnapshot
+
     /// Per-session usage sums for comparison against ground truth.
     func sessionUsageAggregates() throws -> [StoreSessionUsageAggregate]
 

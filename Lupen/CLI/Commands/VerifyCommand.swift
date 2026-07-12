@@ -12,71 +12,145 @@ import Foundation
 struct VerifyCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "verify",
-        abstract: "Recompute costs from the logs and flag any drift (exit 4 on mismatch).",
+        abstract: "Recompute costs from the logs and fail on drift or an incomplete index.",
         discussion: """
             Audits the whole corpus, so --since/--until/--last/--month are ignored. \
-            Exit codes: 0 = clean, 4 = drift, 3 = no logs found. Full session ids \
-            are in --json / --csv.
+            Exit codes: 0 = clean, 4 = drift or incomplete index, 3 = source/index \
+            unavailable. Full session ids are in --json / --csv.
             """
     )
 
     @OptionGroup var options: CLIGlobalOptions
 
     func run() throws {
-        let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
+        // Resolve exactly once. A custom source is more specific than its
+        // provider kind, so the identical value must drive both the index and
+        // the independent truth scan.
+        let source = options.resolvedSource
+        let verifier: any ProviderUsageVerifier = source.kind == .claudeCode
+            ? ClaudeUsageVerifier()
+            : CodexUsageVerifier()
+        do {
+            try verifier.preflight(source: source)
+        } catch let error as VerificationSourceError {
+            try emit(sourceFailureReport(error, source: source))
+            throw ExitCode(3)
+        }
+
+        // Validate the corpus before refresh so an unavailable mount cannot
+        // prune its existing derived index. The full truth report is computed
+        // afterwards, keeping its O(usage-lines) memory out of the importer's
+        // transient working set and including files created during refresh.
+        let engine = try CLIEngine.open(source: source, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
         if options.periodLabel != "all time" {
             CLIOutput.note("verify audits all sessions; period filters are ignored.")
         }
 
-        let verifier: any ProviderUsageVerifier = options.provider == .claudeCode
-            ? ClaudeUsageVerifier()
-            : CodexUsageVerifier()
-        // Discover the truth file set from disk (independent of the index),
-        // so an on-disk session the index missed surfaces as a divergence
-        // rather than hiding.
-        let files: [URL]
-        switch options.provider {
-        case .claudeCode:
-            files = FileDiscovery().discoverJSONLFiles(in: FileDiscovery().projectsDirectory).map(\.url)
-        case .codex:
-            files = CodexSessionDiscovery().discoverRolloutFiles()
-        }
-        CLIOutput.note("Recomputing costs from \(files.count) file(s)…")
-
-        let report = verifier.computeReport(files: files)
-        let verification = verifier.verify(report: report, againstSQLite: engine.store)
-
-        let verifyReport = CLIVerifyReport(
-            provider: options.provider,
-            verifiedSessionCount: report.perSession.count,
-            rows: CLIVerifyReport.build(divergences: verification.divergences),
-            pendingCount: verification.pendingSessionIds.count,
-            issueCount: report.issues.count
-        )
-
-        if options.json {
-            try CLIOutput.printJSON(verifyReport.jsonObject)
-        } else if options.csv {
-            CLIOutput.line(verifyReport.csv)
-        } else {
-            verifyReport.printReport(color: CLIStyle.useColor(disabled: options.noColor))
-        }
-
-        // No logs found is NOT a clean pass — a misconfigured CI runner
-        // (wrong HOME, unmounted volume) would otherwise gate green on an
-        // empty audit. Distinct exit 3 lets the gate fail loudly.
-        if files.isEmpty {
+        let scan: ProviderVerificationScan
+        do {
+            scan = try verifier.scan(source: source)
+        } catch let error as VerificationSourceError {
+            try emit(sourceFailureReport(error, source: source))
             throw ExitCode(3)
         }
-        if verifyReport.hasDrift {
+        CLIOutput.note("Recomputed costs from \(scan.filesScanned) file(s).")
+
+        let verification: GroundTruthVerifier.SQLiteVerification
+        do {
+            verification = try verifier.verify(
+                report: scan.report,
+                againstSQLite: engine.store
+            )
+            try verifier.validateSourceUnchanged(scan: scan, source: source)
+        } catch let error as VerificationSourceError {
+            try emit(sourceFailureReport(
+                error,
+                source: source,
+                filesScanned: scan.filesScanned,
+                verifiedSessionCount: scan.report.perSession.count,
+                issueCount: scan.report.issues.count
+            ))
+            throw ExitCode(3)
+        } catch {
+            let failed = CLIVerifyReport(
+                source: scan.source,
+                filesScanned: scan.filesScanned,
+                verifiedSessionCount: scan.report.perSession.count,
+                rows: [],
+                pendingCount: 0,
+                issueCount: scan.report.issues.count,
+                failureDescription: "The source index could not be verified."
+            )
+            try emit(failed)
+            throw ExitCode(3)
+        }
+
+        let verifyReport = CLIVerifyReport(
+            source: scan.source,
+            filesScanned: scan.filesScanned,
+            verifiedSessionCount: scan.report.perSession.count,
+            rows: CLIVerifyReport.build(divergences: verification.divergences),
+            pendingCount: verification.pendingSessionIds.count,
+            issueCount: scan.report.issues.count,
+            failureDescription: nil
+        )
+
+        try emit(verifyReport)
+
+        if verifyReport.shouldFail {
             throw ExitCode(4)
         }
+    }
+
+    private func emit(_ report: CLIVerifyReport) throws {
+        // Every output mode gets source provenance on stderr. CSV stdout stays
+        // byte-for-byte compatible for existing consumers.
+        CLIOutput.note(report.provenanceNote)
+        if options.json {
+            try CLIOutput.printJSON(report.jsonObject)
+        } else if options.csv {
+            CLIOutput.line(report.csv)
+        } else {
+            report.printReport(color: CLIStyle.useColor(disabled: options.noColor))
+        }
+    }
+
+    private func sourceFailureReport(
+        _ error: VerificationSourceError,
+        source: SessionSource,
+        filesScanned: Int = 0,
+        verifiedSessionCount: Int = 0,
+        issueCount: Int = 0
+    ) -> CLIVerifyReport {
+        let failure: String?
+        if case .noLogs = error {
+            failure = nil
+        } else {
+            failure = error.localizedDescription
+        }
+        return CLIVerifyReport(
+            source: error.source ?? VerificationSourceIdentity(source: source),
+            filesScanned: filesScanned,
+            verifiedSessionCount: verifiedSessionCount,
+            rows: [],
+            pendingCount: 0,
+            issueCount: issueCount,
+            failureDescription: failure
+        )
     }
 }
 
 /// Data + rendering for `lupen verify`.
 struct CLIVerifyReport {
+    enum Status: String, Sendable {
+        case clean
+        case drift
+        case incomplete
+        case noLogs = "no-logs"
+        case verificationFailed = "verification-failed"
+    }
+
     struct Row: Equatable {
         let sessionId: String
         let viewCostUSD: Double?
@@ -92,21 +166,44 @@ struct CLIVerifyReport {
         }
     }
 
-    let provider: ProviderKind
+    let source: VerificationSourceIdentity
+    let filesScanned: Int
     let verifiedSessionCount: Int
     /// Diverging sessions (error and warning severities both).
     let rows: [Row]
     let pendingCount: Int
     let issueCount: Int
+    let failureDescription: String?
+
+    var provider: ProviderKind { source.provider }
 
     /// Sessions with real accounting drift — what the table and exit code key on.
     var errorRows: [Row] { rows.filter(\.hasError) }
     /// Sessions whose only findings are warnings (unknown pricing / zero-usage).
     var warningOnlyRows: [Row] { rows.filter { !$0.hasError } }
 
-    /// Exit-4 gate: only error-severity drift fails the build. Warnings
-    /// (estimation limits) are reported but do not break CI.
+    /// Accounting-drift flag: warnings and pending imports are represented
+    /// separately and do not get mislabeled as numerical drift.
     var hasDrift: Bool { !errorRows.isEmpty }
+
+    /// A pending import cannot prove the index is clean. It fails the command
+    /// without being mislabeled as accounting drift in JSON.
+    var shouldFail: Bool { hasDrift || pendingCount > 0 }
+
+    var status: Status {
+        if failureDescription != nil { return .verificationFailed }
+        if filesScanned == 0 { return .noLogs }
+        if hasDrift { return .drift }
+        return pendingCount > 0 ? .incomplete : .clean
+    }
+
+    /// Privacy-safe one-line provenance for stderr. The raw source root is
+    /// intentionally excluded; its normalized path SHA-256 is sufficient to
+    /// distinguish roots without disclosing them in logs.
+    var provenanceNote: String {
+        "Source: \(Self.singleLine(source.name)) [\(Self.singleLine(source.id))] · "
+        + "root sha256 \(source.rootHash) · \(filesScanned) file(s) · status \(status.rawValue)"
+    }
 
     /// Group divergences by session into mismatch rows (pure: no store).
     static func build(divergences: [GroundTruthVerifier.Divergence]) -> [Row] {
@@ -145,6 +242,7 @@ struct CLIVerifyReport {
         case .requestCountMismatch: return "requestCount"
         case .missingPickedRequestId: return "missingRequestId"
         case .sessionMissingInView: return "missingInView"
+        case .sessionMissingInTruth: return "missingInTruth"
         case .missingUsageEvent: return "missingUsage"
         case .unknownPricing: return "unknownPricing"
         case .sourceRejected: return "sourceRejected"
@@ -164,15 +262,21 @@ struct CLIVerifyReport {
 
     func printReport(color: Bool) {
         CLIOutput.line("\(provider.cliLabel) · cost verification")
+        CLIOutput.line("Source: \(Self.singleLine(source.name)) [\(Self.singleLine(source.id))]")
+        CLIOutput.line("Root identity: sha256:\(source.rootHash)")
+        CLIOutput.line("Files scanned: \(filesScanned)")
+        CLIOutput.line("Status: \(status.rawValue)")
         CLIOutput.line()
 
-        if errorRows.isEmpty {
+        if let failureDescription {
+            CLIOutput.line("Verification failed: \(Self.singleLine(failureDescription))")
+        } else if errorRows.isEmpty, pendingCount == 0 {
             if verifiedSessionCount == 0 {
                 CLIOutput.line("No sessions found to verify.")
             } else {
                 CLIOutput.line("✓ \(verifiedSessionCount) session(s) verified — indexed costs match the recomputed truth.")
             }
-        } else {
+        } else if !errorRows.isEmpty {
             let table = CLITable(
                 columns: [
                     .init("SESSION"),
@@ -194,6 +298,8 @@ struct CLIVerifyReport {
             CLIOutput.line(table.render(color: color))
             CLIOutput.line()
             CLIOutput.line("✗ \(errorRows.count) of \(verifiedSessionCount) session(s) diverge from the recomputed truth.")
+        } else {
+            CLIOutput.line("Index import is incomplete; no clean verdict is available yet.")
         }
 
         if !warningOnlyRows.isEmpty {
@@ -210,12 +316,20 @@ struct CLIVerifyReport {
     var jsonObject: [String: Any] {
         [
             "provider": provider.rawValue,
+            "status": status.rawValue,
+            "source": [
+                "id": source.id,
+                "name": source.name,
+                "rootHash": source.rootHash,
+                "filesScanned": filesScanned,
+            ],
             "verifiedSessions": verifiedSessionCount,
             "drift": hasDrift,
             "errorSessions": errorRows.count,
             "warningSessions": warningOnlyRows.count,
             "pending": pendingCount,
             "issues": issueCount,
+            "failure": failureDescription as Any? ?? NSNull(),
             "mismatches": rows.map { row in
                 [
                     "sessionId": row.sessionId,
@@ -243,5 +357,11 @@ struct CLIVerifyReport {
                 ]
             }
         )
+    }
+
+    private static func singleLine(_ value: String) -> String {
+        value.unicodeScalars.map { scalar in
+            CharacterSet.controlCharacters.contains(scalar) ? " " : String(scalar)
+        }.joined()
     }
 }

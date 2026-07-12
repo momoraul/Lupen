@@ -632,6 +632,20 @@ struct StoreSessionUsageAggregate: Sendable, Equatable {
     let costUSD: Double
 }
 
+/// One transactionally consistent view of the provider index used by Verify.
+/// Session presence, import state, aggregates, and request-id coverage all come
+/// from the same GRDB read snapshot so a concurrent import or prune cannot mix
+/// two index generations into a false-clean result.
+struct StoreUsageVerificationSnapshot: Sendable, Equatable {
+    let indexedSessionIds: Set<String>
+    let detailStateBySessionId: [String: StoreDetailState]
+    let usageAggregatesBySessionId: [String: StoreSessionUsageAggregate]
+    /// Truth request ids absent from the index, retained only when non-empty.
+    /// The store compares one session at a time inside the read snapshot so
+    /// Verify does not duplicate the whole corpus' request-id set in memory.
+    let missingRequestIdsBySessionId: [String: Set<String>]
+}
+
 /// Sidebar cell metrics (plan 5.3): one row per session — request
 /// count, context-token sum, cost (final-over-provisional), Codex
 /// confidence tallies, and the subagent-link badge count.

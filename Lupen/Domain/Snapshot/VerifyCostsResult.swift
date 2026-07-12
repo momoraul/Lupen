@@ -10,7 +10,11 @@ import Foundation
 /// that session.
 struct ProviderVerificationResult: Sendable {
 
-    let provider: ProviderKind
+    /// Immutable provenance for the source that produced this result. The
+    /// provider is derived from it so a result cannot describe one source
+    /// while rendering another provider's labels.
+    let source: VerificationSourceIdentity
+    var provider: ProviderKind { source.provider }
     let startedAt: Date
     let completedAt: Date
     let scanElapsed: TimeInterval
@@ -32,8 +36,13 @@ struct ProviderVerificationResult: Sendable {
     /// completed (6.8) — surfaced as "Pending", never as mismatches.
     let pendingSessionIds: Set<String>
 
+    /// Aggregate snapshot read by the same SQLite verification pass. Rollups
+    /// consume this value instead of re-reading whichever store is active when
+    /// the UI renders.
+    let sessionUsageAggregatesById: [String: StoreSessionUsageAggregate]
+
     init(
-        provider: ProviderKind = .claudeCode,
+        source: VerificationSourceIdentity,
         startedAt: Date,
         completedAt: Date,
         scanElapsed: TimeInterval,
@@ -42,9 +51,11 @@ struct ProviderVerificationResult: Sendable {
         report: GroundTruth.Report,
         divergences: [GroundTruthVerifier.Divergence],
         viewSessionIds: Set<String>,
-        pendingSessionIds: Set<String> = []
+        pendingSessionIds: Set<String> = [],
+        sessionUsageAggregatesById: [String: StoreSessionUsageAggregate] = [:]
     ) {
-        self.provider = provider
+        precondition(source.provider == report.provider)
+        self.source = source
         self.startedAt = startedAt
         self.completedAt = completedAt
         self.scanElapsed = scanElapsed
@@ -54,6 +65,7 @@ struct ProviderVerificationResult: Sendable {
         self.divergences = divergences
         self.viewSessionIds = viewSessionIds
         self.pendingSessionIds = pendingSessionIds
+        self.sessionUsageAggregatesById = sessionUsageAggregatesById
     }
 
     // MARK: - Per-session roll-up (for the primary table)
@@ -130,47 +142,61 @@ struct ProviderVerificationResult: Sendable {
         }
     }
 
-    /// Build per-session roll-ups across all truth sessions plus any
-    /// extra sessions present only in the view. Sorted by cost descending.
-    /// View columns come from the SQLite index aggregates (plan 5.3) —
-    /// shell sessions carry no request rows to sum.
-    func rollups(withStore store: AppStateStore) -> [SessionRollup] {
-        var rollups: [SessionRollup] = []
+    func canonicalSessionID(_ sessionId: String) -> String {
+        ProviderScopedID.normalize(sessionId, defaultProvider: report.provider)
+    }
 
-        let aggregatesBySessionId: [String: StoreSessionUsageAggregate] = {
-            guard let sqlStore = store.sqliteConversationSource?.store,
-                  let rows = try? sqlStore.sessionUsageAggregates() else { return [:] }
-            return Dictionary(uniqueKeysWithValues: rows.map { ($0.sessionId, $0) })
-        }()
+    /// Build per-session roll-ups across truth sessions, view-only sessions,
+    /// and findings that could not produce either kind of session row.
+    /// Sorted by cost descending, then session id for deterministic ties.
+    /// View columns come from the captured SQLite aggregate snapshot — shell
+    /// sessions carry no request rows to sum. This is intentionally pure: a
+    /// source switch after completion cannot redirect the result to another
+    /// live store.
+    func rollups() -> [SessionRollup] {
+        var rollups: [SessionRollup] = []
 
         // Tally findings per sessionId, split by severity, so a row can be
         // classified as clean / warning-only / error.
         var errorCountBySession: [String: Int] = [:]
         var warningCountBySession: [String: Int] = [:]
+        var divergenceSessionIds: Set<String> = []
         for d in divergences {
+            let sessionId = canonicalSessionID(d.sessionId)
+            divergenceSessionIds.insert(sessionId)
             switch d.severity {
-            case .error: errorCountBySession[d.sessionId, default: 0] += 1
-            case .warning: warningCountBySession[d.sessionId, default: 0] += 1
+            case .error: errorCountBySession[sessionId, default: 0] += 1
+            case .warning: warningCountBySession[sessionId, default: 0] += 1
             }
         }
         let unknownPricingSessionIds = Set(report.issues.compactMap { issue -> String? in
-            if case .unknownPricing = issue.kind { return issue.sessionId }
+            if case .unknownPricing = issue.kind {
+                return canonicalSessionID(issue.sessionId)
+            }
             return nil
         })
+        let canonicalPendingSessionIds = Set(pendingSessionIds.map(canonicalSessionID))
+        var representedSessionIds: Set<String> = []
 
         // Build rollup for each truth session.
         for (sid, truth) in report.perSession {
-            let scopedSid = ProviderScopedID.normalize(sid, defaultProvider: report.provider)
-            let viewSession = store.sessions.first(where: { $0.id == sid || $0.id == scopedSid })
-            let rowSessionId = viewSession?.id ?? scopedSid
-            let aggregate = aggregatesBySessionId[rowSessionId] ?? aggregatesBySessionId[sid]
-            let viewRequestCount = viewSession != nil ? (aggregate?.requestCount ?? 0) : nil
-            let viewCost: Double? = viewSession != nil ? (aggregate?.costUSD ?? 0) : nil
+            let scopedSid = canonicalSessionID(sid)
+            let viewSessionId: String? = if viewSessionIds.contains(scopedSid) {
+                scopedSid
+            } else if viewSessionIds.contains(sid) {
+                sid
+            } else {
+                nil
+            }
+            let rowSessionId = viewSessionId ?? scopedSid
+            let aggregate = sessionUsageAggregatesById[rowSessionId]
+                ?? sessionUsageAggregatesById[sid]
+            let viewRequestCount = viewSessionId != nil ? (aggregate?.requestCount ?? 0) : nil
+            let viewCost: Double? = viewSessionId != nil ? (aggregate?.costUSD ?? 0) : nil
             let costDelta = viewCost.map { $0 - truth.dedupedTotalCostUSD }
-            let errorCount = errorCountBySession[rowSessionId, default: 0]
-                + (rowSessionId == sid ? 0 : errorCountBySession[sid, default: 0])
-            let warningCount = warningCountBySession[rowSessionId, default: 0]
-                + (rowSessionId == sid ? 0 : warningCountBySession[sid, default: 0])
+            let canonicalRowSessionId = canonicalSessionID(rowSessionId)
+            let errorCount = errorCountBySession[canonicalRowSessionId, default: 0]
+            let warningCount = warningCountBySession[canonicalRowSessionId, default: 0]
             rollups.append(SessionRollup(
                 sessionId: rowSessionId,
                 rawLineCount: truth.rawLineCount,
@@ -183,34 +209,36 @@ struct ProviderVerificationResult: Sendable {
                 truthCacheReadInputTokens: truth.dedupedCacheReadInputTokens,
                 truthOutputTokens: truth.dedupedOutputTokens,
                 truthReasoningOutputTokens: truth.dedupedReasoningOutputTokens,
-                viewInputTokens: viewSession != nil ? (aggregate?.inputTokens ?? 0) : nil,
-                viewCacheReadInputTokens: viewSession != nil ? (aggregate?.cacheReadInputTokens ?? 0) : nil,
-                viewOutputTokens: viewSession != nil ? (aggregate?.outputTokens ?? 0) : nil,
-                viewReasoningOutputTokens: viewSession != nil ? (aggregate?.reasoningOutputTokens ?? 0) : nil,
-                hasUnknownPricing: unknownPricingSessionIds.contains(sid) || unknownPricingSessionIds.contains(scopedSid),
+                viewInputTokens: viewSessionId != nil ? (aggregate?.inputTokens ?? 0) : nil,
+                viewCacheReadInputTokens: viewSessionId != nil ? (aggregate?.cacheReadInputTokens ?? 0) : nil,
+                viewOutputTokens: viewSessionId != nil ? (aggregate?.outputTokens ?? 0) : nil,
+                viewReasoningOutputTokens: viewSessionId != nil ? (aggregate?.reasoningOutputTokens ?? 0) : nil,
+                hasUnknownPricing: unknownPricingSessionIds.contains(scopedSid),
                 errorCount: errorCount,
                 warningCount: warningCount,
-                inViewAndTruth: viewSession != nil,
-                indexPending: pendingSessionIds.contains(rowSessionId)
-                    || pendingSessionIds.contains(sid)
+                inViewAndTruth: viewSessionId != nil,
+                indexPending: canonicalPendingSessionIds.contains(canonicalRowSessionId)
             ))
+            representedSessionIds.insert(scopedSid)
         }
 
         // Also surface sessions the view has but ground truth doesn't
         // (billable-line-free sessions — no usage records in JSONL).
         // These should be very rare; show them for completeness.
-        let truthIds = Set(report.perSession.keys.flatMap { sid in
-            [sid, ProviderScopedID.normalize(sid, defaultProvider: report.provider)]
-        })
-        for session in store.sessions where !truthIds.contains(session.id) {
-            let aggregate = aggregatesBySessionId[session.id]
+        for sessionId in viewSessionIds {
+            let canonicalSessionId = canonicalSessionID(sessionId)
+            guard representedSessionIds.insert(canonicalSessionId).inserted else {
+                continue
+            }
+            let aggregate = sessionUsageAggregatesById[sessionId]
             let viewCost = aggregate?.costUSD ?? 0
-            // A view cost with no ground-truth counterpart is real drift → error.
-            let errorCount = errorCountBySession[session.id, default: 0]
-                + (viewCost == 0 ? 0 : 1)
-            let warningCount = warningCountBySession[session.id, default: 0]
+            // Reverse coverage is represented explicitly by
+            // `.sessionMissingInTruth`; keep one authoritative error count
+            // instead of synthesizing a second finding from cost alone.
+            let errorCount = errorCountBySession[canonicalSessionId, default: 0]
+            let warningCount = warningCountBySession[canonicalSessionId, default: 0]
             rollups.append(SessionRollup(
-                sessionId: session.id,
+                sessionId: sessionId,
                 rawLineCount: 0,
                 dedupedLineCount: 0,
                 viewRequestCount: aggregate?.requestCount ?? 0,
@@ -225,17 +253,49 @@ struct ProviderVerificationResult: Sendable {
                 viewCacheReadInputTokens: aggregate?.cacheReadInputTokens ?? 0,
                 viewOutputTokens: aggregate?.outputTokens ?? 0,
                 viewReasoningOutputTokens: aggregate?.reasoningOutputTokens ?? 0,
-                hasUnknownPricing: unknownPricingSessionIds.contains(session.id),
+                hasUnknownPricing: unknownPricingSessionIds.contains(canonicalSessionId),
                 errorCount: errorCount,
                 warningCount: warningCount,
                 inViewAndTruth: false,
-                indexPending: pendingSessionIds.contains(session.id)
+                indexPending: canonicalPendingSessionIds.contains(canonicalSessionId)
+            ))
+        }
+
+        // A rejected source or parser issue may not yield a truth aggregate or
+        // an indexed session. It still needs a visible row; otherwise the
+        // summary could report a clean run while error divergences exist.
+        for sessionId in divergenceSessionIds {
+            guard representedSessionIds.insert(sessionId).inserted else { continue }
+            rollups.append(SessionRollup(
+                sessionId: sessionId,
+                rawLineCount: 0,
+                dedupedLineCount: 0,
+                viewRequestCount: nil,
+                truthCostUSD: 0,
+                viewCostUSD: nil,
+                costDelta: nil,
+                truthInputTokens: 0,
+                truthCacheReadInputTokens: 0,
+                truthOutputTokens: 0,
+                truthReasoningOutputTokens: 0,
+                viewInputTokens: nil,
+                viewCacheReadInputTokens: nil,
+                viewOutputTokens: nil,
+                viewReasoningOutputTokens: nil,
+                hasUnknownPricing: unknownPricingSessionIds.contains(sessionId),
+                errorCount: errorCountBySession[sessionId, default: 0],
+                warningCount: warningCountBySession[sessionId, default: 0],
+                inViewAndTruth: false,
+                indexPending: canonicalPendingSessionIds.contains(sessionId)
             ))
         }
 
         // Cost-descending sort so the most expensive sessions read first.
         return rollups.sorted { a, b in
-            a.truthCostUSD > b.truthCostUSD
+            if a.truthCostUSD != b.truthCostUSD {
+                return a.truthCostUSD > b.truthCostUSD
+            }
+            return a.sessionId < b.sessionId
         }
     }
 }
