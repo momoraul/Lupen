@@ -60,9 +60,14 @@ enum TurnAnalysisExporter {
         options: TurnAnalysisMarkdownRenderer.Options = .init()
     ) -> String {
         let loaded = TurnRawSource.load(steps: request.turn.steps, provider: request.provider)
+        // Order the lines by the turn's steps (chronological) so the enricher's
+        // "last wins" fields are deterministic — `loaded.lines` is a dictionary.
+        let orderedLines = request.turn.steps.compactMap { step in
+            loaded.lines[step.uuid].map { (uuid: step.uuid, line: $0) }
+        }
         let facts = TurnRawEnricher.enrich(
             provider: request.provider,
-            rawLines: loaded.lines,
+            rawLines: orderedLines,
             turnContextLine: loaded.turnContext,
             missingLineCount: loaded.missingCount
         )

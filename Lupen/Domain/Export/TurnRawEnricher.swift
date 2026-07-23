@@ -21,13 +21,19 @@ import Foundation
 enum TurnRawEnricher {
 
     /// - Parameters:
-    ///   - rawLines: step uuid → the original JSONL line for that step.
+    ///   - rawLines: `(step uuid, original JSONL line)` in **chronological
+    ///     (step) order**. Order matters for the single-value "last wins"
+    ///     fields (`gitBranch`, `cwd`, `serviceTier`): a `[String: Data]`
+    ///     dictionary iterates in hash order, so a turn that switched branch
+    ///     mid-way would report an arbitrary — and run-to-run unstable — value.
+    ///     An ordered list makes "the value it ended on" both correct and
+    ///     deterministic.
     ///   - turnContextLine: Codex `turn_context` envelope for this turn, if one
     ///     was found. Claude has no equivalent, so it is always `nil` there.
     ///   - missingLineCount: steps whose raw line could not be read.
     static func enrich(
         provider: ProviderKind,
-        rawLines: [String: Data],
+        rawLines: [(uuid: String, line: Data)],
         turnContextLine: Data? = nil,
         missingLineCount: Int = 0
     ) -> TurnRawFacts {

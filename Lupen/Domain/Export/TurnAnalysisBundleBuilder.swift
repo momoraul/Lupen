@@ -168,11 +168,19 @@ enum TurnAnalysisBundleBuilder {
             inputs.turn.endTime.map { $0.timeIntervalSince(start) }
         }.flatMap { $0 > 0 ? $0 : nil }
 
+        // A ratio needs at least one OTHER turn to compare against. `samples`
+        // always includes this turn, so a lone-turn session would otherwise
+        // report "1.0×" — the turn measured against itself, reading as
+        // "average" when there is nothing to average over.
+        func baseline(_ values: [Double]) -> Double? {
+            samples.count >= 2 ? median(values) : nil
+        }
+
         return TurnAnalysisBundle.Metrics(
-            costUSD: metric(cost, median: median(samples.map(\.costUSD))),
-            totalTokens: metric(Double(tokens), median: median(samples.map { Double($0.tokens) })),
+            costUSD: metric(cost, median: baseline(samples.map(\.costUSD))),
+            totalTokens: metric(Double(tokens), median: baseline(samples.map { Double($0.tokens) })),
             durationSeconds: duration.map {
-                metric($0, median: median(samples.compactMap(\.durationSeconds)))
+                metric($0, median: baseline(samples.compactMap(\.durationSeconds)))
             },
             sessionTurnCount: samples.count
         )
@@ -239,8 +247,15 @@ enum TurnAnalysisBundleBuilder {
         // the cost column reconcile. Concatenating context+generation instead
         // would print Reply twice, each with the full merged cost.
         var tokensByCategory: [ContextComposition.Category: Int] = [:]
+        // `isEstimate` must describe the TOKEN count, not the cost. Every
+        // `CostSlice` is flagged estimate, but some token slices are exact
+        // (the system baseline, Codex reasoning), so read the flag from the
+        // token side or those exact rows would be mislabelled "(est.)".
+        var estimateByCategory: [ContextComposition.Category: Bool] = [:]
         for slice in result.context + result.generation {
             tokensByCategory[slice.category, default: 0] += slice.estTokens
+            estimateByCategory[slice.category] =
+                (estimateByCategory[slice.category] ?? false) || slice.isEstimate
         }
         return result.cost
             .sorted { $0.costUSD > $1.costUSD }
@@ -249,7 +264,7 @@ enum TurnAnalysisBundleBuilder {
                     label: slice.category.label,
                     tokens: tokensByCategory[slice.category] ?? 0,
                     costUSD: slice.costUSD,
-                    isEstimate: slice.isEstimate
+                    isEstimate: estimateByCategory[slice.category] ?? slice.isEstimate
                 )
             }
     }
@@ -430,7 +445,11 @@ enum TurnAnalysisBundleBuilder {
             let timestamp: Date
             let mcpServer: String?
         }
-        var pending: [String: Pending] = [:]
+        // Queue per id, not a single slot: Codex can synthesize a `call_id`
+        // that repeats within a turn, and overwriting would strand the first
+        // call with no result and pin its result onto the second. FIFO pairs
+        // each result with the oldest unmatched call of that id.
+        var pending: [String: [Pending]] = [:]
         var entries: [Int: TurnAnalysisBundle.ToolCallEntry] = [:]
         var ordinal = 0
 
@@ -440,13 +459,13 @@ enum TurnAnalysisBundleBuilder {
                 let mcp = facts.mcpByStepUuid[step.uuid].map { attribution in
                     attribution.tool.map { "\(attribution.server)/\($0)" } ?? attribution.server
                 } ?? facts.namespaceByCallId[call.id]
-                pending[call.id] = Pending(
+                pending[call.id, default: []].append(Pending(
                     ordinal: ordinal,
                     name: call.name,
                     inputSummary: call.abbreviatedInput(limit: 160),
                     timestamp: step.timestamp,
                     mcpServer: mcp
-                )
+                ))
                 // Emit immediately so a call whose result never arrived (the
                 // turn was interrupted) still appears in the ledger.
                 entries[ordinal] = TurnAnalysisBundle.ToolCallEntry(
@@ -461,7 +480,10 @@ enum TurnAnalysisBundleBuilder {
                 )
             }
 
-            guard let result = step.toolResult, let call = pending[result.toolUseId] else { continue }
+            guard let result = step.toolResult,
+                  var queue = pending[result.toolUseId], !queue.isEmpty else { continue }
+            let call = queue.removeFirst()
+            pending[result.toolUseId] = queue
             // A measured value is real tool time; the timestamp-delta fallback
             // can absorb a permission prompt or the user stepping away, so flag
             // it as likely-idle past the same threshold the step trace uses —

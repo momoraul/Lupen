@@ -394,7 +394,11 @@ enum TurnAnalysisMarkdownRenderer {
         lines.append("")
         lines.append("| # | tool | input | result chars | time _(derived)_ | error |")
         lines.append("|---|---|---|---|---|---|")
-        for call in bundle.toolCalls {
+        // The turns this export targets can hold hundreds of tool calls; an
+        // uncapped ledger alone would blow the whole-document budget. Cap the
+        // per-call rows (the per-tool totals above still cover every call) and
+        // say how many were dropped.
+        for call in bundle.toolCalls.prefix(maxCallByCallRows) {
             let name = call.mcpServer.map { "\(call.name) (\($0))" } ?? call.name
             lines.append(row(
                 integer(call.ordinal),
@@ -406,8 +410,17 @@ enum TurnAnalysisMarkdownRenderer {
             ))
         }
         lines.append("")
+        if bundle.toolCalls.count > maxCallByCallRows {
+            let dropped = bundle.toolCalls.count - maxCallByCallRows
+            lines.append("_\(integer(dropped)) more call(s) omitted — see the per-tool totals above._")
+            lines.append("")
+        }
         return lines
     }
+
+    /// Row cap for the call-by-call ledger. The per-tool totals table stays
+    /// complete; only the exhaustive list is bounded.
+    private static let maxCallByCallRows = 200
 
     /// A tool time cell, marked when the gap likely contains a permission
     /// prompt or an away user rather than tool compute — so the reader does not
@@ -495,10 +508,18 @@ enum TurnAnalysisMarkdownRenderer {
               let home = options.homeDirectoryPath,
               !home.isEmpty, home != "/" else { return document }
         let trimmed = home.hasSuffix("/") ? String(home.dropLast()) : home
-        // Anchor on the trailing slash so only true sub-paths of home are
-        // rewritten. Replacing the bare prefix would corrupt a sibling like
-        // `/Users/alice2` into `~2` when home is `/Users/alice`.
-        return document.replacingOccurrences(of: trimmed + "/", with: "~/")
+        // Redact the home path at a path boundary — followed by "/", a
+        // delimiter, or end of string — so both "/Users/alice" (a bare cwd)
+        // and "/Users/alice/x" redact, while a sibling like "/Users/alice2"
+        // or "/Users/alice.bak" is left intact. A plain prefix replace would
+        // corrupt the sibling; anchoring only on "/" would miss the bare path
+        // and leak the username the redaction exists to strip.
+        let pattern = NSRegularExpression.escapedPattern(for: trimmed) + "(?![A-Za-z0-9_.-])"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return document.replacingOccurrences(of: trimmed + "/", with: "~/")
+        }
+        let range = NSRange(document.startIndex..., in: document)
+        return regex.stringByReplacingMatches(in: document, range: range, withTemplate: "~")
     }
 
     // MARK: - Formatting
