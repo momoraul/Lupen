@@ -302,7 +302,10 @@ enum TurnAnalysisBundleBuilder {
                 detail: hook.command
             ))
         }
-        for telemetry in facts.subAgentTelemetry.values.sorted(by: { ($0.seconds ?? 0) > ($1.seconds ?? 0) }) {
+        // Iterate the telemetry dict in a fixed order (by agent id) — the final
+        // sort below is by seconds, and Swift's sort is unstable, so a
+        // dict-ordered source would reorder equal-seconds spans across launches.
+        for telemetry in facts.subAgentTelemetry.sorted(by: { $0.key < $1.key }).map(\.value) {
             guard let seconds = telemetry.seconds else { continue }
             measured.append(TurnAnalysisBundle.TimedSpan(
                 label: "Subagent",
@@ -314,7 +317,12 @@ enum TurnAnalysisBundleBuilder {
         return TurnAnalysisBundle.Timeline(
             totalSeconds: model?.totalDuration,
             lanes: lanes,
-            measured: measured.sorted { $0.seconds > $1.seconds },
+            // Total-order tiebreak so ties don't depend on append/sort stability.
+            measured: measured.sorted {
+                $0.seconds != $1.seconds
+                    ? $0.seconds > $1.seconds
+                    : ($0.label, $0.detail ?? "") < ($1.label, $1.detail ?? "")
+            },
             summary: model?.summaryText
         )
     }
@@ -412,8 +420,10 @@ enum TurnAnalysisBundleBuilder {
 
         // Telemetry can name an agent no link resolved (the parent's tool_result
         // survived but the link did not) — keep it rather than losing a measured
-        // run.
-        for (agentId, telemetry) in inputs.rawFacts.subAgentTelemetry where byId[agentId] == nil {
+        // run. Iterate by agent id, not dict hash order, so these fallback
+        // agents appear in the same order across two exports of one turn.
+        for (agentId, telemetry) in inputs.rawFacts.subAgentTelemetry
+            .sorted(by: { $0.key < $1.key }) where byId[agentId] == nil {
             order.append(agentId)
             byId[agentId] = TurnAnalysisBundle.SubAgentEntry(
                 identifier: agentId,
