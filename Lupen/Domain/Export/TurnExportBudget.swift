@@ -86,20 +86,11 @@ struct TurnExportBudget: Sendable, Equatable {
         "[… \(formatted(characters)) characters omitted …]"
     }
 
-    /// Thousands-separated, POSIX so the marker is stable across locales — an
-    /// exported document should not read differently on a Korean vs. US machine.
-    ///
-    /// `groupingSeparator` is set explicitly because `en_US_POSIX` supplies
-    /// none: `.decimal` alone renders `1234567`, defeating the readability the
-    /// separator is here for. Same reason the rest of the app's count
-    /// formatters set it by hand.
+    /// Thousands-separated and locale-stable — an exported document should not
+    /// read differently on a Korean vs. US machine. `CLIFormat.int` groups by
+    /// hand (no locale, no allocation), so the marker is identical everywhere.
     private static func formatted(_ value: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.usesGroupingSeparator = true
-        formatter.groupingSeparator = ","
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+        CLIFormat.int(value)
     }
 }
 

@@ -3832,7 +3832,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// does not move the selection, so an action that read `selectedRow` would
     /// operate on the previously highlighted row.
     private func makeContextMenu(for node: TurnOutlineNode) -> NSMenu? {
-        guard turn(owning: node) != nil else { return nil }
+        guard canExport(node) else { return nil }
         let menu = NSMenu()
         for (title, action) in [
             ("Export Turn Analysis…", #selector(exportTurnAnalysis(_:))),
@@ -3846,34 +3846,62 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         return menu
     }
 
-    /// The Turn the export actions act on: the explicit `representedObject`
+    /// The row an export action targets: the explicit `representedObject`
     /// subject when the action came from the context menu, otherwise the
-    /// current selection's owning Turn.
+    /// current selection.
     ///
     /// Menu items pin their subject rather than reading the selection, because
-    /// right-clicking a row does not select it — the same reason
+    /// right-clicking a row does not move the selection — the same reason
     /// `SessionListViewController`'s context menu passes its session through
     /// `representedObject`.
-    func turnForAnalysisExport(_ sender: Any?) -> Turn? {
+    private func exportTargetNode(_ sender: Any?) -> TurnOutlineNode? {
         if let item = sender as? NSMenuItem, let node = item.representedObject as? TurnOutlineNode {
-            return turn(owning: node)
+            return node
         }
         let row = outlineView.selectedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? TurnOutlineNode else { return nil }
-        return turn(owning: node)
+        guard row >= 0 else { return nil }
+        return outlineView.item(atRow: row) as? TurnOutlineNode
     }
 
-    /// Every row kind resolves to a Turn — a step, skill group or sub-agent row
-    /// exports the turn it belongs to, so the action is never dead just because
-    /// the user clicked a child.
-    private func turn(owning node: TurnOutlineNode) -> Turn? {
+    /// Cheap enablement check for the menu item and the ⇧⌘E validation — never
+    /// materializes, so it is safe to call on every `validateMenuItem` pass.
+    func canExportTurnAnalysis(_ sender: Any?) -> Bool {
+        exportTargetNode(sender).map(canExport) ?? false
+    }
+
+    private func canExport(_ node: TurnOutlineNode) -> Bool {
+        switch node.kind {
+        case .turn, .subAgent:
+            return true
+        case .step(_, let parentTurnId), .skillGroup(_, _, let parentTurnId):
+            return turns.contains { $0.id == parentTurnId }
+        }
+    }
+
+    /// The materialized Turn an export acts on, resolved to match exactly what
+    /// the detail pane shows for the same row (see `notifySelection`):
+    ///
+    /// - a step / skill-group row exports its **parent** turn (those are
+    ///   sub-turn granularities of one turn analysis);
+    /// - a sub-agent row exports the **sub-agent's own** turn, because a
+    ///   sub-agent is itself a full Turn the detail pane renders as one —
+    ///   returning the parent here would export a different turn than the one
+    ///   the user is looking at.
+    ///
+    /// Materializes on demand so the export is never built from a stub.
+    private func exportTurn(for node: TurnOutlineNode) -> Turn? {
         switch node.kind {
         case .turn(let turn):
-            return turn
+            return materializedTurn(for: turn)
         case .step(_, let parentTurnId), .skillGroup(_, _, let parentTurnId):
-            return turns.first { $0.id == parentTurnId }
-        case .subAgent(_, _, let parentTurnId, _):
-            return turns.first { $0.id == parentTurnId }
+            guard let parent = turns.first(where: { $0.id == parentTurnId }) else { return nil }
+            return materializedTurn(for: parent)
+        case .subAgent(_, let subTurn, _, _):
+            let steps = materializedSubAgentSteps(for: node) ?? subTurn.steps
+            return Turn(
+                id: subTurn.id, sessionId: subTurn.sessionId,
+                steps: steps, isInterrupted: subTurn.isInterrupted
+            )
         }
     }
 
@@ -3881,23 +3909,28 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// numbers the outline row renders. Recomputing them here would let the
     /// document quietly disagree with the row the user acted on — the desync
     /// `DetailViewController.showTurn`'s required parameters exist to prevent.
+    ///
+    /// `turn` is already materialized by `exportTurn(for:)`.
     func turnAnalysisExportRequest(for turn: Turn) -> TurnAnalysisExporter.Request {
-        let resolved = materializedTurn(for: turn)
         var request = TurnAnalysisExporter.Request(
-            turn: resolved,
-            provider: ProviderScopedID(value: resolved.sessionId)?.provider ?? .claudeCode,
-            displayCost: displayCost(for: resolved),
-            displayTokens: displayTokens(for: resolved)
+            turn: turn,
+            provider: ProviderScopedID(value: turn.sessionId)?.provider ?? .claudeCode,
+            displayCost: displayCost(for: turn),
+            displayTokens: displayTokens(for: turn)
         )
         request.sessionSamples = sessionMetricSamples()
-        request.skillGroups = (groupedRowsByTurn[resolved.id] ?? []).compactMap { row in
+        // Same aggregate-preferred clock the samples use, so the current turn's
+        // duration and the session baseline it is compared against are measured
+        // the same way (a stub's synthetic step reports start == end).
+        request.turnDurationSeconds = turnDuration(for: turn)
+        request.skillGroups = (groupedRowsByTurn[turn.id] ?? []).compactMap { row in
             if case .skillGroup(let group) = row { return group }
             return nil
         }
-        request.subAgentLinks = subAgentLinks(in: resolved)
+        request.subAgentLinks = subAgentLinks(in: turn)
         request.subAgentCostByAgentId = sqliteSubAgentCostByAgentId
         request.composition = turnComposition(
-            for: resolved,
+            for: turn,
             cost: request.displayCost,
             tokens: request.displayTokens
         )
@@ -3953,7 +3986,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// main thread; only the panel and the pasteboard come back to the main
     /// actor.
     @objc func exportTurnAnalysis(_ sender: Any?) {
-        guard let turn = turnForAnalysisExport(sender) else { return }
+        guard let node = exportTargetNode(sender), let turn = exportTurn(for: node) else { return }
         let request = turnAnalysisExportRequest(for: turn)
         // The outer Task stays on the main actor (so `view.window` and the panel
         // are touched only here); the detached child does the file reads.
@@ -3970,7 +4003,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     }
 
     @objc func copyTurnAnalysis(_ sender: Any?) {
-        guard let turn = turnForAnalysisExport(sender) else { return }
+        guard let node = exportTargetNode(sender), let turn = exportTurn(for: node) else { return }
         let request = turnAnalysisExportRequest(for: turn)
         Task {
             let document = await Task.detached(priority: .userInitiated) {

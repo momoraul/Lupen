@@ -236,11 +236,12 @@ enum TurnAnalysisMarkdownRenderer {
         }
 
         if !bundle.composition.isEmpty {
-            lines.append("### What filled the context")
+            lines.append("### Cost by category")
             lines.append("")
             lines.append("| category | tokens | cost |")
             lines.append("|---|---|---|")
-            for slice in bundle.composition.sorted(by: { $0.tokens > $1.tokens }) {
+            // Already ordered by cost; the column sums to the turn total.
+            for slice in bundle.composition {
                 let label = slice.isEstimate ? "\(slice.label) _(est.)_" : slice.label
                 lines.append(row(label, integer(slice.tokens), slice.costUSD.map(money) ?? "—"))
             }
@@ -333,6 +334,11 @@ enum TurnAnalysisMarkdownRenderer {
     private static func subAgentSection(_ bundle: TurnAnalysisBundle) -> [String] {
         guard !bundle.subAgents.isEmpty else { return [] }
         var lines = ["## 7. Subagents spawned", ""]
+        lines.append(
+            "_Each subagent's cost below is already included in the turn total above — "
+            + "do not add these to it._"
+        )
+        lines.append("")
         for agent in bundle.subAgents {
             let name = [agent.agentType, agent.nickname].compactMap { $0 }.joined(separator: " · ")
             lines.append("### \(name.isEmpty ? agent.identifier : name)")
@@ -379,7 +385,7 @@ enum TurnAnalysisMarkdownRenderer {
                 integer(total.callCount),
                 total.errorCount > 0 ? integer(total.errorCount) : "—",
                 integer(total.totalResultCharacters),
-                total.derivedSeconds.map(TurnTimeline.formatDuration) ?? "—"
+                toolTime(total.derivedSeconds, idle: total.includesLikelyIdle)
             ))
         }
         lines.append("")
@@ -395,12 +401,21 @@ enum TurnAnalysisMarkdownRenderer {
                 name,
                 singleLine(call.inputSummary),
                 call.resultCharacters.map(integer) ?? "—",
-                call.derivedSeconds.map(TurnTimeline.formatDuration) ?? "—",
+                toolTime(call.derivedSeconds, idle: call.includesLikelyIdle),
                 call.isError ? "yes" : ""
             ))
         }
         lines.append("")
         return lines
+    }
+
+    /// A tool time cell, marked when the gap likely contains a permission
+    /// prompt or an away user rather than tool compute — so the reader does not
+    /// chase a tool that actually ran in milliseconds.
+    private static func toolTime(_ seconds: TimeInterval?, idle: Bool) -> String {
+        guard let seconds else { return "—" }
+        let formatted = TurnTimeline.formatDuration(seconds)
+        return idle ? "\(formatted) ⚠ idle?" : formatted
     }
 
     // MARK: - 9. Trace
@@ -480,7 +495,10 @@ enum TurnAnalysisMarkdownRenderer {
               let home = options.homeDirectoryPath,
               !home.isEmpty, home != "/" else { return document }
         let trimmed = home.hasSuffix("/") ? String(home.dropLast()) : home
-        return document.replacingOccurrences(of: trimmed, with: "~")
+        // Anchor on the trailing slash so only true sub-paths of home are
+        // rewritten. Replacing the bare prefix would corrupt a sibling like
+        // `/Users/alice2` into `~2` when home is `/Users/alice`.
+        return document.replacingOccurrences(of: trimmed + "/", with: "~/")
     }
 
     // MARK: - Formatting
@@ -512,16 +530,11 @@ enum TurnAnalysisMarkdownRenderer {
         return String(format: "$%.2f", value)
     }
 
-    /// POSIX for locale-stable output, with the grouping separator set by hand —
-    /// `en_US_POSIX` supplies none, so `.decimal` alone would print `412905`
-    /// where the document wants `412,905`.
+    /// Thousands-grouped, e.g. `412,905`. Reuses the CLI's allocation-free
+    /// grouping helper rather than spinning up a NumberFormatter per cell (this
+    /// is called once per numeric cell across the whole document).
     static func integer(_ value: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.usesGroupingSeparator = true
-        formatter.groupingSeparator = ","
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+        CLIFormat.int(value)
     }
 
     static func percent(_ share: Double) -> String {
@@ -533,11 +546,18 @@ enum TurnAnalysisMarkdownRenderer {
         return String(format: "%.1f×", ratio)
     }
 
-    private static func iso(_ date: Date) -> String {
+    /// Cached: the format, locale and time zone are constant, and DateFormatter
+    /// is the most expensive Foundation formatter to build — no reason to
+    /// reconstruct it for each of the (few) timestamps in a document.
+    private static let isoFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         formatter.timeZone = .autoupdatingCurrent
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    private static func iso(_ date: Date) -> String {
+        isoFormatter.string(from: date)
     }
 }

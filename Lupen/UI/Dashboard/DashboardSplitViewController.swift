@@ -463,7 +463,7 @@ final class DashboardSplitViewController: NSSplitViewController {
             // Grey out rather than ringing the system bell on ⇧⌘E when no row
             // is selected. `nil` sender means "use the selection", which is
             // exactly what the menu path does.
-            return turnOutlineVC.turnForAnalysisExport(nil) != nil
+            return turnOutlineVC.canExportTurnAnalysis(nil)
         default:
             return true
         }

@@ -195,7 +195,8 @@ struct TurnAnalysisBundle: Sendable, Equatable {
         let stepCount: Int
         let tokens: Int
         let costUSD: Double
-        /// 0…1 of the turn's total cost.
+        /// 0…1 of the turn's direct step cost (excludes sub-agent turns, the
+        /// same scope as `costUSD`, so the fraction is apples-to-apples).
         let shareOfTurn: Double
         /// `true` when the name came from Claude's `attributionSkill` (ground
         /// truth, stamped on every entry a skill produced) rather than from
@@ -230,9 +231,15 @@ struct TurnAnalysisBundle: Sendable, Equatable {
         let inputSummary: String
         let resultCharacters: Int?
         let isError: Bool
-        /// Derived from `tool_result.timestamp − tool_use.timestamp`. Claude
-        /// has no native per-call duration field, so this is always derived.
+        /// Time attributed to the call. A measured value (web tools, MCP) when
+        /// available, else `tool_result.timestamp − tool_use.timestamp` — Claude
+        /// has no native per-call duration, so the fallback is derived.
         let derivedSeconds: TimeInterval?
+        /// `true` when `derivedSeconds` is a derived gap past
+        /// `TurnTimeline.idleBreakThreshold`: the wait very likely contains a
+        /// permission prompt or the user stepping away, not tool compute. Same
+        /// flag the step trace carries, so the two views agree.
+        let includesLikelyIdle: Bool
     }
 
     /// Per-tool rollup — the "you called Read 41 times" view that a
@@ -243,6 +250,9 @@ struct TurnAnalysisBundle: Sendable, Equatable {
         let errorCount: Int
         let totalResultCharacters: Int
         let derivedSeconds: TimeInterval?
+        /// `true` when any call folded into this total was idle-inflated, so the
+        /// summed time cannot be read as pure tool compute.
+        let includesLikelyIdle: Bool
     }
 
     // MARK: - Trace

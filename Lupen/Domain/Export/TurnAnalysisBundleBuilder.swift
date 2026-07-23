@@ -47,6 +47,9 @@ enum TurnAnalysisBundleBuilder {
         let displayTokens: TokenBreakdown
         let projectLabel: String?
         let sessionTitle: String?
+        /// Wall clock for this turn, measured the same way the baseline samples
+        /// are. `nil` falls back to the step-timestamp span.
+        let turnDurationSeconds: TimeInterval?
         /// Every turn in the session, including this one — the comparison basis.
         let sessionSamples: [MetricSample]
         let skillGroups: [SkillGroupBuilder.SkillGroup]
@@ -63,6 +66,7 @@ enum TurnAnalysisBundleBuilder {
             displayTokens: TokenBreakdown,
             projectLabel: String? = nil,
             sessionTitle: String? = nil,
+            turnDurationSeconds: TimeInterval? = nil,
             sessionSamples: [MetricSample] = [],
             skillGroups: [SkillGroupBuilder.SkillGroup] = [],
             subAgentLinks: [SubAgentLinker.Link] = [],
@@ -77,6 +81,7 @@ enum TurnAnalysisBundleBuilder {
             self.displayTokens = displayTokens
             self.projectLabel = projectLabel
             self.sessionTitle = sessionTitle
+            self.turnDurationSeconds = turnDurationSeconds
             self.sessionSamples = sessionSamples
             self.skillGroups = skillGroups
             self.subAgentLinks = subAgentLinks
@@ -92,7 +97,11 @@ enum TurnAnalysisBundleBuilder {
     static func build(_ inputs: Inputs) -> TurnAnalysisBundle {
         var ledger = TurnExportLedger(budget: inputs.budget)
         let steps = inputs.turn.steps
-        let totalCost = inputs.displayCost.totalCostUSD
+        // Skill shares divide by the turn's OWN direct step cost, not the
+        // display total: a skill's cost is summed from its steps (which never
+        // include sub-agent turns), so dividing by a sub-agent-inclusive total
+        // would understate every skill. Same scope on both sides.
+        let directCost = steps.compactMap(\.cost).reduce(0) { $0 + $1.totalCostUSD }
 
         let toolCalls = makeToolCalls(steps: steps, facts: inputs.rawFacts)
 
@@ -106,7 +115,7 @@ enum TurnAnalysisBundleBuilder {
             composition: makeComposition(inputs.composition),
             timeline: makeTimeline(steps: steps, facts: inputs.rawFacts),
             prompt: makePrompt(inputs, ledger: &ledger),
-            skills: makeSkills(inputs, totalCost: totalCost),
+            skills: makeSkills(inputs, totalCost: directCost),
             subAgents: makeSubAgents(inputs),
             toolCalls: toolCalls,
             toolTotals: makeToolTotals(toolCalls),
@@ -152,7 +161,10 @@ enum TurnAnalysisBundleBuilder {
         let samples = inputs.sessionSamples
         let cost = inputs.displayCost.totalCostUSD
         let tokens = inputs.displayTokens.totalContextTokens
-        let duration = inputs.turn.startTime.flatMap { start in
+        // Prefer the caller's duration (same aggregate-preferred clock as the
+        // baseline samples); fall back to the step-timestamp span only when the
+        // caller supplied none, so numerator and denominator stay comparable.
+        let duration = inputs.turnDurationSeconds ?? inputs.turn.startTime.flatMap { start in
             inputs.turn.endTime.map { $0.timeIntervalSince(start) }
         }.flatMap { $0 > 0 ? $0 : nil }
 
@@ -219,21 +231,27 @@ enum TurnAnalysisBundleBuilder {
         _ result: ContextComposition.Result?
     ) -> [TurnAnalysisBundle.TokenSlice] {
         guard let result else { return [] }
-        let costByCategory = Dictionary(
-            result.cost.map { ($0.category, $0.costUSD) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        // Context slices describe what fills the window — the framing that makes
-        // "why is this expensive" answerable. Generation slices are folded in by
-        // label so a category appearing on both sides reads once.
-        return (result.context + result.generation).map { slice in
-            TurnAnalysisBundle.TokenSlice(
-                label: slice.category.label,
-                tokens: slice.estTokens,
-                costUSD: costByCategory[slice.category],
-                isEstimate: slice.isEstimate
-            )
+        // A category can appear on BOTH the context and generation sides — Reply
+        // is the common case (its text both fills the window and is generated
+        // output). `result.cost` has already merged those into one entry per
+        // category whose sum equals the real billed total, so driving the table
+        // off it makes each category — and its cost — appear exactly once and
+        // the cost column reconcile. Concatenating context+generation instead
+        // would print Reply twice, each with the full merged cost.
+        var tokensByCategory: [ContextComposition.Category: Int] = [:]
+        for slice in result.context + result.generation {
+            tokensByCategory[slice.category, default: 0] += slice.estTokens
         }
+        return result.cost
+            .sorted { $0.costUSD > $1.costUSD }
+            .map { slice in
+                TurnAnalysisBundle.TokenSlice(
+                    label: slice.category.label,
+                    tokens: tokensByCategory[slice.category] ?? 0,
+                    costUSD: slice.costUSD,
+                    isEstimate: slice.isEstimate
+                )
+            }
     }
 
     // MARK: - Timeline
@@ -285,7 +303,11 @@ enum TurnAnalysisBundleBuilder {
     private static func makePrompt(_ inputs: Inputs, ledger: inout TurnExportLedger) -> String? {
         guard let text = inputs.turn.promptStep?.text, !text.isEmpty else { return nil }
         let clipped = TurnExportBudget.clip(text, head: inputs.budget.promptHead)
-        if clipped.count < text.count { ledger.note("prompt tail") }
+        // Test truncation by the source length, not `clipped.count < text.count`:
+        // for a prompt only slightly over the cap the omission marker is longer
+        // than the few characters it replaced, so the clipped string can be
+        // *longer* than the original and the drop would go unrecorded.
+        if text.count > inputs.budget.promptHead { ledger.note("prompt tail") }
         ledger.spend(clipped.count)
         return clipped
     }
@@ -434,13 +456,20 @@ enum TurnAnalysisBundleBuilder {
                     inputSummary: call.abbreviatedInput(limit: 160),
                     resultCharacters: nil,
                     isError: false,
-                    derivedSeconds: facts.measuredToolSeconds[call.id]
+                    derivedSeconds: facts.measuredToolSeconds[call.id],
+                    includesLikelyIdle: false
                 )
             }
 
             guard let result = step.toolResult, let call = pending[result.toolUseId] else { continue }
-            let derived = facts.measuredToolSeconds[result.toolUseId]
-                ?? max(0, step.timestamp.timeIntervalSince(call.timestamp))
+            // A measured value is real tool time; the timestamp-delta fallback
+            // can absorb a permission prompt or the user stepping away, so flag
+            // it as likely-idle past the same threshold the step trace uses —
+            // otherwise a tool that ran in milliseconds ranks first for "time".
+            let measured = facts.measuredToolSeconds[result.toolUseId]
+            let gap = max(0, step.timestamp.timeIntervalSince(call.timestamp))
+            let derived = measured ?? gap
+            let idle = measured == nil && gap > TurnTimeline.idleBreakThreshold
             entries[call.ordinal] = TurnAnalysisBundle.ToolCallEntry(
                 ordinal: call.ordinal,
                 name: call.name,
@@ -448,7 +477,8 @@ enum TurnAnalysisBundleBuilder {
                 inputSummary: call.inputSummary,
                 resultCharacters: result.content.count,
                 isError: result.isError,
-                derivedSeconds: derived
+                derivedSeconds: derived,
+                includesLikelyIdle: idle
             )
         }
         return entries.keys.sorted().compactMap { entries[$0] }
@@ -472,7 +502,8 @@ enum TurnAnalysisBundleBuilder {
                     callCount: group.count,
                     errorCount: group.filter(\.isError).count,
                     totalResultCharacters: group.compactMap(\.resultCharacters).reduce(0, +),
-                    derivedSeconds: seconds.isEmpty ? nil : seconds.reduce(0, +)
+                    derivedSeconds: seconds.isEmpty ? nil : seconds.reduce(0, +),
+                    includesLikelyIdle: group.contains(where: \.includesLikelyIdle)
                 )
             }
             .sorted { ($0.derivedSeconds ?? 0, $0.callCount) > ($1.derivedSeconds ?? 0, $1.callCount) }
@@ -571,6 +602,19 @@ enum TurnAnalysisBundleBuilder {
             caveats.append(
                 "Too few turns in this session for a meaningful baseline, so the "
                 + "\"vs. session median\" column is weak evidence."
+            )
+        }
+        // Skill shares divide by direct step cost; when sub-agents contributed,
+        // say so, or a reader takes the shares as a fraction of the (larger)
+        // headline total and reads every skill as smaller than it was.
+        let directCost = inputs.turn.steps.compactMap(\.cost).reduce(0) { $0 + $1.totalCostUSD }
+        let subAgentCost = inputs.displayCost.totalCostUSD - directCost
+        if subAgentCost > 0.005, !inputs.rawFacts.skillByStepUuid.isEmpty || !inputs.skillGroups.isEmpty {
+            caveats.append(
+                "Skill \"share of turn\" is a fraction of this turn's direct step cost "
+                + "(\(TurnAnalysisMarkdownRenderer.money(directCost))); sub-agent cost "
+                + "(\(TurnAnalysisMarkdownRenderer.money(subAgentCost))) is not attributed to a "
+                + "skill and is excluded from these shares."
             )
         }
         return caveats

@@ -27,6 +27,10 @@ enum TurnAnalysisExporter {
         let displayTokens: TokenBreakdown
         var projectLabel: String?
         var sessionTitle: String?
+        /// Wall clock for this turn, measured the same way the session baseline
+        /// samples are (aggregate-preferred), so the "vs. median" ratio compares
+        /// like with like. `nil` falls back to the step-timestamp span.
+        var turnDurationSeconds: TimeInterval?
         var sessionSamples: [TurnAnalysisBundleBuilder.MetricSample] = []
         var skillGroups: [SkillGroupBuilder.SkillGroup] = []
         var subAgentLinks: [SubAgentLinker.Link] = []
@@ -70,6 +74,7 @@ enum TurnAnalysisExporter {
                 displayTokens: request.displayTokens,
                 projectLabel: request.projectLabel,
                 sessionTitle: request.sessionTitle,
+                turnDurationSeconds: request.turnDurationSeconds,
                 sessionSamples: request.sessionSamples,
                 skillGroups: request.skillGroups,
                 subAgentLinks: request.subAgentLinks,
