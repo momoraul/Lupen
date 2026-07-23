@@ -159,7 +159,9 @@ enum TurnAnalysisMarkdownRenderer {
         // the miss "dominated" would contradict it on an output-bound turn.
         if !bundle.cacheDiagnostics.isEmpty {
             let reasons = bundle.cacheDiagnostics.reasonCounts
-                .sorted { $0.value > $1.value }
+                // Key tiebreak so ties don't order by dict hash (nondeterministic
+                // across launches) — two exports of one turn must match.
+                .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
                 .map { "`\($0.key)` ×\($0.value)" }
                 .joined(separator: ", ")
             lines.append(
@@ -201,7 +203,9 @@ enum TurnAnalysisMarkdownRenderer {
         }
         for (label, value) in facts {
             guard let value, !value.isEmpty else { continue }
-            lines.append("- **\(label)**: \(value)")
+            // singleLine so a log-sourced value (cwd, git branch) with an
+            // embedded newline can't break the bullet and inject a fake line.
+            lines.append("- **\(label)**: \(singleLine(value))")
         }
         lines.append("")
         return lines
@@ -308,14 +312,9 @@ enum TurnAnalysisMarkdownRenderer {
 
     private static func promptSection(_ bundle: TurnAnalysisBundle) -> [String] {
         guard let prompt = bundle.prompt else { return [] }
-        return [
-            "## 5. The prompt that started this turn",
-            "",
-            "````text",
-            prompt,
-            "````",
-            ""
-        ]
+        return ["## 5. The prompt that started this turn", ""]
+            + fencedBlock(prompt)
+            + [""]
     }
 
     // MARK: - 6. Skills
@@ -358,7 +357,9 @@ enum TurnAnalysisMarkdownRenderer {
         lines.append("")
         for agent in bundle.subAgents {
             let name = [agent.agentType, agent.nickname].compactMap { $0 }.joined(separator: " · ")
-            lines.append("### \(name.isEmpty ? agent.identifier : name)")
+            // singleLine the heading: a log-sourced nickname with an embedded
+            // newline would otherwise end the H3 and inject a fake heading.
+            lines.append("### \(singleLine(name.isEmpty ? agent.identifier : name))")
             lines.append("")
             if let description = agent.description {
                 lines.append("> \(singleLine(description))")
@@ -378,7 +379,8 @@ enum TurnAnalysisMarkdownRenderer {
             if !agent.toolStats.isEmpty {
                 let stats = agent.toolStats
                     .filter { $0.value > 0 }
-                    .sorted { $0.value > $1.value }
+                    // Key tiebreak for determinism across launches (dict source).
+                    .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
                     .map { "\($0.key) \($0.value)" }
                     .joined(separator: ", ")
                 if !stats.isEmpty { lines.append("- tool breakdown: \(stats)") }
@@ -475,13 +477,32 @@ enum TurnAnalysisMarkdownRenderer {
             lines.append(headerParts.joined(separator: " · "))
             if let body = entry.body, !body.isEmpty {
                 lines.append("")
-                lines.append("````text")
-                lines.append(body)
-                lines.append("````")
+                lines.append(contentsOf: fencedBlock(body))
             }
             lines.append("")
         }
         return lines
+    }
+
+    /// Wraps verbatim content (prompt, trace body) in a fenced code block whose
+    /// fence is longer than any run of backticks inside it. Content that itself
+    /// contains ``` or ```` — a tool that read a Markdown file, or a prompt
+    /// about Markdown — would otherwise close the block on its first bare
+    /// backtick line and inject live, attacker-shaped structure (fake sections,
+    /// fake cost tables) into the document.
+    static func fencedBlock(_ body: String, lang: String = "text") -> [String] {
+        var longestRun = 0
+        var current = 0
+        for character in body {
+            if character == "`" {
+                current += 1
+                longestRun = max(longestRun, current)
+            } else {
+                current = 0
+            }
+        }
+        let fence = String(repeating: "`", count: max(3, longestRun + 1))
+        return ["\(fence)\(lang)", body, fence]
     }
 
     // MARK: - Omissions
@@ -584,12 +605,18 @@ enum TurnAnalysisMarkdownRenderer {
         CLIFormat.int(value)
     }
 
+    /// Small-but-nonzero shares render as "<1%" rather than "0%": a driver row
+    /// with a real dollar amount reading "0%" is internally contradictory.
     static func percent(_ share: Double) -> String {
-        String(format: "%.0f%%", share * 100)
+        if share > 0, share < 0.005 { return "<1%" }
+        return String(format: "%.0f%%", share * 100)
     }
 
     private static func ratio(_ metric: TurnAnalysisBundle.Metric) -> String {
         guard let ratio = metric.ratioToSessionMedian else { return "—" }
+        // A small positive ratio reads as "0.0×" (negligible) under %.1f; show
+        // "<0.1×" so it isn't mistaken for "zero times the median".
+        if ratio > 0, ratio < 0.05 { return "<0.1×" }
         return String(format: "%.1f×", ratio)
     }
 

@@ -363,7 +363,9 @@ enum TurnAnalysisBundleBuilder {
                         isAttributed: true
                     )
                 }
-                .sorted { $0.costUSD > $1.costUSD }
+                // Name tiebreak: `stepsByName` is a dict, so equal-cost skills
+                // would otherwise order by hash — nondeterministic per launch.
+                .sorted { $0.costUSD != $1.costUSD ? $0.costUSD > $1.costUSD : $0.name < $1.name }
         }
 
         return inputs.skillGroups
