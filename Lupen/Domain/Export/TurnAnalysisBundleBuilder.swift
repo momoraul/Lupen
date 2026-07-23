@@ -170,10 +170,13 @@ enum TurnAnalysisBundleBuilder {
 
         // A ratio needs at least one OTHER turn to compare against. `samples`
         // always includes this turn, so a lone-turn session would otherwise
-        // report "1.0×" — the turn measured against itself, reading as
-        // "average" when there is nothing to average over.
+        // report "1.0×" — the turn measured against itself. Gate on the count
+        // AFTER the positive filter median() applies, not the raw sample count:
+        // a 2-turn session whose other turn contributes a zero or nil value
+        // (a SQLite-first stub reports duration 0) collapses back to this turn
+        // alone, which would still read 1.0× if we trusted samples.count.
         func baseline(_ values: [Double]) -> Double? {
-            samples.count >= 2 ? median(values) : nil
+            values.filter { $0 > 0 }.count >= 2 ? median(values) : nil
         }
 
         return TurnAnalysisBundle.Metrics(
@@ -476,6 +479,7 @@ enum TurnAnalysisBundleBuilder {
                     resultCharacters: nil,
                     isError: false,
                     derivedSeconds: facts.measuredToolSeconds[call.id],
+                    isMeasured: facts.measuredToolSeconds[call.id] != nil,
                     includesLikelyIdle: false
                 )
             }
@@ -500,6 +504,7 @@ enum TurnAnalysisBundleBuilder {
                 resultCharacters: result.content.count,
                 isError: result.isError,
                 derivedSeconds: derived,
+                isMeasured: measured != nil,
                 includesLikelyIdle: idle
             )
         }
@@ -518,13 +523,15 @@ enum TurnAnalysisBundleBuilder {
         return order
             .compactMap { name -> TurnAnalysisBundle.ToolTotal? in
                 guard let group = grouped[name] else { return nil }
-                let seconds = group.compactMap(\.derivedSeconds)
+                let timed = group.filter { $0.derivedSeconds != nil }
+                let seconds = timed.compactMap(\.derivedSeconds)
                 return TurnAnalysisBundle.ToolTotal(
                     name: name,
                     callCount: group.count,
                     errorCount: group.filter(\.isError).count,
                     totalResultCharacters: group.compactMap(\.resultCharacters).reduce(0, +),
                     derivedSeconds: seconds.isEmpty ? nil : seconds.reduce(0, +),
+                    allMeasured: !timed.isEmpty && timed.allSatisfy(\.isMeasured),
                     includesLikelyIdle: group.contains(where: \.includesLikelyIdle)
                 )
             }

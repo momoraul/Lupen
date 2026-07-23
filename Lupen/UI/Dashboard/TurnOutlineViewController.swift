@@ -3918,7 +3918,12 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
             displayCost: displayCost(for: turn),
             displayTokens: displayTokens(for: turn)
         )
-        request.sessionSamples = sessionMetricSamples()
+        // The "vs. session median" baseline is the session's top-level turns.
+        // A sub-agent turn is not one of them, so comparing it against them
+        // would be apples-to-oranges (and would break the "samples includes
+        // this turn" invariant); pass no baseline in that case so the ratio
+        // simply reads "—".
+        request.sessionSamples = turns.contains { $0.id == turn.id } ? sessionMetricSamples() : []
         // Same aggregate-preferred clock the samples use, so the current turn's
         // duration and the session baseline it is compared against are measured
         // the same way (a stub's synthetic step reports start == end).

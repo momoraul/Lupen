@@ -23,8 +23,9 @@ enum TurnAnalysisExportPresenter {
     /// the whole point of this file is to be handed to an AI, so the contents
     /// deserve a plain statement rather than a surprise.
     static let privacyMessage = """
-        This document contains your prompt text, file paths, and tool output from \
-        this turn. Review it before sharing it with an external service.
+        This document contains your prompt text, the assistant's replies and \
+        reasoning, file paths, and tool output from this turn. Review it before \
+        sharing it with an external service.
         """
 
     static func save(document: String, provider: ProviderKind, in window: NSWindow?) {

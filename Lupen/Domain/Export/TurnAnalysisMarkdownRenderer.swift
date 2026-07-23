@@ -100,8 +100,17 @@ enum TurnAnalysisMarkdownRenderer {
         }
         lines.append(row("Steps", integer(bundle.header.stepCount), "—"))
         lines.append("")
-        lines.append("_Baseline is the median of \(bundle.metrics.sessionTurnCount) turn(s) in this session._")
-        lines.append("")
+        // Only claim a baseline when one actually backs the ratios; with fewer
+        // than two turns the "vs. median" column is "—", so a "median of 1
+        // turn(s)" line would just be noise (and misleading for a sub-agent
+        // export, whose subject is not among the session's turns at all).
+        if bundle.metrics.sessionTurnCount >= 2 {
+            lines.append(
+                "_Baseline is the median of \(bundle.metrics.sessionTurnCount) "
+                + "turns in this session._"
+            )
+            lines.append("")
+        }
         return lines
     }
 
@@ -144,8 +153,10 @@ enum TurnAnalysisMarkdownRenderer {
         }
         lines.append("")
 
-        // The cache-miss callout is the single most actionable line in the
-        // document when it fires, so it sits immediately under the ranking.
+        // Cache misses are a common hidden cost, so surface them under the
+        // ranking — but as a lead to check, not a verdict. The driver table
+        // above is the authority on where the money actually went; asserting
+        // the miss "dominated" would contradict it on an output-bound turn.
         if !bundle.cacheDiagnostics.isEmpty {
             let reasons = bundle.cacheDiagnostics.reasonCounts
                 .sorted { $0.value > $1.value }
@@ -155,9 +166,10 @@ enum TurnAnalysisMarkdownRenderer {
                 "> ⚠ **\(bundle.cacheDiagnostics.missCount) prompt-cache miss(es)** — \(reasons)."
             )
             lines.append(
-                "> A miss re-bills the whole context at input rate instead of the much cheaper "
-                + "cache-read rate, so it is usually the dominant cause of a turn that costs "
-                + "several times its neighbours."
+                "> A miss re-bills the affected context at input rate instead of the cheaper "
+                + "cache-read rate. Check whether the \"Input (uncached)\" or \"Cache writes\" "
+                + "rows above are inflated — if those already sit low in the ranking, the miss "
+                + "was not this turn's main cost."
             )
             lines.append("")
         }
@@ -226,8 +238,13 @@ enum TurnAnalysisMarkdownRenderer {
         lines.append("")
 
         if let window = tokens.contextWindow, window > 0 {
-            let fill = Double(tokens.totalContextTokens) / Double(window)
-            lines.append("Context window: \(integer(window)) tokens (\(percent(fill)) filled at peak).")
+            // The model's window capacity, stated as a bare fact. Deliberately
+            // NOT a "% filled": totalContextTokens is the turn's CUMULATIVE
+            // token sum across every step (cache reads re-count each turn), not
+            // a point-in-time occupancy, so dividing it by the capacity
+            // produced figures well over 100% and read as a context overflow
+            // that never happened.
+            lines.append("Model context window: \(integer(window)) tokens.")
             lines.append("")
         }
         if let ratio = tokens.cacheEfficiencyRatio {
@@ -377,7 +394,10 @@ enum TurnAnalysisMarkdownRenderer {
         guard !bundle.toolCalls.isEmpty else { return [] }
         var lines = ["## 8. Tool calls", ""]
 
-        lines.append("| tool | calls | errors | result chars | time _(derived)_ |")
+        // The time column is derived by default (Claude has no per-call
+        // duration); cells that were actually tool-measured say so, so a real
+        // measurement is not discounted under the blanket label.
+        lines.append("| tool | calls | errors | result chars | time _(derived unless noted)_ |")
         lines.append("|---|---|---|---|---|")
         for total in bundle.toolTotals {
             lines.append(row(
@@ -385,14 +405,14 @@ enum TurnAnalysisMarkdownRenderer {
                 integer(total.callCount),
                 total.errorCount > 0 ? integer(total.errorCount) : "—",
                 integer(total.totalResultCharacters),
-                toolTime(total.derivedSeconds, idle: total.includesLikelyIdle)
+                toolTime(total.derivedSeconds, measured: total.allMeasured, idle: total.includesLikelyIdle)
             ))
         }
         lines.append("")
 
         lines.append("### Call-by-call")
         lines.append("")
-        lines.append("| # | tool | input | result chars | time _(derived)_ | error |")
+        lines.append("| # | tool | input | result chars | time _(derived unless noted)_ | error |")
         lines.append("|---|---|---|---|---|---|")
         // The turns this export targets can hold hundreds of tool calls; an
         // uncapped ledger alone would blow the whole-document budget. Cap the
@@ -405,7 +425,7 @@ enum TurnAnalysisMarkdownRenderer {
                 name,
                 singleLine(call.inputSummary),
                 call.resultCharacters.map(integer) ?? "—",
-                toolTime(call.derivedSeconds, idle: call.includesLikelyIdle),
+                toolTime(call.derivedSeconds, measured: call.isMeasured, idle: call.includesLikelyIdle),
                 call.isError ? "yes" : ""
             ))
         }
@@ -422,12 +442,13 @@ enum TurnAnalysisMarkdownRenderer {
     /// complete; only the exhaustive list is bounded.
     private static let maxCallByCallRows = 200
 
-    /// A tool time cell, marked when the gap likely contains a permission
-    /// prompt or an away user rather than tool compute — so the reader does not
-    /// chase a tool that actually ran in milliseconds.
-    private static func toolTime(_ seconds: TimeInterval?, idle: Bool) -> String {
+    /// A tool time cell. A measured value is marked so it is not discounted
+    /// under the column's default "derived" label; an idle-inflated derived gap
+    /// is flagged so the reader does not chase a tool that ran in milliseconds.
+    private static func toolTime(_ seconds: TimeInterval?, measured: Bool, idle: Bool) -> String {
         guard let seconds else { return "—" }
         let formatted = TurnTimeline.formatDuration(seconds)
+        if measured { return "\(formatted) _(measured)_" }
         return idle ? "\(formatted) ⚠ idle?" : formatted
     }
 
@@ -508,13 +529,18 @@ enum TurnAnalysisMarkdownRenderer {
               let home = options.homeDirectoryPath,
               !home.isEmpty, home != "/" else { return document }
         let trimmed = home.hasSuffix("/") ? String(home.dropLast()) : home
-        // Redact the home path at a path boundary — followed by "/", a
-        // delimiter, or end of string — so both "/Users/alice" (a bare cwd)
-        // and "/Users/alice/x" redact, while a sibling like "/Users/alice2"
-        // or "/Users/alice.bak" is left intact. A plain prefix replace would
-        // corrupt the sibling; anchoring only on "/" would miss the bare path
-        // and leak the username the redaction exists to strip.
-        let pattern = NSRegularExpression.escapedPattern(for: trimmed) + "(?![A-Za-z0-9_.-])"
+        // Redact the home path at a path boundary. Two lookaheads:
+        //   (?![A-Za-z0-9_-])   — not a name char, so "/Users/alice2" and
+        //                         "/Users/alice-work" (siblings) are left intact;
+        //   (?!\.[A-Za-z0-9])   — a following "." is a sibling suffix only when
+        //                         it leads into more name chars (".bak"), so a
+        //                         dotted sibling stays, but a sentence-ending
+        //                         "/Users/alice." still redacts (privacy wins
+        //                         the ambiguous case).
+        // Both "/Users/alice" and "/Users/alice/x" redact; the bare cwd no
+        // longer leaks the username.
+        let pattern = NSRegularExpression.escapedPattern(for: trimmed)
+            + "(?![A-Za-z0-9_-])(?!\\.[A-Za-z0-9])"
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return document.replacingOccurrences(of: trimmed + "/", with: "~/")
         }

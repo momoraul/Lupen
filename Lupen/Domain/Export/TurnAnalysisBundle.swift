@@ -235,6 +235,11 @@ struct TurnAnalysisBundle: Sendable, Equatable {
         /// available, else `tool_result.timestamp − tool_use.timestamp` — Claude
         /// has no native per-call duration, so the fallback is derived.
         let derivedSeconds: TimeInterval?
+        /// `true` when `derivedSeconds` came from a tool-reported measurement
+        /// (WebSearch/WebFetch, Codex MCP) rather than the timestamp gap. The
+        /// column is labelled derived by default, so a measured call must say so
+        /// or the analyst discounts the turn's most reliable timing.
+        let isMeasured: Bool
         /// `true` when `derivedSeconds` is a derived gap past
         /// `TurnTimeline.idleBreakThreshold`: the wait very likely contains a
         /// permission prompt or the user stepping away, not tool compute. Same
@@ -250,6 +255,9 @@ struct TurnAnalysisBundle: Sendable, Equatable {
         let errorCount: Int
         let totalResultCharacters: Int
         let derivedSeconds: TimeInterval?
+        /// `true` only when every timed call folded into this total was
+        /// tool-measured; a mix stays derived (the conservative label).
+        let allMeasured: Bool
         /// `true` when any call folded into this total was idle-inflated, so the
         /// summed time cannot be read as pure tool compute.
         let includesLikelyIdle: Bool
