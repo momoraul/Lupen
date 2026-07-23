@@ -819,6 +819,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         fileMenu.addItem(.separator())
 
+        // Turn analysis export. `target = nil` so it rides the responder chain
+        // to whichever dashboard is frontmost — and so AppKit auto-disables it
+        // when no dashboard is open, with no `validateMenuItem` of its own.
+        let exportTurnItem = NSMenuItem(
+            title: "Export Turn Analysis…",
+            action: #selector(DashboardSplitViewController.exportTurnAnalysis(_:)),
+            keyEquivalent: "e"
+        )
+        exportTurnItem.keyEquivalentModifierMask = [.command, .shift]
+        exportTurnItem.target = nil
+        fileMenu.addItem(exportTurnItem)
+
+        let copyTurnItem = NSMenuItem(
+            title: "Copy Turn Analysis",
+            action: #selector(DashboardSplitViewController.copyTurnAnalysis(_:)),
+            keyEquivalent: ""
+        )
+        copyTurnItem.target = nil
+        fileMenu.addItem(copyTurnItem)
+
+        fileMenu.addItem(.separator())
+
         // A-1: non-destructive integrity check (PRAGMA quick_check) of the
         // derived index, run on demand off the main thread. Offers a rebuild
         // only if corruption is found.

@@ -391,6 +391,22 @@ final class DashboardSplitViewController: NSSplitViewController {
         turnOutlineVC.navigateToPreviousMatch(sender)
     }
 
+    // MARK: - File menu (turn analysis export, forwarded to the outline)
+
+    /// ⇧⌘E / File → "Export Turn Analysis…". Same reasoning as
+    /// `resumeSelectedSession(_:)`: the outline VC is only in the responder
+    /// chain while focus sits inside it, but the split view controller always
+    /// is, so this is the reliable landing point. With no turn selected the
+    /// outline's own guard makes it a no-op; `validateMenuItem` below greys the
+    /// item out first so the user sees that up front.
+    @objc func exportTurnAnalysis(_ sender: Any?) {
+        turnOutlineVC.exportTurnAnalysis(sender)
+    }
+
+    @objc func copyTurnAnalysis(_ sender: Any?) {
+        turnOutlineVC.copyTurnAnalysis(sender)
+    }
+
     // MARK: - Session menu (forwarded to sidebar)
 
     /// ⌘R / Session → "Resume in Claude Code". The real work lives on
@@ -442,6 +458,12 @@ final class DashboardSplitViewController: NSSplitViewController {
             // greys out when there's no session selection — stops the
             // system bell on ⌘R.
             return sessionListVC.validateMenuItem(menuItem)
+        case #selector(exportTurnAnalysis(_:)),
+             #selector(copyTurnAnalysis(_:)):
+            // Grey out rather than ringing the system bell on ⇧⌘E when no row
+            // is selected. `nil` sender means "use the selection", which is
+            // exactly what the menu path does.
+            return turnOutlineVC.turnForAnalysisExport(nil) != nil
         default:
             return true
         }

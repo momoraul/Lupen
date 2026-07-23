@@ -37,6 +37,11 @@ final class DetailViewController: NSViewController {
     private let usageView: UsageDetailView
     private let compositionView: CompositionDetailView
     private let finderButton = NSButton(title: "Reveal in Finder", target: nil, action: nil)
+    /// Exports the selected turn as an AI-analysis document. Placed here — next
+    /// to Reveal in Finder — because this is where the user already is when a
+    /// turn looks expensive, and `NSStackView` collapses it automatically while
+    /// it is hidden.
+    private let exportAnalysisButton = NSButton(title: "Export Turn Analysis", target: nil, action: nil)
     /// Xcode-style "toggle bottom pane" button. Visually indicates
     /// the detail pane's collapse state (filled glyph = visible,
     /// outline = hidden). Action delegated to the split-view owner
@@ -167,6 +172,21 @@ final class DetailViewController: NSViewController {
         finderButton.imagePosition = .imageLeading
         finderButton.target = self
         finderButton.action = #selector(revealInFinder)
+
+        exportAnalysisButton.bezelStyle = .accessoryBarAction
+        exportAnalysisButton.controlSize = .small
+        exportAnalysisButton.image = NSImage(
+            systemSymbolName: "square.and.arrow.up",
+            accessibilityDescription: "Export Turn Analysis"
+        )
+        exportAnalysisButton.imagePosition = .imageOnly
+        exportAnalysisButton.toolTip = "Export Turn Analysis…"
+        // Sent through the responder chain rather than wired to a local handler:
+        // the outline owns the turn, its aggregates and its sub-agent links, and
+        // duplicating that state here is exactly how two surfaces start
+        // disagreeing about what a turn cost.
+        exportAnalysisButton.target = nil
+        exportAnalysisButton.action = #selector(DashboardSplitViewController.exportTurnAnalysis(_:))
 
         // Xcode-style "hide bottom pane" glyph. Two design choices
         // that distinguish this from a generic flat icon:
@@ -326,6 +346,9 @@ final class DetailViewController: NSViewController {
         // empty space and the toggle.
         finderButton.isHidden = !hasSelection
         togglePaneSeparator.isHidden = !hasSelection
+        // Same rule: nothing selected, nothing to export. The stack collapses
+        // it to zero width, so the cluster stays tight.
+        exportAnalysisButton.isHidden = !hasSelection
 
         // Below-header content.
         if isMinimizedState {
@@ -419,6 +442,7 @@ final class DetailViewController: NSViewController {
         trailingClusterStack.orientation = .horizontal
         trailingClusterStack.alignment = .centerY
         trailingClusterStack.spacing = 8
+        trailingClusterStack.addArrangedSubview(exportAnalysisButton)
         trailingClusterStack.addArrangedSubview(finderButton)
         trailingClusterStack.addArrangedSubview(togglePaneSeparator)
         trailingClusterStack.addArrangedSubview(togglePaneButton)

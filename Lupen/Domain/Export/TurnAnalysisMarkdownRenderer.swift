@@ -1,0 +1,543 @@
+//
+//  TurnAnalysisMarkdownRenderer.swift
+//  Lupen
+//
+//  Created by jaden on 2026/07/20.
+//
+
+import Foundation
+
+/// Renders a `TurnAnalysisBundle` as the Markdown document the user hands to an
+/// AI.
+///
+/// ## Why Markdown
+///
+/// Format choice is a second-order decision — across a large multi-model
+/// benchmark, input format moved accuracy only a few points while model
+/// capability accounted for a ~21-point gap. So the format was picked on the
+/// criterion that actually differs: **the user must be able to read this before
+/// pasting it into an external service.** It contains their prompts, file paths,
+/// and command output. A human-reviewable artifact is a privacy feature.
+///
+/// ## Why this section order
+///
+/// Budget → mechanism → evidence → ask. A reader who stops after the first
+/// screen still has the actionable part, and the closing questions keep the
+/// model from producing a summary instead of a fix.
+///
+/// Pure string work — no AppKit, no filesystem, injected date — matching
+/// `ReportsCSVExporter`'s contract so the whole document is snapshot-testable.
+enum TurnAnalysisMarkdownRenderer {
+
+    struct Options: Sendable, Equatable {
+        /// Rewrites the user's home directory to `~` throughout the document.
+        /// On by default: absolute paths carry the account name, and the
+        /// document is destined for somewhere outside the machine.
+        var redactHomeDirectory: Bool
+        /// Injected rather than read from the environment so the redaction is
+        /// testable and deterministic.
+        var homeDirectoryPath: String?
+        /// Injected for deterministic output.
+        var generatedAt: Date?
+
+        init(
+            redactHomeDirectory: Bool = true,
+            homeDirectoryPath: String? = NSHomeDirectory(),
+            generatedAt: Date? = nil
+        ) {
+            self.redactHomeDirectory = redactHomeDirectory
+            self.homeDirectoryPath = homeDirectoryPath
+            self.generatedAt = generatedAt
+        }
+    }
+
+    // MARK: - Entry point
+
+    static func render(_ bundle: TurnAnalysisBundle, options: Options = Options()) -> String {
+        var out: [String] = []
+
+        out.append(contentsOf: titleAndSummary(bundle, options: options))
+        out.append(contentsOf: analysisBrief(bundle))
+        out.append(contentsOf: verdict(bundle))
+        out.append(contentsOf: context(bundle))
+        out.append(contentsOf: tokenSection(bundle))
+        out.append(contentsOf: timeSection(bundle))
+        out.append(contentsOf: promptSection(bundle))
+        out.append(contentsOf: skillSection(bundle))
+        out.append(contentsOf: subAgentSection(bundle))
+        out.append(contentsOf: toolSection(bundle))
+        out.append(contentsOf: traceSection(bundle))
+        out.append(contentsOf: omissionSection(bundle))
+        out.append(contentsOf: questions())
+
+        let document = out.joined(separator: "\n")
+        return redacted(document, options: options)
+    }
+
+    // MARK: - Header
+
+    private static func titleAndSummary(
+        _ bundle: TurnAnalysisBundle,
+        options: Options
+    ) -> [String] {
+        let header = bundle.header
+        let title = [header.projectLabel, header.sessionTitle]
+            .compactMap { $0 }
+            .joined(separator: " / ")
+        var lines = ["# Lupen Turn Analysis\(title.isEmpty ? "" : " — \(title)")", ""]
+        lines.append("<!-- lupen-turn-export: v\(TurnAnalysisBundle.schemaVersion) -->")
+        if let generatedAt = options.generatedAt {
+            lines.append("<!-- generated: \(iso(generatedAt)) -->")
+        }
+        lines.append("")
+
+        lines.append("| metric | value | vs. session median |")
+        lines.append("|---|---|---|")
+        lines.append(row("Cost", money(bundle.metrics.costUSD.value), ratio(bundle.metrics.costUSD)))
+        lines.append(row("Tokens", integer(Int(bundle.metrics.totalTokens.value)), ratio(bundle.metrics.totalTokens)))
+        if let duration = bundle.metrics.durationSeconds {
+            lines.append(row("Duration", TurnTimeline.formatDuration(duration.value), ratio(duration)))
+        }
+        lines.append(row("Steps", integer(bundle.header.stepCount), "—"))
+        lines.append("")
+        lines.append("_Baseline is the median of \(bundle.metrics.sessionTurnCount) turn(s) in this session._")
+        lines.append("")
+        return lines
+    }
+
+    private static func analysisBrief(_ bundle: TurnAnalysisBundle) -> [String] {
+        var lines = ["## What to analyze", ""]
+        lines.append(
+            "This is a single turn from an AI coding session, exported because it consumed "
+            + "an unusual amount of time or tokens. Identify the largest concrete causes and "
+            + "propose specific changes to the **skill**, **subagent**, or **prompt** involved."
+        )
+        lines.append("")
+        lines.append(
+            "Durations marked _(derived)_ are attributed from timestamp gaps, not measured — "
+            + "rank by them, but do not quote them as facts. Token slices marked _(est.)_ are "
+            + "split from character shares; only the totals are billed numbers."
+        )
+        lines.append("")
+        if !bundle.caveats.isEmpty {
+            for caveat in bundle.caveats {
+                lines.append("> ⚠ \(caveat)")
+            }
+            lines.append("")
+        }
+        return lines
+    }
+
+    // MARK: - 1. Verdict
+
+    private static func verdict(_ bundle: TurnAnalysisBundle) -> [String] {
+        var lines = ["## 1. Where the money went", ""]
+        if bundle.costDrivers.isEmpty {
+            lines.append("No billed cost was recorded for this turn.")
+            lines.append("")
+            return lines
+        }
+        lines.append("| driver | cost | share |")
+        lines.append("|---|---|---|")
+        for driver in bundle.costDrivers {
+            lines.append(row(driver.label, money(driver.costUSD), percent(driver.share)))
+        }
+        lines.append("")
+
+        // The cache-miss callout is the single most actionable line in the
+        // document when it fires, so it sits immediately under the ranking.
+        if !bundle.cacheDiagnostics.isEmpty {
+            let reasons = bundle.cacheDiagnostics.reasonCounts
+                .sorted { $0.value > $1.value }
+                .map { "`\($0.key)` ×\($0.value)" }
+                .joined(separator: ", ")
+            lines.append(
+                "> ⚠ **\(bundle.cacheDiagnostics.missCount) prompt-cache miss(es)** — \(reasons)."
+            )
+            lines.append(
+                "> A miss re-bills the whole context at input rate instead of the much cheaper "
+                + "cache-read rate, so it is usually the dominant cause of a turn that costs "
+                + "several times its neighbours."
+            )
+            lines.append("")
+        }
+        return lines
+    }
+
+    // MARK: - 2. Context
+
+    private static func context(_ bundle: TurnAnalysisBundle) -> [String] {
+        let header = bundle.header
+        var lines = ["## 2. Turn context", ""]
+        var facts: [(String, String?)] = [
+            ("Provider", header.provider == .codex ? "Codex" : "Claude Code"),
+            ("Model(s)", header.models.isEmpty ? nil : header.models.joined(separator: ", ")),
+            ("Started", header.startedAt.map(iso)),
+            ("Ended", header.endedAt.map(iso)),
+            ("Steps", "\(header.stepCount) (\(header.billableStepCount) billable)"),
+            ("Status", status(header)),
+            ("Stop reasons", header.stopReasons.isEmpty ? nil : header.stopReasons.joined(separator: ", ")),
+            ("Reasoning effort", header.reasoningEffort),
+            ("Personality", header.personality),
+            ("Approval policy", header.approvalPolicy),
+            ("Sandbox policy", header.sandboxPolicy),
+            ("Git branch", header.gitBranch),
+            ("Working directory", header.workingDirectory)
+        ]
+        if let confidence = header.costConfidence {
+            facts.append(("Cost confidence", "\(confidence.rawValue) — the total is approximate"))
+        }
+        for (label, value) in facts {
+            guard let value, !value.isEmpty else { continue }
+            lines.append("- **\(label)**: \(value)")
+        }
+        lines.append("")
+        return lines
+    }
+
+    private static func status(_ header: TurnAnalysisBundle.Header) -> String {
+        var flags: [String] = []
+        flags.append(header.isComplete ? "complete" : "incomplete")
+        if header.isInterrupted { flags.append("interrupted by user") }
+        if header.endedWithApiError { flags.append("ended with an API error") }
+        return flags.joined(separator: ", ")
+    }
+
+    // MARK: - 3. Tokens
+
+    private static func tokenSection(_ bundle: TurnAnalysisBundle) -> [String] {
+        let tokens = bundle.tokens
+        let cost = bundle.cost
+        var lines = ["## 3. Tokens and cost", ""]
+        lines.append("| category | tokens | cost |")
+        lines.append("|---|---|---|")
+        lines.append(row("Input (uncached)", integer(tokens.inputTokens), money(cost.inputCostUSD)))
+        lines.append(row("Cache read", integer(tokens.cacheReadInputTokens), money(cost.cacheReadCostUSD)))
+        lines.append(row(
+            "Cache write",
+            integer(tokens.cacheCreationInputTokens),
+            money(cost.cacheCreate1hCostUSD + cost.cacheCreate5mCostUSD)
+        ))
+        lines.append(row("Output", integer(tokens.outputTokens), money(cost.outputCostUSD)))
+        if tokens.reasoningOutputTokens > 0 {
+            lines.append(row("Reasoning", integer(tokens.reasoningOutputTokens), "(billed as output)"))
+        }
+        lines.append(row("**Total**", "**\(integer(tokens.totalContextTokens))**", "**\(money(cost.totalCostUSD))**"))
+        lines.append("")
+
+        if let window = tokens.contextWindow, window > 0 {
+            let fill = Double(tokens.totalContextTokens) / Double(window)
+            lines.append("Context window: \(integer(window)) tokens (\(percent(fill)) filled at peak).")
+            lines.append("")
+        }
+        if let ratio = tokens.cacheEfficiencyRatio {
+            lines.append("Cache efficiency: \(percent(ratio)) of input tokens were served from cache.")
+            lines.append("")
+        }
+
+        if !bundle.composition.isEmpty {
+            lines.append("### What filled the context")
+            lines.append("")
+            lines.append("| category | tokens | cost |")
+            lines.append("|---|---|---|")
+            for slice in bundle.composition.sorted(by: { $0.tokens > $1.tokens }) {
+                let label = slice.isEstimate ? "\(slice.label) _(est.)_" : slice.label
+                lines.append(row(label, integer(slice.tokens), slice.costUSD.map(money) ?? "—"))
+            }
+            lines.append("")
+        }
+        return lines
+    }
+
+    // MARK: - 4. Time
+
+    private static func timeSection(_ bundle: TurnAnalysisBundle) -> [String] {
+        let timeline = bundle.timeline
+        guard timeline.totalSeconds != nil || !timeline.measured.isEmpty else { return [] }
+        var lines = ["## 4. Where the time went", ""]
+        if let summary = timeline.summary {
+            lines.append("\(summary)")
+            lines.append("")
+        }
+        if !timeline.lanes.isEmpty {
+            lines.append("| lane | time _(derived)_ |")
+            lines.append("|---|---|")
+            for lane in timeline.lanes.sorted(by: { $0.seconds > $1.seconds }) {
+                lines.append(row(lane.label, TurnTimeline.formatDuration(lane.seconds)))
+            }
+            lines.append("")
+        }
+        if !timeline.measured.isEmpty {
+            lines.append("### Measured durations")
+            lines.append("")
+            lines.append("These are recorded by the tooling, not inferred from timestamps.")
+            lines.append("")
+            lines.append("| what | time | detail |")
+            lines.append("|---|---|---|")
+            for item in timeline.measured {
+                lines.append(row(
+                    item.label,
+                    TurnTimeline.formatDuration(item.seconds),
+                    item.detail ?? "—"
+                ))
+            }
+            lines.append("")
+        }
+        return lines
+    }
+
+    // MARK: - 5. Prompt
+
+    private static func promptSection(_ bundle: TurnAnalysisBundle) -> [String] {
+        guard let prompt = bundle.prompt else { return [] }
+        return [
+            "## 5. The prompt that started this turn",
+            "",
+            "````text",
+            prompt,
+            "````",
+            ""
+        ]
+    }
+
+    // MARK: - 6. Skills
+
+    private static func skillSection(_ bundle: TurnAnalysisBundle) -> [String] {
+        guard !bundle.skills.isEmpty else { return [] }
+        var lines = ["## 6. Skills involved", ""]
+        let inferred = bundle.skills.contains { !$0.isAttributed }
+        if inferred {
+            lines.append(
+                "_Spans are inferred from step ordering — the log carries no explicit skill "
+                + "attribution for this turn, so boundaries are approximate._"
+            )
+            lines.append("")
+        }
+        lines.append("| skill | steps | tokens | cost | share of turn |")
+        lines.append("|---|---|---|---|---|")
+        for skill in bundle.skills {
+            lines.append(row(
+                skill.name,
+                integer(skill.stepCount),
+                integer(skill.tokens),
+                money(skill.costUSD),
+                percent(skill.shareOfTurn)
+            ))
+        }
+        lines.append("")
+        return lines
+    }
+
+    // MARK: - 7. Sub-agents
+
+    private static func subAgentSection(_ bundle: TurnAnalysisBundle) -> [String] {
+        guard !bundle.subAgents.isEmpty else { return [] }
+        var lines = ["## 7. Subagents spawned", ""]
+        for agent in bundle.subAgents {
+            let name = [agent.agentType, agent.nickname].compactMap { $0 }.joined(separator: " · ")
+            lines.append("### \(name.isEmpty ? agent.identifier : name)")
+            lines.append("")
+            if let description = agent.description {
+                lines.append("> \(singleLine(description))")
+                lines.append("")
+            }
+            var facts: [String] = []
+            if let model = agent.model { facts.append("model `\(model)`") }
+            if let seconds = agent.durationSeconds {
+                facts.append("ran \(TurnTimeline.formatDuration(seconds)) _(measured)_")
+            }
+            if let tokens = agent.tokens { facts.append("\(integer(tokens)) tokens") }
+            if let calls = agent.toolCallCount { facts.append("\(calls) tool calls") }
+            if let cost = agent.costUSD { facts.append("cost \(money(cost))") }
+            if !facts.isEmpty {
+                lines.append("- " + facts.joined(separator: " · "))
+            }
+            if !agent.toolStats.isEmpty {
+                let stats = agent.toolStats
+                    .filter { $0.value > 0 }
+                    .sorted { $0.value > $1.value }
+                    .map { "\($0.key) \($0.value)" }
+                    .joined(separator: ", ")
+                if !stats.isEmpty { lines.append("- tool breakdown: \(stats)") }
+            }
+            lines.append("")
+        }
+        return lines
+    }
+
+    // MARK: - 8. Tools
+
+    private static func toolSection(_ bundle: TurnAnalysisBundle) -> [String] {
+        guard !bundle.toolCalls.isEmpty else { return [] }
+        var lines = ["## 8. Tool calls", ""]
+
+        lines.append("| tool | calls | errors | result chars | time _(derived)_ |")
+        lines.append("|---|---|---|---|---|")
+        for total in bundle.toolTotals {
+            lines.append(row(
+                total.name,
+                integer(total.callCount),
+                total.errorCount > 0 ? integer(total.errorCount) : "—",
+                integer(total.totalResultCharacters),
+                total.derivedSeconds.map(TurnTimeline.formatDuration) ?? "—"
+            ))
+        }
+        lines.append("")
+
+        lines.append("### Call-by-call")
+        lines.append("")
+        lines.append("| # | tool | input | result chars | time _(derived)_ | error |")
+        lines.append("|---|---|---|---|---|---|")
+        for call in bundle.toolCalls {
+            let name = call.mcpServer.map { "\(call.name) (\($0))" } ?? call.name
+            lines.append(row(
+                integer(call.ordinal),
+                name,
+                singleLine(call.inputSummary),
+                call.resultCharacters.map(integer) ?? "—",
+                call.derivedSeconds.map(TurnTimeline.formatDuration) ?? "—",
+                call.isError ? "yes" : ""
+            ))
+        }
+        lines.append("")
+        return lines
+    }
+
+    // MARK: - 9. Trace
+
+    private static func traceSection(_ bundle: TurnAnalysisBundle) -> [String] {
+        guard !bundle.trace.isEmpty else { return [] }
+        var lines = ["## 9. Step trace", ""]
+        for entry in bundle.trace {
+            var headerParts = ["**\(entry.ordinal). \(entry.kind.shortLabel)**"]
+            if let model = entry.model, model != "<synthetic>" { headerParts.append("`\(model)`") }
+            if let seconds = entry.derivedSeconds {
+                // Long gaps are flagged rather than dropped: the elapsed time is
+                // real and worth seeing, but calling it compute would send the
+                // analyst chasing a stretch where nothing was running.
+                headerParts.append(
+                    entry.includesLikelyIdle
+                        ? "\(TurnTimeline.formatDuration(seconds)) _(derived, likely mostly idle)_"
+                        : "\(TurnTimeline.formatDuration(seconds)) _(derived)_"
+                )
+            }
+            if let tokens = entry.tokens, tokens > 0 { headerParts.append("\(integer(tokens)) tok") }
+            if let cost = entry.costUSD, cost > 0 { headerParts.append(money(cost)) }
+            lines.append(headerParts.joined(separator: " · "))
+            if let body = entry.body, !body.isEmpty {
+                lines.append("")
+                lines.append("````text")
+                lines.append(body)
+                lines.append("````")
+            }
+            lines.append("")
+        }
+        return lines
+    }
+
+    // MARK: - Omissions
+
+    private static func omissionSection(_ bundle: TurnAnalysisBundle) -> [String] {
+        guard !bundle.omissions.isEmpty else { return [] }
+        var lines = ["## Omitted from this export", ""]
+        lines.append(
+            "The following were cut to keep the document a usable size. Ask for them "
+            + "specifically if the analysis needs them."
+        )
+        lines.append("")
+        for omission in bundle.omissions {
+            lines.append("- \(omission)")
+        }
+        lines.append("")
+        return lines
+    }
+
+    // MARK: - Questions
+
+    private static func questions() -> [String] {
+        [
+            "## 10. Questions to answer",
+            "",
+            "1. Which single change would cut the most cost or time here without losing the result?",
+            "2. Did any subagent cost more than the value of what it returned?",
+            "3. Did the opening prompt under-specify something that caused rework or backtracking?",
+            "4. Were any tool calls redundant — re-reading content already in context, or",
+            "   searching for something already found?",
+            "5. If there were cache misses, what caused them and is the trigger avoidable?",
+            "6. Concretely: what should change in the skill definition, the subagent prompt,",
+            "   or the way the request was phrased?",
+            ""
+        ]
+    }
+
+    // MARK: - Redaction
+
+    /// Rewrites the home directory to `~`. A whole-document pass rather than
+    /// per-field, because paths turn up inside prompts, tool inputs, tool output
+    /// and error text — anywhere a field-by-field approach would miss.
+    private static func redacted(_ document: String, options: Options) -> String {
+        guard options.redactHomeDirectory,
+              let home = options.homeDirectoryPath,
+              !home.isEmpty, home != "/" else { return document }
+        let trimmed = home.hasSuffix("/") ? String(home.dropLast()) : home
+        return document.replacingOccurrences(of: trimmed, with: "~")
+    }
+
+    // MARK: - Formatting
+
+    private static func row(_ cells: String...) -> String {
+        "| " + cells.map(cell).joined(separator: " | ") + " |"
+    }
+
+    /// Markdown tables break on a literal `|` and on newlines, so both are
+    /// neutralized. Done at render time rather than in the bundle so the data
+    /// stays clean for any other consumer.
+    private static func cell(_ value: String) -> String {
+        singleLine(value).replacingOccurrences(of: "|", with: "\\|")
+    }
+
+    private static func singleLine(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Sub-cent costs are common per-step, so small values keep more precision
+    /// instead of collapsing to `$0.00` and reading as free.
+    static func money(_ value: Double) -> String {
+        if value == 0 { return "$0" }
+        if abs(value) < 0.01 { return String(format: "$%.4f", value) }
+        return String(format: "$%.2f", value)
+    }
+
+    /// POSIX for locale-stable output, with the grouping separator set by hand —
+    /// `en_US_POSIX` supplies none, so `.decimal` alone would print `412905`
+    /// where the document wants `412,905`.
+    static func integer(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = ","
+        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
+    static func percent(_ share: Double) -> String {
+        String(format: "%.0f%%", share * 100)
+    }
+
+    private static func ratio(_ metric: TurnAnalysisBundle.Metric) -> String {
+        guard let ratio = metric.ratioToSessionMedian else { return "—" }
+        return String(format: "%.1f×", ratio)
+    }
+
+    private static func iso(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.timeZone = .autoupdatingCurrent
+        return formatter.string(from: date)
+    }
+}

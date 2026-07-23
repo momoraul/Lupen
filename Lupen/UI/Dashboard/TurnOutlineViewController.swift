@@ -37,7 +37,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
 
     private let store: AppStateStore
     private let columnStateDefaults: UserDefaults
-    private let outlineView = NSOutlineView()
+    private let outlineView = TurnOutlineView()
     private let scrollView = NSScrollView()
 
     // Empty state
@@ -260,6 +260,53 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         costOutlierThresholdUSD = max(mean * 2, 1.0)
     }
 
+    /// Duration twin of `costOutlierThresholdUSD`. Cost was the only outlier
+    /// signal the outline had, but a turn can be painful for time rather than
+    /// money — a long chain of slow tool calls costs little and still burns the
+    /// user's afternoon.
+    ///
+    /// Same shape on purpose: 2× the mean of the session's positive turn
+    /// durations, floored so a session of quick turns never flags anything. The
+    /// floor is 60s because sub-minute turns are not worth investigating even
+    /// when they are relatively slow.
+    private var durationOutlierThresholdSeconds: TimeInterval = .infinity
+
+    /// Minimum duration before a turn can read as an outlier, regardless of how
+    /// fast its neighbours were.
+    static let durationOutlierFloorSeconds: TimeInterval = 60
+
+    private func recomputeDurationOutlierThreshold() {
+        let durations = turns.compactMap { turnDuration(for: $0) }.filter { $0 > 0 }
+        guard !durations.isEmpty else {
+            durationOutlierThresholdSeconds = .infinity
+            return
+        }
+        let mean = durations.reduce(0, +) / Double(durations.count)
+        durationOutlierThresholdSeconds = max(mean * 2, Self.durationOutlierFloorSeconds)
+    }
+
+    /// Wall clock for a turn. Prefers the SQL header aggregate because
+    /// SQLite-first turn stubs carry one synthetic step whose start and end are
+    /// the same instant, which would report every turn as instantaneous.
+    func turnDuration(for turn: Turn) -> TimeInterval? {
+        let aggregate = sqliteAggregates[turn.id]
+        guard let start = aggregate?.startTime ?? turn.startTime,
+              let end = aggregate?.endTime ?? turn.endTime else { return nil }
+        let seconds = end.timeIntervalSince(start)
+        return seconds > 0 ? seconds : nil
+    }
+
+    /// Whether this turn took unusually long for its own session.
+    func isDurationOutlier(_ turn: Turn) -> Bool {
+        guard let duration = turnDuration(for: turn) else { return false }
+        return duration >= durationOutlierThresholdSeconds
+    }
+
+    /// Test seam, mirroring `costOutlierThresholdForTesting()`.
+    func durationOutlierThresholdForTesting() -> TimeInterval {
+        durationOutlierThresholdSeconds
+    }
+
     private static func columnWidthsDefaultsKey(for provider: ProviderKind) -> String {
         "\(columnWidthsDefaultsKey).\(provider.rawValue)"
     }
@@ -333,6 +380,9 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         outlineView.autoresizesOutlineColumn = false
         outlineView.gridStyleMask = []
         outlineView.intercellSpacing = NSSize(width: 8, height: 0)
+        outlineView.menuProvider = { [weak self] node in
+            self?.makeContextMenu(for: node)
+        }
 
         let promptCol = NSTableColumn(identifier: Col.prompt.id)
         promptCol.title = "Conversation"
@@ -1209,6 +1259,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         store.uiViewedSessionId = nil
         turns = []
         costOutlierThresholdUSD = .infinity
+        durationOutlierThresholdSeconds = .infinity
         lastTurnsSnapshot = []
         turnNodes.removeAll()
         stepNodes.removeAll()
@@ -1292,6 +1343,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         // Aggregates were assigned above, so displayCost reads the
         // sidecar — recompute the session-relative outlier bar (6.9).
         recomputeCostOutlierThreshold()
+        recomputeDurationOutlierThreshold()
         updateContextWindowColumnVisibility()
         compactedAwayTurnIds = snapshot.compactedAwayTurnIds
         codexSourceLabelsByIdentity = snapshot.sourceLabelsByIdentity
@@ -2003,8 +2055,21 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
                 cell.textField?.stringValue = CostFormatter.emDash
             }
             cell.textField?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-            cell.textField?.textColor = .secondaryLabelColor
+            // Duration outlier: the same amber the Cost column uses for an
+            // unusually expensive turn, applied to "Started" because that is
+            // the only time-bearing column. The text itself is unchanged, so
+            // the column keeps its width and the signal costs no layout.
+            let slow = isDurationOutlier(turn)
+            cell.textField?.textColor = slow ? CostColor.attention : .secondaryLabelColor
             cell.textField?.alignment = .center
+            if let seconds = turnDuration(for: turn) {
+                let formatted = TurnTimeline.formatDuration(seconds)
+                cell.toolTip = slow
+                    ? "Took \(formatted) — unusually long for this session"
+                    : "Took \(formatted)"
+            } else {
+                cell.toolTip = nil
+            }
             return cell
         case .model:
             let cell = makeOrReuseTextCell(id: NSUserInterfaceItemIdentifier("TurnCell_model"))
@@ -3755,6 +3820,163 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
             } else {
                 onTurnSelected?(turn, turn.aggregateCost, turn.aggregateTokens)
             }
+        }
+    }
+
+    // MARK: - Turn analysis export
+
+    /// Context menu for a right-clicked row. Returns `nil` for rows that
+    /// resolve to no Turn, so the user never gets an empty or dead menu.
+    ///
+    /// Every item pins its subject through `representedObject`: right-clicking
+    /// does not move the selection, so an action that read `selectedRow` would
+    /// operate on the previously highlighted row.
+    private func makeContextMenu(for node: TurnOutlineNode) -> NSMenu? {
+        guard turn(owning: node) != nil else { return nil }
+        let menu = NSMenu()
+        for (title, action) in [
+            ("Export Turn Analysis…", #selector(exportTurnAnalysis(_:))),
+            ("Copy Turn Analysis", #selector(copyTurnAnalysis(_:)))
+        ] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = node
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// The Turn the export actions act on: the explicit `representedObject`
+    /// subject when the action came from the context menu, otherwise the
+    /// current selection's owning Turn.
+    ///
+    /// Menu items pin their subject rather than reading the selection, because
+    /// right-clicking a row does not select it — the same reason
+    /// `SessionListViewController`'s context menu passes its session through
+    /// `representedObject`.
+    func turnForAnalysisExport(_ sender: Any?) -> Turn? {
+        if let item = sender as? NSMenuItem, let node = item.representedObject as? TurnOutlineNode {
+            return turn(owning: node)
+        }
+        let row = outlineView.selectedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? TurnOutlineNode else { return nil }
+        return turn(owning: node)
+    }
+
+    /// Every row kind resolves to a Turn — a step, skill group or sub-agent row
+    /// exports the turn it belongs to, so the action is never dead just because
+    /// the user clicked a child.
+    private func turn(owning node: TurnOutlineNode) -> Turn? {
+        switch node.kind {
+        case .turn(let turn):
+            return turn
+        case .step(_, let parentTurnId), .skillGroup(_, _, let parentTurnId):
+            return turns.first { $0.id == parentTurnId }
+        case .subAgent(_, _, let parentTurnId, _):
+            return turns.first { $0.id == parentTurnId }
+        }
+    }
+
+    /// Assembles everything the exporter needs, reusing the **same** display
+    /// numbers the outline row renders. Recomputing them here would let the
+    /// document quietly disagree with the row the user acted on — the desync
+    /// `DetailViewController.showTurn`'s required parameters exist to prevent.
+    func turnAnalysisExportRequest(for turn: Turn) -> TurnAnalysisExporter.Request {
+        let resolved = materializedTurn(for: turn)
+        var request = TurnAnalysisExporter.Request(
+            turn: resolved,
+            provider: ProviderScopedID(value: resolved.sessionId)?.provider ?? .claudeCode,
+            displayCost: displayCost(for: resolved),
+            displayTokens: displayTokens(for: resolved)
+        )
+        request.sessionSamples = sessionMetricSamples()
+        request.skillGroups = (groupedRowsByTurn[resolved.id] ?? []).compactMap { row in
+            if case .skillGroup(let group) = row { return group }
+            return nil
+        }
+        request.subAgentLinks = subAgentLinks(in: resolved)
+        request.subAgentCostByAgentId = sqliteSubAgentCostByAgentId
+        request.composition = turnComposition(
+            for: resolved,
+            cost: request.displayCost,
+            tokens: request.displayTokens
+        )
+        return request
+    }
+
+    /// The comparison basis for "is this turn unusual". Durations come from the
+    /// SQL header aggregates when present, because SQLite-first turn stubs
+    /// carry a single synthetic step whose start and end are identical.
+    private func sessionMetricSamples() -> [TurnAnalysisBundleBuilder.MetricSample] {
+        turns.map { turn in
+            let aggregate = sqliteAggregates[turn.id]
+            let start = aggregate?.startTime ?? turn.startTime
+            let end = aggregate?.endTime ?? turn.endTime
+            return TurnAnalysisBundleBuilder.MetricSample(
+                costUSD: displayCost(for: turn).totalCostUSD,
+                tokens: displayTokens(for: turn).totalContextTokens,
+                durationSeconds: start.flatMap { start in end.map { $0.timeIntervalSince(start) } }
+            )
+        }
+    }
+
+    /// Sub-agent links spawned by this Turn's own steps, de-duplicated by agent
+    /// id — one agent linked from two steps is one subagent, not two.
+    private func subAgentLinks(in turn: Turn) -> [SubAgentLinker.Link] {
+        var seen: Set<String> = []
+        var links: [SubAgentLinker.Link] = []
+        for step in turn.steps {
+            for link in subAgentLinksByStepUuid[step.uuid] ?? [] where seen.insert(link.agentId).inserted {
+                links.append(link)
+            }
+        }
+        return links
+    }
+
+    /// Scoped content-character split for the turn, mirroring the Composition
+    /// tab's query so both surfaces describe the context the same way.
+    private func turnComposition(
+        for turn: Turn,
+        cost: CostBreakdown,
+        tokens: TokenBreakdown
+    ) -> ContextComposition.Result? {
+        guard let providerStore = store.sqliteConversationSource?.store,
+              let chars = try? providerStore.contextCompositionContentChars(
+                sessionId: turn.sessionId, turnId: turn.id
+              ) else { return nil }
+        return ContextComposition.make(
+            from: StoreContextCompositionAggregate.turn(tokens: tokens, cost: cost, chars: chars)
+        )
+    }
+
+    /// Building the document performs bounded file reads, so it runs off the
+    /// main thread; only the panel and the pasteboard come back to the main
+    /// actor.
+    @objc func exportTurnAnalysis(_ sender: Any?) {
+        guard let turn = turnForAnalysisExport(sender) else { return }
+        let request = turnAnalysisExportRequest(for: turn)
+        // The outer Task stays on the main actor (so `view.window` and the panel
+        // are touched only here); the detached child does the file reads.
+        // `NSWindow` is not `Sendable`, so it must never cross that boundary.
+        Task { [weak self] in
+            let document = await Task.detached(priority: .userInitiated) {
+                TurnAnalysisExporter.makeDocument(request)
+            }.value
+            guard let self else { return }
+            TurnAnalysisExportPresenter.save(
+                document: document, provider: request.provider, in: self.view.window
+            )
+        }
+    }
+
+    @objc func copyTurnAnalysis(_ sender: Any?) {
+        guard let turn = turnForAnalysisExport(sender) else { return }
+        let request = turnAnalysisExportRequest(for: turn)
+        Task {
+            let document = await Task.detached(priority: .userInitiated) {
+                TurnAnalysisExporter.makeDocument(request)
+            }.value
+            TurnAnalysisExportPresenter.copy(document: document)
         }
     }
 
