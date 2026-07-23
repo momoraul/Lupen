@@ -119,9 +119,14 @@ struct TurnAnalysisBundle: Sendable, Equatable {
         let totalTokens: Metric
         /// `nil` when the turn has no usable start/end pair.
         let durationSeconds: Metric?
-        /// How many turns the median was taken over. Printed so the reader can
-        /// judge whether the comparison means anything.
+        /// Total turns in the session (raw sample count) — drives the "too few
+        /// turns" caveat.
         let sessionTurnCount: Int
+        /// Turns that actually backed the cost ratio (positive-cost samples).
+        /// The baseline note keys on this, not `sessionTurnCount`, so it never
+        /// claims a baseline the "vs. median" cells don't show — a session
+        /// whose other turns are zero-cost stubs has ratios of "—" and no note.
+        let baselineTurnCount: Int
     }
 
     // MARK: - Cost attribution

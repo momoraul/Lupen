@@ -100,13 +100,13 @@ enum TurnAnalysisMarkdownRenderer {
         }
         lines.append(row("Steps", integer(bundle.header.stepCount), "—"))
         lines.append("")
-        // Only claim a baseline when one actually backs the ratios; with fewer
-        // than two turns the "vs. median" column is "—", so a "median of 1
-        // turn(s)" line would just be noise (and misleading for a sub-agent
-        // export, whose subject is not among the session's turns at all).
-        if bundle.metrics.sessionTurnCount >= 2 {
+        // Key the note on the population that actually backs the ratios, not the
+        // raw turn count: a session whose other turns are zero-cost stubs shows
+        // "—" in every "vs. median" cell, so a "median of N turns" line would
+        // claim a baseline the table never displays.
+        if bundle.metrics.baselineTurnCount >= 2 {
             lines.append(
-                "_Baseline is the median of \(bundle.metrics.sessionTurnCount) "
+                "_Baseline is the median of \(bundle.metrics.baselineTurnCount) "
                 + "turns in this session._"
             )
             lines.append("")

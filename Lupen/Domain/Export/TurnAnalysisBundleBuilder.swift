@@ -185,7 +185,10 @@ enum TurnAnalysisBundleBuilder {
             durationSeconds: duration.map {
                 metric($0, median: baseline(samples.compactMap(\.durationSeconds)))
             },
-            sessionTurnCount: samples.count
+            sessionTurnCount: samples.count,
+            // The population that actually backs the cost ratio (the headline
+            // metric); the note keys on this so it never overstates the baseline.
+            baselineTurnCount: samples.filter { $0.costUSD > 0 }.count
         )
     }
 
