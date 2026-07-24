@@ -186,8 +186,17 @@ enum TurnRawEnricher {
         facts.reasoningEffort = nonEmptyString(payload["effort"]) ?? facts.reasoningEffort
         facts.personality = nonEmptyString(payload["personality"]) ?? facts.personality
         facts.approvalPolicy = nonEmptyString(payload["approval_policy"]) ?? facts.approvalPolicy
-        facts.sandboxPolicy = nonEmptyString(payload["sandbox_policy"]) ?? facts.sandboxPolicy
+        // `sandbox_policy` is an object on disk — `{"type":"workspace-write",…}` —
+        // not the bare string the siblings are; read its `.type`. (Accept a bare
+        // string too, in case the shape ever changes.)
+        facts.sandboxPolicy = policyName(payload["sandbox_policy"]) ?? facts.sandboxPolicy
         facts.workingDirectory = nonEmptyString(payload["cwd"]) ?? facts.workingDirectory
+    }
+
+    /// A policy value that may be a bare string or a `{"type": "..."}` object,
+    /// mirroring how `codexDuration` handles the number-vs-object dual shape.
+    private static func policyName(_ value: Any?) -> String? {
+        nonEmptyString(value) ?? nonEmptyString((value as? [String: Any])?["type"])
     }
 
     /// Codex serialises durations either as a plain number of seconds or as
