@@ -236,6 +236,20 @@ final class ProviderDatabase: @unchecked Sendable {
         _pool = fresh
     }
 
+    /// Close the pool and delete the on-disk database files, discarding this
+    /// database entirely — unlike `rebuildStorage()`, no fresh pool is
+    /// bootstrapped, because the caller is throwing the instance away (e.g. a
+    /// session source whose parser kind changed, so its rows were produced by
+    /// the other parser). Close-before-delete is the 3.8 run-3 rule: never
+    /// unlink DB files out from under a live pool. After this the instance is
+    /// unusable and must be discarded.
+    func closeAndDeleteFiles() throws {
+        poolLock.lock()
+        defer { poolLock.unlock() }
+        try? _pool.close()
+        try Self.deleteDatabaseFiles(at: fileURL)
+    }
+
     // MARK: - Internals
 
     private static func makePool(at fileURL: URL) throws -> DatabasePool {
