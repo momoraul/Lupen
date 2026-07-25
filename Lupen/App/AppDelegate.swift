@@ -229,6 +229,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// own a driver.
     private var sqliteFirstStartups: [String: SQLiteFirstStartup] = [:]
     private var sqliteFirstCodexHome: URL?
+    /// Per-source `kind|root` the on-disk index at `providers/<id>` was built
+    /// for, seeded at launch and updated by `reconcileSourceConfigChanges()`.
+    /// A mismatch (the user changed a source's type in Settings) means the
+    /// index rows were produced by the other parser and must be wiped.
+    /// Built-in sources are excluded — their kind is fixed and the built-in
+    /// Codex root override (`codexRootPath`) has its own driver-swap path in
+    /// `sqliteFirstActivate`.
+    private var sourceIndexFingerprints: [String: String] = [:]
     private var smokeTestCompleted = false
 
     private func smokeCheckpointMetadata(_ metadata: [String: String] = [:]) -> [String: String] {
@@ -329,6 +337,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statuslineMaintenanceScheduler.start()
         }
         startObservingProviderMode()
+        seedSourceIndexFingerprints()
+        startObservingSessionSources()
 
         // Apply the persisted appearance override before any window or the
         // status item is built, then keep NSApp.appearance in sync as the
@@ -621,6 +631,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.syncStoreToActiveSource()
                 self?.startObservingProviderMode()
             }
+        }
+    }
+
+    // MARK: - Source kind/root change reconciliation
+
+    private func sourceFingerprint(_ source: SessionSource) -> String {
+        "\(source.kind.rawValue)|\(source.root.path)"
+    }
+
+    private func seedSourceIndexFingerprints() {
+        for source in settings.resolvedSources where source.origin != .builtin {
+            sourceIndexFingerprints[source.id] = sourceFingerprint(source)
+        }
+    }
+
+    /// Re-arm-on-change observation of the composed source list (same pattern
+    /// as `startObservingProviderMode`), so a kind change made in Settings
+    /// invalidates that source's index promptly.
+    private func startObservingSessionSources() {
+        withObservationTracking {
+            _ = settings.resolvedSources
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                self?.reconcileSourceConfigChanges()
+                self?.startObservingSessionSources()
+            }
+        }
+    }
+
+    /// Diff the non-built-in sources against the recorded fingerprints. For a
+    /// source whose kind/root changed, the index at `providers/<id>` holds
+    /// rows produced by the other parser: stop its driver (if live), drop any
+    /// read-only pool the manage window opened, delete the per-source folder,
+    /// and — when it is the active source — re-activate so a fresh driver
+    /// rebuilds the index from the logs.
+    private func reconcileSourceConfigChanges() {
+        var invalidatedActiveSource = false
+        let sources = settings.resolvedSources
+        for source in sources where source.origin != .builtin {
+            let fingerprint = sourceFingerprint(source)
+            let previous = sourceIndexFingerprints[source.id]
+            sourceIndexFingerprints[source.id] = fingerprint
+            guard let previous, previous != fingerprint else { continue }
+            if let startup = sqliteFirstStartups[source.id] {
+                startup.stop()
+                sqliteFirstStartups[source.id] = nil
+            }
+            managedReadStores[source.id] = nil
+            try? FileManager.default.removeItem(
+                at: LupenPaths.providerRoot(forSourceId: source.id)
+            )
+            LoggerService.shared.info(
+                "Source \(source.id) changed to \(fingerprint) — index wiped for rebuild",
+                context: "App"
+            )
+            if settings.activeSourceId == source.id { invalidatedActiveSource = true }
+        }
+        // Forget removed sources so a later re-add starts a fresh diff.
+        let liveIds = Set(sources.map(\.id))
+        sourceIndexFingerprints = sourceIndexFingerprints.filter { liveIds.contains($0.key) }
+        if invalidatedActiveSource {
+            syncStoreToActiveSource()
         }
     }
 

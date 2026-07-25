@@ -57,6 +57,41 @@ enum SessionSourceInference {
         return nil
     }
 
+    /// Re-derive the indexing root when the user manually switches a source's
+    /// kind (Settings ▸ Session Sources): Claude scans a `projects` directory,
+    /// Codex the codexHome. Walks one level up/down with the same rules as
+    /// `infer`; when the expected layout isn't there, keeps the root as-is
+    /// (the scan just finds nothing until the folder matches).
+    static func convertedRoot(
+        _ root: URL,
+        to kind: ProviderKind,
+        fileManager: FileManager = .default
+    ) -> URL {
+        let dir = root.standardizedFileURL
+        let name = dir.lastPathComponent.lowercased()
+        switch kind {
+        case .claudeCode:
+            if name == "projects" { return normalized(dir) }
+            let projects = dir.appendingPathComponent("projects")
+            if isReadableDirectory(projects, fileManager: fileManager) {
+                return normalized(projects)
+            }
+            return normalized(dir)
+        case .codex:
+            // A Claude root is `<config>/projects`; its parent is the
+            // candidate codexHome. Otherwise the root itself is the home.
+            if name == "projects",
+               isReadableDirectory(
+                   dir.deletingLastPathComponent().appendingPathComponent("sessions"),
+                   fileManager: fileManager
+               ) {
+                return normalized(dir.deletingLastPathComponent())
+            }
+            if name == "sessions" { return normalized(dir.deletingLastPathComponent()) }
+            return normalized(dir)
+        }
+    }
+
     /// Suggest an editable display name from the source root. Prefers the most
     /// distinctive ancestor directory (skipping generic tokens like `projects`,
     /// `.claude`, the user's home) combined with the kind's short label, e.g.

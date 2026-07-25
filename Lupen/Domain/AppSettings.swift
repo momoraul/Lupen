@@ -332,6 +332,33 @@ final class AppSettings {
         return true
     }
 
+    /// Change a source's parser kind (the Settings kind-badge menu) — the
+    /// escape hatch when `SessionSourceInference` guessed wrong or a future
+    /// directory-layout change breaks the heuristics. User-added sources only;
+    /// built-in and auto-detected sources have their kind fixed by their known
+    /// location. Re-derives the root for the new kind (Claude scans
+    /// `projects/`, Codex the codexHome) and refuses when that root would
+    /// collide with another source. The index invalidation (the old index was
+    /// built with the other parser) is handled by AppDelegate observing
+    /// `resolvedSources`. Returns whether the change was applied.
+    @discardableResult
+    func setSourceKind(id: String, to kind: ProviderKind) -> Bool {
+        guard let current = resolvedSources.source(id: id),
+              current.origin == .userAdded else { return false }
+        guard current.kind != kind else { return true }
+        let newRoot = SessionSourceInference.convertedRoot(current.root, to: kind)
+        if let duplicate = SessionSourceInference.duplicateRootSource(newRoot, in: resolvedSources),
+           duplicate.id != id {
+            return false
+        }
+        let updated = SessionSource(
+            id: current.id, name: current.name, kind: kind, root: newRoot,
+            origin: current.origin, enabled: current.enabled
+        )
+        upsertSourceOverride(updated)
+        return true
+    }
+
     /// Make `id` the active (projected) source. Only enabled sources can be
     /// activated. Returns whether it was applied.
     @discardableResult
