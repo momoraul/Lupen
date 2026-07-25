@@ -674,11 +674,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let previous = sourceIndexFingerprints[source.id]
             sourceIndexFingerprints[source.id] = fingerprint
             guard let previous, previous != fingerprint else { continue }
+            // Close every open pool on this source before touching the files:
+            // the read-only pool the Manage window may hold first, then the
+            // write driver (which closes its pool and deletes the DB files in
+            // order), and finally the now-unreferenced folder.
+            if let readStore = managedReadStores[source.id] {
+                try? readStore.database.close()
+                managedReadStores[source.id] = nil
+            }
             if let startup = sqliteFirstStartups[source.id] {
-                startup.stop()
+                startup.discardIndexStorage()
                 sqliteFirstStartups[source.id] = nil
             }
-            managedReadStores[source.id] = nil
             try? FileManager.default.removeItem(
                 at: LupenPaths.providerRoot(forSourceId: source.id)
             )

@@ -185,6 +185,20 @@ final class SQLiteFirstStartup: @unchecked Sendable {
         coordinator.stop()
     }
 
+    /// Stop the coordinator and tear down this driver's index storage — close
+    /// the pool, then delete the DB files — before the driver is discarded.
+    /// Used when a source's kind changes (its rows came from the other parser
+    /// and must not survive the flip): `close()` drains any in-flight batch on
+    /// GRDB's serialized writer before the files are unlinked, so the delete
+    /// never races a live writer — unlike a bare `FileManager.removeItem` after
+    /// the non-blocking `stop()`. A stray access on the closed pool afterwards
+    /// throws and is absorbed by the stale `lifecycleGeneration`. Main-actor
+    /// callers only.
+    func discardIndexStorage() {
+        stop()
+        try? coordinator.store.database.closeAndDeleteFiles()
+    }
+
     // MARK: - Projection swap (plan 3.5)
 
     /// Makes this driver the one rendering into `AppStateStore` and
