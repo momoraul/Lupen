@@ -137,7 +137,11 @@ enum PricingTable {
     ///     (fable requests had been $0/unavailable — no tier prefix matched).
     /// v3: gpt-5.6 family (sol/terra/luna), flat rate with no long-context
     ///     tier — Codex `gpt-5.6-sol` had been unpriced (cost shown as "—").
-    static let version = 3
+    /// v4: claude-opus-5 entry + fast-mode rates ($10/$50) on Opus 5 and
+    ///     Opus 4.8, and the opus tier fallback now points at Opus 5.
+    ///     Standard-mode Opus 5 cost was already correct via the 4.8
+    ///     fallback (identical rates); fast-mode requests had been unpriced.
+    static let version = 4
 
     // Logging routed through `LoggerService.shared.logFromAnyThread`
     // so the in-app Diagnostics window picks it up alongside the
@@ -151,23 +155,38 @@ enum PricingTable {
             cacheWrite5mPerMTok: 12.50, cacheWrite1hPerMTok: 20.00, cacheReadPerMTok: 1.00,
             fastInputPerMTok: nil, fastOutputPerMTok: nil
         ),
+        // Fast mode (research preview) is Opus 5 + Opus 4.8 only, at a flat
+        // $10 / $50 — a 2x multiplier on the standard rate, NOT the 6x the
+        // retired Opus 4.6 preview charged. Cache multipliers still apply on
+        // top of the standard input rate, so only input/output change.
+        // (platform.claude.com/docs/en/build-with-claude/fast-mode#pricing,
+        //  verified 2026-07-25.)
+        "claude-opus-5": ModelRates(
+            inputPerMTok: 5.00, outputPerMTok: 25.00,
+            cacheWrite5mPerMTok: 6.25, cacheWrite1hPerMTok: 10.00, cacheReadPerMTok: 0.50,
+            fastInputPerMTok: 10.00, fastOutputPerMTok: 50.00
+        ),
         "claude-opus-4-8": ModelRates(
             inputPerMTok: 5.00, outputPerMTok: 25.00,
             cacheWrite5mPerMTok: 6.25, cacheWrite1hPerMTok: 10.00, cacheReadPerMTok: 0.50,
-            fastInputPerMTok: nil, fastOutputPerMTok: nil
+            fastInputPerMTok: 10.00, fastOutputPerMTok: 50.00
         ),
         "claude-opus-4-7": ModelRates(
             inputPerMTok: 5.00, outputPerMTok: 25.00,
             cacheWrite5mPerMTok: 6.25, cacheWrite1hPerMTok: 10.00, cacheReadPerMTok: 0.50,
-            // Fast mode is Opus 4.6 only per Anthropic docs
-            // (platform.claude.com/docs/en/docs/about-claude/pricing — Fast mode
-            // section). Claude Code's /fast toggle routes to 4.6, so 4.7
-            // requests never carry `speed: "fast"`.
+            // 4.7 never supported fast mode — `speed: "fast"` is rejected
+            // outright, so no request can be billed at a fast rate.
             fastInputPerMTok: nil, fastOutputPerMTok: nil
         ),
         "claude-opus-4-6": ModelRates(
             inputPerMTok: 5.00, outputPerMTok: 25.00,
             cacheWrite5mPerMTok: 6.25, cacheWrite1hPerMTok: 10.00, cacheReadPerMTok: 0.50,
+            // Historical only. Anthropic has since retired 4.6 fast mode: a
+            // `speed: "fast"` request now runs at standard speed, bills at
+            // standard rates, and reports `usage.speed: "standard"`. Lupen
+            // keys off that reported value, so these rates are unreachable
+            // for new rows — they stay to keep already-indexed rows from the
+            // preview window priced as they were actually billed.
             fastInputPerMTok: 30.00, fastOutputPerMTok: 150.00
         ),
         "claude-opus-4-5": ModelRates(
@@ -333,7 +352,7 @@ enum PricingTable {
     /// table.
     private static let newestByTier: [String: String] = [
         "claude-fable-": "claude-fable-5",
-        "claude-opus-": "claude-opus-4-8",
+        "claude-opus-": "claude-opus-5",
         "claude-sonnet-": "claude-sonnet-4-6",
         "claude-haiku-": "claude-haiku-4-5"
     ]
