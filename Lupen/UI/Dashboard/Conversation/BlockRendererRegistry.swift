@@ -15,6 +15,19 @@ struct RenderContext {
     /// segment click). nil outside the detail view (tests, previews).
     var jumpToStep: ((String) -> Void)?
 
+    /// Remembered fold state for the overview cards that lead a turn. nil
+    /// outside the detail view, in which case every card renders expanded —
+    /// the same default a first launch gets.
+    var collapsedCards: CollapsedCardsStore?
+
+    /// Open a file in its default application — the primary action on a
+    /// file-access row's context menu. A missing file does nothing rather than
+    /// bouncing the Dock icon of whatever would claim the extension.
+    var openFile: (URL) -> Void = { url in
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        Process.launchedProcess(launchPath: "/usr/bin/open", arguments: [url.path])
+    }
+
     /// Reveal a file path (image/attachment) in Finder on click. Ported for parity.
     var revealInFinder: (URL) -> Void = { url in
         let path = url.path
