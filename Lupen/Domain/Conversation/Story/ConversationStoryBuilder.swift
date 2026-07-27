@@ -48,8 +48,31 @@ enum ConversationStoryBuilder {
         // ones — `TurnTimeline` owns the threshold; trivial turns get no
         // card). Built once, and inserted AFTER the collapse so keepHead
         // still preserves the user's prompt card on oversized turns.
+        // Insertion order is reversed on screen: both insert at 0, so
+        // whichever goes in last ends up on top. The timeline goes first
+        // precisely so the file card can land above it.
         if let timeline = TurnTimeline.build(steps: turn.steps) {
             blocks.insert(TimelineBlock(id: "tl:\(turn.id)", model: timeline), at: 0)
+        }
+        // C-22: which files the turn read and wrote. Leads the turn — it
+        // answers "what did this do" where the timeline answers "how long did
+        // it take", and the former is the question a clicked turn raises
+        // first. Inserted after the collapse, like the timeline, so keepHead
+        // still preserves the prompt card on oversized turns.
+        if let fileAccess = TurnFileAccess.build(steps: turn.steps) {
+            // The closure is built here — where the steps are — but not run:
+            // this method is synchronous and re-runs on every highlight
+            // change, so the card starts its own read once, off the main actor.
+            let steps = turn.steps
+            blocks.insert(
+                FileAccessBlock(
+                    id: "fa:\(turn.id)",
+                    model: fileAccess,
+                    diffCacheKey: FileAccessBlock.diffCacheKey(turnId: turn.id, steps: steps),
+                    loadDiffStats: { TurnFileDiffStats.load(steps: steps) }
+                ),
+                at: 0
+            )
         }
         return blocks
     }
