@@ -13,12 +13,19 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
     /// through the same controller instead of constructing two
     /// separate windows.
     private let openLogsAction: () -> Void
+    /// Passed through to the split controller, which reads the persisted
+    /// pane arrangement from it. Injectable so a test run neither reads nor
+    /// writes the developer's real window state.
+    private let defaults: UserDefaults
+    private let detailWindowFrameAutosaveName: String?
     private var isSetUp = false
 
     init(
         store: AppStateStore,
         settings: AppSettings,
         autoSelectFirstSessionOnShow: Bool = true,
+        defaults: UserDefaults = .standard,
+        detailWindowFrameAutosaveName: String? = DetailPaneWindowController.defaultFrameAutosaveName,
         openLogsAction: @escaping () -> Void,
         autoSelectAction: @escaping (DashboardSplitViewController) -> Void = { splitVC in
             splitVC.selectFirstSessionIfNeeded()
@@ -27,6 +34,8 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         self.store = store
         self.settings = settings
         self.autoSelectFirstSessionOnShow = autoSelectFirstSessionOnShow
+        self.defaults = defaults
+        self.detailWindowFrameAutosaveName = detailWindowFrameAutosaveName
         self.openLogsAction = openLogsAction
         self.autoSelectAction = autoSelectAction
         super.init(window: nil)
@@ -40,7 +49,9 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             let splitVC = DashboardSplitViewController(
                 store: store,
                 settings: settings,
-                automaticSessionSelectionEnabled: autoSelectFirstSessionOnShow
+                automaticSessionSelectionEnabled: autoSelectFirstSessionOnShow,
+                defaults: defaults,
+                detailWindowFrameAutosaveName: detailWindowFrameAutosaveName
             )
             let window = DashboardWindow()
             window.contentViewController = splitVC
@@ -71,6 +82,19 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
                     as? DashboardSplitViewController else { return }
                 self?.autoSelectAction(splitVC)
             }
+        }
+
+        // Put the detail pane back in its own window if that is where the
+        // user left it. Deferred for the same reason as auto-selection —
+        // moving views during the window's first layout pass trips
+        // `_NSDetectedLayoutRecursion`. Restoring here rather than at
+        // launch matters too: Lupen usually launches straight to the menu
+        // bar, and a detail window with no dashboard behind it would be
+        // baffling.
+        DispatchQueue.main.async { [weak self] in
+            guard let splitVC = self?.window?.contentViewController
+                as? DashboardSplitViewController else { return }
+            splitVC.detachCoordinator.restoreIfNeeded()
         }
     }
 

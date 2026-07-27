@@ -4001,8 +4001,28 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
                 TurnAnalysisExporter.makeDocument(request)
             }.value
             guard let self else { return }
+            // Attach the sheet to the window the click came from. The
+            // detail pane can be detached into its own window, and hanging
+            // the sheet off this outline's window would drop a modal sheet
+            // on a window the user may not even be looking at — the export
+            // would appear to do nothing while the dashboard sat blocked.
+            // A button sender carries its own window. A menu sender does
+            // not, and `NSApp.keyWindow` is only trustworthy here if it is
+            // one of the two windows that can show this pane — a menu
+            // action resolved through the main window while, say, Logs is
+            // key would otherwise drop the sheet on Logs.
+            let host: NSWindow?
+            if let fromSender = (sender as? NSView)?.window {
+                host = fromSender
+            } else if let key = NSApp.keyWindow,
+                      key === self.view.window
+                        || key.contentViewController is DetachedDetailHostViewController {
+                host = key
+            } else {
+                host = self.view.window
+            }
             TurnAnalysisExportPresenter.save(
-                document: document, provider: request.provider, in: self.view.window
+                document: document, provider: request.provider, in: host
             )
         }
     }
