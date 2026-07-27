@@ -43,19 +43,109 @@ enum FilePathDetector {
     /// Strategy:
     ///   1. Strip backtick runs (both `` ` `` and ` ``` `) so we don't pick up
     ///      paths inside code spans or fenced blocks.
-    ///   2. Replace `\ ` with a sentinel so shell-escaped spaces don't split
-    ///      the path in step 3.
+    ///   2. Turn escaped whitespace into real whitespace, and `\ ` into a
+    ///      sentinel so shell-escaped spaces don't split the path in step 3.
+    ///      Any sentinel already present in the text becomes a separator, since
+    ///      step 4's restore cannot tell it from one this step inserted.
     ///   3. Split on whitespace / newlines.
     ///   4. For each token: unescape the sentinel, trim trailing punctuation,
     ///      require `/` prefix and a `.ext` tail, dedupe.
+    /// Turns escaped whitespace — the two characters `\` and `n`/`r`/`t` — into
+    /// a real space.
+    ///
+    /// Callers scan text that has been through a serializer or is destined for
+    /// one, so a line break inside it is often two ordinary characters rather
+    /// than a newline. Tokenizers split on real whitespace, so left alone those
+    /// escapes glue a path to whatever followed it: a shell command reading
+    /// `cd /tmp\nUA='Mozilla/5.0 …` yielded a file called
+    /// `/tmp\nUA='Mozilla/5.0`, accepted because `.0` passes for an extension.
+    ///
+    /// An escaped backslash (`\\`) is left intact rather than collapsed. That
+    /// keeps a serialized path which genuinely contains one from having its `n`
+    /// eaten by a match on the second backslash, and it makes this idempotent,
+    /// so applying it twice is safe.
+    ///
+    /// **Known limit, accepted deliberately.** A *single* backslash directly
+    /// before `n`/`r`/`t` is read as an escape either way, so a raw path really
+    /// named `/tmp/log\nightly.txt` loses its `n` here. Both readings cannot be
+    /// served at once, and the evidence is lopsided: 271 real commands in this
+    /// machine's transcripts carry a literal escape that fabricated a
+    /// nonexistent path, while 668 real human-typed prompts contained no path
+    /// of this shape at all. Two of `extract`'s call sites do pass prose
+    /// (`StepBuilder`, `CodexConversationAssembler`), so the exposure is real
+    /// but unobserved — and a Windows path, the obvious candidate, never
+    /// reaches a locator anyway for want of a leading `/`.
+    static func normalizingEscapedWhitespace(_ text: String) -> String {
+        rewritingEscapes(text, escapedSpaceReplacement: nil)
+    }
+
+    /// Single pass over the escapes this type cares about. Written as a scanner
+    /// rather than a sequence of `replacingOccurrences` calls because those
+    /// cannot tell `\n` from the tail of `\\n`.
+    private static func rewritingEscapes(
+        _ text: String,
+        escapedSpaceReplacement: Character?
+    ) -> String {
+        guard text.contains("\\") else { return text }
+        var out = ""
+        out.reserveCapacity(text.count)
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            guard character == "\\" else {
+                out.append(character)
+                index = text.index(after: index)
+                continue
+            }
+            let next = text.index(after: index)
+            guard next < text.endIndex else {
+                out.append(character)
+                break
+            }
+            switch text[next] {
+            case "\\":
+                // Consumed as a pair and re-emitted unchanged.
+                out.append("\\")
+                out.append("\\")
+                index = text.index(after: next)
+            case "n", "r", "t":
+                out.append(" ")
+                index = text.index(after: next)
+            case " " where escapedSpaceReplacement != nil:
+                out.append(escapedSpaceReplacement!)
+                index = text.index(after: next)
+            default:
+                out.append(character)
+                index = next
+            }
+        }
+        return out
+    }
+
     static func extract(from text: String?) -> [String] {
         guard let text, !text.isEmpty else { return [] }
 
         let scrubbed = stripBacktickRuns(text)
 
-        // Replace shell-escaped spaces so the split step doesn't tear them.
+        // Shell-escaped spaces become a sentinel so the split step doesn't tear
+        // them, and escaped whitespace becomes real whitespace so the split step
+        // *does* tear on it — see `rewritingEscapes`.
+        //
+        // A sentinel already in the text becomes a separator first. The restore
+        // step below rewrites every occurrence, not only the ones this pass
+        // inserted, so without this a U+0001 that arrived in the input came back
+        // out as a space inside the locator.
+        //
+        // Replaced rather than deleted: deleting fuses what was on either side,
+        // so `/a/b<U+0001>c.txt` became `/a/bc.txt` — a path that appears in no
+        // input and would carry a Reveal affordance. Separating yields `/a/b`
+        // and `c.txt`, both rejected, which is the trade this type states it
+        // prefers: miss a path rather than emit a false positive.
         let placeholderString = String(escapedSpaceSentinel)
-        let escaped = scrubbed.replacingOccurrences(of: "\\ ", with: placeholderString)
+        let sanitized = scrubbed.contains(escapedSpaceSentinel)
+            ? scrubbed.replacingOccurrences(of: placeholderString, with: " ")
+            : scrubbed
+        let escaped = rewritingEscapes(sanitized, escapedSpaceReplacement: escapedSpaceSentinel)
 
         var seen = Set<String>()
         var results: [String] = []

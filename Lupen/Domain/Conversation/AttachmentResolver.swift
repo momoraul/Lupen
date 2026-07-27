@@ -164,6 +164,14 @@ enum AttachmentResolver {
         "AskUserQuestion",
         // Claude Code worktree cleanup control.
         "ExitWorktree",
+        // Codex writes to a running `exec_command` session's stdin. Deliberately
+        // *not* normalised to `Bash`: it executes nothing, and relabelling it
+        // would report a keystroke as a shell command. Registered here so the
+        // resolver stops treating it as a tool of unknown shape — measured on
+        // 14,422 real calls, its arguments are `chars` / `session_id` /
+        // `yield_time_ms` / `max_output_tokens`, `chars` is empty on all but 153
+        // of them, and not one carries a path.
+        "write_stdin",
     ]
 
     /// Tools whose shape is known but open-ended. We should suppress the
@@ -176,7 +184,10 @@ enum AttachmentResolver {
     /// Tools we know how to extract structured paths / URLs from. The
     /// dispatch table in `extractToolInput` enumerates them; this set
     /// mirrors that for `knownFirstPartyToolNames` registry.
-    private static let knownPathExtractingTools: Set<String> = [
+    /// Internal rather than private so `TurnFileAccess` can be pinned against
+    /// it: a tool added here but not classified there has its paths silently
+    /// dropped from the file-access card and the turn export.
+    static let knownPathExtractingTools: Set<String> = [
         "Read", "Write", "Edit", "MultiEdit",
         "NotebookEdit", "NotebookRead",
         "Glob", "Grep",
@@ -254,7 +265,13 @@ enum AttachmentResolver {
                     ref(origin: .toolInput, kind: .file, locator: $0, toolName: name)
                 }
             }
-            return []
+            // Codex's `exec` reaches here. It is the same shell, but it arrives
+            // as a `custom_tool_call` whose input is JavaScript source rather
+            // than JSON — `const r = await tools.exec_command({cmd:"…"})` — so
+            // neither field decodes and returning `[]` left every one of those
+            // calls with no paths at all. Same fallback as `Monitor` below,
+            // which was written for exactly this shape of miss.
+            return heuristicFallbackSilent(input: input, toolName: name)
 
         case "Monitor":
             if let cmd = decodeStringField(input, "command") ?? decodeStringField(input, "cmd") {
@@ -337,13 +354,20 @@ enum AttachmentResolver {
             ))
         }
 
-        for path in FilePathDetector.extract(from: input) {
+        // Every scan below runs on the raw serialized input, where a newline
+        // inside a quoted value is two ordinary characters. `FilePathDetector`
+        // handles that itself now — which is what covers the *structured*
+        // branches above too — but the quoted-path and URL scans are regexes
+        // over this string, so they need it applied here.
+        let scannable = FilePathDetector.normalizingEscapedWhitespace(input)
+
+        for path in FilePathDetector.extract(from: scannable) {
             append(kind: .file, locator: path)
         }
-        for path in scanQuotedAbsPaths(input) {
+        for path in scanQuotedAbsPaths(scannable) {
             append(kind: .file, locator: path)
         }
-        for url in extractURLs(from: input) {
+        for url in extractURLs(from: scannable) {
             let kind: AttachmentRef.Kind = url.hasPrefix("file://") ? .file : .url
             append(kind: kind, locator: url)
         }
@@ -367,8 +391,17 @@ enum AttachmentResolver {
         try? NSRegularExpression(pattern: #""(/[^"]*?\.[A-Za-z0-9]{1,8})""#, options: [])
     }()
 
+    /// A backslash ends the match as surely as whitespace does.
+    ///
+    /// The heuristic scan runs on raw tool input, where a newline inside a
+    /// quoted value is the two characters `\` and `n` rather than an actual
+    /// newline — so without this the URL in a real Codex shell command
+    /// (`source_url: https://…/268\n+related_docs:`) matched straight through
+    /// the escape and was registered twice: once clean, once with
+    /// `\n+related_docs:\n+` glued to the end. A URL cannot contain a literal
+    /// backslash — it has to be percent-encoded — so excluding it costs nothing.
     private static let urlRegex: NSRegularExpression? = {
-        try? NSRegularExpression(pattern: #"(?:https?|file)://[^\s\)\]\"]+"#, options: [])
+        try? NSRegularExpression(pattern: #"(?:https?|file)://[^\s\)\]\"\\]+"#, options: [])
     }()
 
     private static let markdownAbsPathLinkRegex: NSRegularExpression? = {
@@ -429,7 +462,8 @@ enum AttachmentResolver {
             for m in matches where m.numberOfRanges >= 2 {
                 let r = m.range(at: 1)
                 if r.location != NSNotFound {
-                    let path = ns.substring(with: r).trimmingCharacters(in: .whitespaces)
+                    let raw = ns.substring(with: r).trimmingCharacters(in: .whitespaces)
+                    let path = strippingTrailingNote(raw)
                     if path.hasPrefix("/") {
                         push(path)
                     }
@@ -452,6 +486,87 @@ enum AttachmentResolver {
         #"Applied \d+ edits? to\s+(.+?)\s*$"#,
         #"File modified:\s+(.+?)\s*$"#,
     ]
+
+    /// Drops a trailing parenthetical note from a scraped path.
+    ///
+    /// Shortest closed parenthetical treated as prose rather than as part of
+    /// the path.
+    static let minTrailingNoteLength = 20
+
+    /// The patterns above capture to end of line, and Claude Code appends a
+    /// reminder to its own success messages:
+    ///
+    ///     File created successfully at: /a/b.swift (file state is current in
+    ///     your context — no need to Read it back)
+    ///
+    /// Left in, that sentence becomes part of the locator, so the same file
+    /// surfaces twice — once correctly via the heuristic scan below, once as a
+    /// path ending in an English sentence.
+    ///
+    /// Two cases, decided by whether the parenthesis closes.
+    ///
+    /// **Unclosed** — the text was cut off, so the parenthetical is unusable
+    /// either way. Nothing is required of the fragment's length, but it must
+    /// look like prose — a space, and no path separator — because a tail that
+    /// could equally be a decoration whose `)` was lost is kept: the shortened
+    /// path may exist, and pointing a Reveal at the wrong real directory is
+    /// worse than pointing it at nothing.
+    ///
+    /// **Closed** — the shape decides: three or more words and at least
+    /// `minTrailingNoteLength` characters. `(2)`, `(copy)` and `(Draft Copy)`
+    /// are ordinary path decorations and stay.
+    ///
+    /// A path that merely contains " (" mid-way, or ends in something other
+    /// than `)`, is untouched either way.
+    static func strippingTrailingNote(_ path: String) -> String {
+        guard let open = path.range(of: " (", options: .backwards) else { return path }
+        let tail = path[open.upperBound...]
+        let isClosed = tail.hasSuffix(")") && !tail.dropLast().contains(")")
+        let isTruncated = !tail.contains(")")
+
+        // An unmatched "(" means the text was cut off, so the parenthetical is
+        // unusable whichever it was — a note the message ended inside, or a
+        // decoration whose ")" was lost with the rest of the line. Keeping it
+        // yields a path that is certainly wrong; dropping it yields a valid
+        // prefix, and the path itself came before the note. So the missing ")"
+        // is the whole test, with no bar on length or word count.
+        //
+        // Length cannot decide this case anyway: "file state is" — the note cut
+        // after three words — and "Draft Copy 2)" are both 13 characters and
+        // three words. Only the closing parenthesis separates them, and a real
+        // path has one.
+        //
+        // Two exceptions, both resting on the same asymmetry: keeping a note
+        // fragment yields a path that does not exist, so Reveal fails
+        // harmlessly, while stripping a decoration yields a *shorter* path that
+        // may well exist, so Reveal opens the wrong thing and Copy Path copies
+        // it. Nothing here checks the filesystem. So when the tail could be
+        // either, keep it.
+        //
+        //  - A "/" means the text kept going as a path, so nothing was cut off
+        //    there and the parenthesis belongs to a directory name:
+        //    `/a/b (draft notes/c.swift` must survive whole.
+        //  - Prose has a space. Without one the tail is indistinguishable from
+        //    a decoration whose ")" was lost with the rest of the line, and
+        //    `/Users/me/Docs (2` stripped to `/Users/me/Docs` is exactly the
+        //    wrong-target case. The cost is a note truncated inside its first
+        //    word surviving as a duplicate row — noisy, but on a path that
+        //    cannot exist.
+        if isTruncated {
+            guard tail.contains(" "), !tail.contains("/") else { return path }
+            return String(path[..<open.lowerBound])
+        }
+        guard isClosed else { return path }
+
+        // Closed, so the whole parenthetical is there and its shape decides. A
+        // note reads as prose: a sentence fragment, several words long. A single
+        // space was too weak — it also matched a real directory named
+        // `Old Version (Draft Copy)`, and stripping that loses part of an
+        // existing path. The one known note clears these bounds many times over.
+        let words = tail.split(separator: " ").count
+        guard words >= 3, tail.count >= Self.minTrailingNoteLength else { return path }
+        return String(path[..<open.lowerBound])
+    }
 
     // MARK: - Reply / thought mentions
 
