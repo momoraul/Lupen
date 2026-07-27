@@ -19,6 +19,8 @@ final class ConversationDetailView: NSView {
     private let stack = NSStackView()
     private let registry = BlockRendererRegistry()
     private var renderContext = RenderContext()
+    /// Remembered fold state for the overview cards that lead a turn.
+    private let collapsedCards = CollapsedCardsStore()
     /// stepUuid → index of the first arranged card covering it — the C-24
     /// timeline's click-to-jump target map, rebuilt on every `configure`.
     private var stepAnchorIndex: [String: Int] = [:]
@@ -53,6 +55,10 @@ final class ConversationDetailView: NSView {
         renderContext.jumpToStep = { [weak self] uuid in
             self?.reveal(stepUuid: uuid)
         }
+        // Single owner of the fold state: the store reads once and writes
+        // through, so a second live instance over the same file would let the
+        // later write clobber the earlier one.
+        renderContext.collapsedCards = collapsedCards
     }
 
     @available(*, unavailable)
@@ -69,6 +75,7 @@ final class ConversationDetailView: NSView {
         registry.register(ThinkingCardRenderer())
         registry.register(ActivityGroupRenderer())
         registry.register(TimelineCardRenderer())
+        registry.register(FileAccessCardRenderer())
     }
 
     private func setup() {

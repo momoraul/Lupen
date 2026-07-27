@@ -420,8 +420,11 @@ final class TurnTimelineView: NSView {
                 segment.readout, leadColor: segment.isError ? .systemRed : .labelColor
             )
         } else {
+            // The card's disclosure header carries the summary now, so
+            // repeating it here printed the same sentence twice on an expanded
+            // card. The idle line advertises the interaction instead.
             readout.attributedStringValue = Self.readoutText(
-                "⏱ \(model.summaryText)", leadColor: .labelColor
+                "Hover a segment for detail · click to jump", leadColor: .secondaryLabelColor
             )
         }
     }

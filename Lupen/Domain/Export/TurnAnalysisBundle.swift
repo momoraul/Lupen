@@ -51,6 +51,9 @@ struct TurnAnalysisBundle: Sendable, Equatable {
     let subAgents: [SubAgentEntry]
     let toolCalls: [ToolCallEntry]
     let toolTotals: [ToolTotal]
+    /// Which files the turn read and wrote, in op order. `nil` when the turn
+    /// touched no file — 65% of turns, measured.
+    let fileAccess: FileAccess?
     let trace: [TraceEntry]
     /// What the budget dropped, in human terms. Empty when nothing was cut.
     let omissions: [String]
@@ -250,6 +253,43 @@ struct TurnAnalysisBundle: Sendable, Equatable {
         /// permission prompt or the user stepping away, not tool compute. Same
         /// flag the step trace carries, so the two views agree.
         let includesLikelyIdle: Bool
+    }
+
+    /// One file the turn touched, with what happened to it and where on the
+    /// op axis. Mirrors what the file-access card draws, so the export and the
+    /// card cannot drift into telling different stories about the same turn.
+    struct FileTouch: Sendable, Equatable {
+        let path: String
+        /// Deepest operation *attempted* — `read`, `edit`, or `write`.
+        let deepest: String
+        let readCount: Int
+        let changeCount: Int
+        let errorCount: Int
+        /// `nil` when the raw line could not be read, so a genuine zero stays
+        /// distinguishable from "not measured".
+        let linesAdded: Int?
+        let linesRemoved: Int?
+        let isNewFile: Bool
+        /// Positions on the turn's op axis, so an analyst can line a file up
+        /// against the ordering without re-deriving it.
+        let ordinals: [Int]
+        /// A read that follows a change to the same file. Reported as a fact,
+        /// never as a fault — it happens in a third of successful work.
+        let readAfterChange: Bool
+    }
+
+    struct FileAccess: Sendable, Equatable {
+        let files: [FileTouch]
+        let foldedFileCount: Int
+        let searchOpCount: Int
+        /// Paths scraped out of shell commands. Held apart from `files`
+        /// because the extraction is 14.9% accurate, measured.
+        let shellPathCount: Int
+        let shellOpCount: Int
+        /// Compact op order, e.g. `s s r e e r! w` — search, read, edit,
+        /// write, `!` marking a failure. Gives the shape in one line.
+        let sequence: String
+        let summary: String
     }
 
     /// Per-tool rollup — the "you called Read 41 times" view that a

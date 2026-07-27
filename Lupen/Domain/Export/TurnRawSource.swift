@@ -36,6 +36,19 @@ enum TurnRawSource {
     static let turnContextScanWindow = 256 * 1024
 
     static func load(steps: [Step], provider: ProviderKind) -> Loaded {
+        var loaded = loadLines(steps: steps)
+        if provider == .codex {
+            loaded.turnContext = codexTurnContext(steps: steps)
+        }
+        return loaded
+    }
+
+    /// Raw lines only, skipping the Codex turn-context back-scan.
+    ///
+    /// Split out for callers that want the payloads and nothing else — the
+    /// file-access card reads `structuredPatch` out of them and has no use for
+    /// turn context, and the back-scan reads up to 256 KB it would throw away.
+    static func loadLines(steps: [Step]) -> Loaded {
         var loaded = Loaded()
 
         // Steps whose raw bytes are already in memory (Claude's materialize path
@@ -70,9 +83,6 @@ enum TurnRawSource {
             }
         }
 
-        if provider == .codex {
-            loaded.turnContext = codexTurnContext(steps: steps)
-        }
         return loaded
     }
 

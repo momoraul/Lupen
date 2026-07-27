@@ -24,12 +24,15 @@ import Foundation
 ///   produced no step row (meta entries the assembler merges back into
 ///   prompt steps).
 /// - Codex turns map from the steps table (identity / order / text /
-///   metrics), with tool input/result payloads re-decoded from the
-///   turn's rollout lines through the REAL `CodexConversationAssembler`
-///   (6.4): assembled steps match back to rows by (byteOffset, kind) —
-///   line-local identity that survives normalize-time uuid prefixing.
-///   Any line that fails to decode or match degrades that row back to
-///   the bare projection, never an error.
+///   metrics), with tool input/result payloads AND the attachment
+///   manifest re-decoded from the turn's rollout lines through the REAL
+///   `CodexConversationAssembler` (6.4): assembled steps match back to
+///   rows by (byteOffset, kind) — line-local identity that survives
+///   normalize-time uuid prefixing. The manifest is not optional
+///   polish: the file-access card is built from it, so a Codex turn
+///   without it has no card at all. Any line that fails to decode or
+///   match degrades that row back to the bare projection, never an
+///   error.
 struct SQLiteConversationSource: Sendable {
 
     let store: ProviderStore
@@ -261,7 +264,7 @@ struct SQLiteConversationSource: Sendable {
         let locators = (try? store.turnLineLocators(sessionId: sessionId, turnId: turnId)) ?? []
         let rows = try store.steps(sessionId: sessionId, turnId: turnId)
         let payloads = provider == .codex
-            ? codexToolPayloads(rows: rows, locators: locators)
+            ? codexLinePayloads(rows: rows, locators: locators)
             : [:]
         // Index locators by uuid once — O(1) attach instead of O(n²) first(where:).
         let locatorByUuid = Dictionary(locators.map { ($0.uuid, $0) }, uniquingKeysWith: { first, _ in first })
@@ -295,6 +298,11 @@ struct SQLiteConversationSource: Sendable {
                 agentId: row.agentId,
                 text: row.text,
                 thinkingText: row.thinkingText,
+                // The steps table has no attachments column; they come off the
+                // assembled line. Without them a Codex turn produced no file
+                // rows at all, so its file-access card never appeared and its
+                // Attachments tab stayed empty.
+                attachments: payload?.attachments ?? [],
                 toolCalls: toolCalls,
                 toolResult: toolResult,
                 requestId: row.requestId,
@@ -304,7 +312,17 @@ struct SQLiteConversationSource: Sendable {
         }
     }
 
-    /// Per-line tool payloads for a Codex turn (6.4 — the 4.1 recorded
+    /// What one Codex line contributes to its step row beyond the table
+    /// projection. A struct rather than a tuple: it started as the two tool
+    /// payload fields and gained `attachments`, and the next field should not
+    /// have to rewrite every signature again.
+    private struct CodexLinePayload {
+        let inputJSON: String?
+        let result: ToolResultInfo?
+        let attachments: [AttachmentRef]
+    }
+
+    /// Per-line payloads for a Codex turn (6.4 — the 4.1 recorded
     /// gap). The steps table stores tool identity (name / toolUseId) but
     /// not the payloads: input JSON and result content live only in the
     /// rollout JSONL (by design — raw lines are the payload store).
@@ -323,25 +341,27 @@ struct SQLiteConversationSource: Sendable {
     /// Every failure path (vanished source, unreadable meta, rejected
     /// line, unmatched step) just leaves those rows on the bare table
     /// projection — never an error, never a partial row mix-up.
-    private func codexToolPayloads(
+    private func codexLinePayloads(
         rows: [StoreStepRow],
         locators: [StoreTurnLineLocator]
-    ) -> [String: (inputJSON: String?, result: ToolResultInfo?)] {
-        let toolKinds: Set<String> = [
-            StepKind.toolCall.rawValue, StepKind.toolResult.rawValue,
-        ]
-        let toolRows = rows.filter { toolKinds.contains($0.kind) }
-        guard !toolRows.isEmpty else { return [:] }
-
+    ) -> [String: CodexLinePayload] {
         let locatorByUuid = Dictionary(
             locators.map { ($0.uuid, $0) },
             uniquingKeysWith: { first, _ in first }
         )
 
-        // Assemble each source file's tool lines once.
+        // Every addressable row, not only the tool ones. Tool rows are here for
+        // their payloads; the rest are here for their attachments, which the
+        // steps table does not carry and which the file-access card and the
+        // Attachments tab both read. `raw_locators` records a line for every
+        // step row, so the same (offset, kind) match reaches them all.
+        let addressable = rows.filter { locatorByUuid[$0.uuid]?.byteOffset != nil }
+        guard !addressable.isEmpty else { return [:] }
+
+        // Assemble each source file's lines once.
         var assembledByLineKind: [String: Step] = [:]
-        let toolLocators = toolRows.compactMap { locatorByUuid[$0.uuid] }
-        for (path, fileLocators) in Dictionary(grouping: toolLocators, by: \.sourcePath) {
+        let rowLocators = addressable.compactMap { locatorByUuid[$0.uuid] }
+        for (path, fileLocators) in Dictionary(grouping: rowLocators, by: \.sourcePath) {
             let url = URL(fileURLWithPath: path)
             guard let metadata = try? CodexSessionMetadataReader.readMetadata(from: url),
                   let handle = try? FileHandle(forReadingFrom: url) else { continue }
@@ -395,14 +415,15 @@ struct SQLiteConversationSource: Sendable {
         }
         guard !assembledByLineKind.isEmpty else { return [:] }
 
-        var payloads: [String: (inputJSON: String?, result: ToolResultInfo?)] = [:]
-        for row in toolRows {
+        var payloads: [String: CodexLinePayload] = [:]
+        for row in addressable {
             guard let offset = locatorByUuid[row.uuid]?.byteOffset,
                   let step = assembledByLineKind["\(offset):\(row.kind)"]
             else { continue }
-            payloads[row.uuid] = (
+            payloads[row.uuid] = CodexLinePayload(
                 inputJSON: step.toolCalls.first?.inputJSON,
-                result: step.toolResult
+                result: step.toolResult,
+                attachments: step.attachments
             )
         }
         return payloads
