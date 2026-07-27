@@ -130,9 +130,14 @@ struct CompositionView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             if let top = result.topCost {
-                (Text(top.category.label).fontWeight(.semibold)
-                 + Text(" was the biggest cost — ")
-                 + Text("\(exactUSD(top.costUSD)) (\(percent(top.share)))").fontWeight(.semibold))
+                // Interpolated rather than concatenated with `+`, which is
+                // deprecated as of macOS 26. Same three runs, same weights: the
+                // outer `.font` sets the size for all of them and each
+                // interpolated `Text` keeps the weight it set for itself.
+                let category = Text(top.category.label).fontWeight(.semibold)
+                let amount = Text("\(exactUSD(top.costUSD)) (\(percent(top.share)))")
+                    .fontWeight(.semibold)
+                Text("\(category) was the biggest cost — \(amount)")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .padding(.top, 2)
