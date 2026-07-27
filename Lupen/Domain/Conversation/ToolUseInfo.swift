@@ -332,7 +332,10 @@ struct ToolUseInfo: Sendable, Equatable, Codable {
 
     private static func normalizedToolName(_ name: String) -> String {
         switch name {
-        case "exec_command", "shell_command":
+        // Kept in step with `CodexConversationAssembler.displayToolName`, which
+        // maps the same Codex spellings for its own consumers.
+        // `shellToolNamesAgree` pins the pair.
+        case "exec_command", "shell_command", "exec":
             return "Bash"
         case "read_file":
             return "Read"

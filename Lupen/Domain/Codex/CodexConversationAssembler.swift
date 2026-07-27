@@ -383,6 +383,47 @@ extension CodexConversationAssembler {
     }
 }
 
+extension CodexConversationAssembler {
+    /// Internal so `shellToolNamesAgree` can pin it against
+    /// `ToolUseInfo.normalizedToolName`: the two map the same Codex spellings
+    /// for different consumers, and `exec` was missing from both.
+    ///
+    /// Declared in its own extension rather than the `private` one below, where
+    /// an `internal` member conflicts with the extension's own access level.
+    static func displayToolName(_ name: String?) -> String {
+        switch name {
+        // `exec` is the newer custom-tool spelling: its input is JavaScript
+        // calling `tools.exec_command(...)`, so it is the same shell. Measured
+        // on this machine's Codex logs: 151,266 `exec_command` against 35,252
+        // `exec`, so leaving it unmapped hid roughly a fifth of Codex's shell
+        // calls from everything keyed on the normalised name — including the
+        // file-access card's shell lane and its path scraping.
+        case "exec_command", "shell_command", "exec":
+            return "Bash"
+        case "read_file":
+            return "Read"
+        case "write_file":
+            return "Write"
+        case "edit_file", "apply_diff", "apply_patch":
+            return "Edit"
+        case "spawn_agent":
+            return "Agent"
+        case "wait_agent":
+            return "AgentWait"
+        case "close_agent":
+            return "AgentClose"
+        case "skill", "use_skill":
+            return "Skill"
+        case "read_dir", "list_dir":
+            return "Glob"
+        case let name? where !name.isEmpty:
+            return name
+        default:
+            return "Tool"
+        }
+    }
+}
+
 private extension CodexConversationAssembler {
     struct TurnDraft {
         let key: String
@@ -722,34 +763,6 @@ private extension CodexConversationAssembler {
         }
         return String(suffix[..<lastColon])
     }
-
-    static func displayToolName(_ name: String?) -> String {
-        switch name {
-        case "exec_command", "shell_command":
-            return "Bash"
-        case "read_file":
-            return "Read"
-        case "write_file":
-            return "Write"
-        case "edit_file", "apply_diff", "apply_patch":
-            return "Edit"
-        case "spawn_agent":
-            return "Agent"
-        case "wait_agent":
-            return "AgentWait"
-        case "close_agent":
-            return "AgentClose"
-        case "skill", "use_skill":
-            return "Skill"
-        case "read_dir", "list_dir":
-            return "Glob"
-        case let name? where !name.isEmpty:
-            return name
-        default:
-            return "Tool"
-        }
-    }
-
     enum ExternalAgentToolMarker {
         case call(toolName: String, inputJSON: String)
         case result(content: String)
