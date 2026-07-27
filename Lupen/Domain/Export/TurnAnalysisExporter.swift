@@ -86,7 +86,12 @@ enum TurnAnalysisExporter {
                 subAgentCostByAgentId: request.subAgentCostByAgentId,
                 composition: request.composition,
                 rawFacts: facts,
-                budget: request.budget
+                budget: request.budget,
+                // Parsed from the lines already loaded above — the export
+                // opens each JSONL once, not twice.
+                fileDiffStats: TurnFileDiffStats.parse(
+                    lines: loaded.lines, missingLineCount: loaded.missingCount
+                )
             )
         )
         return TurnAnalysisMarkdownRenderer.render(bundle, options: options)

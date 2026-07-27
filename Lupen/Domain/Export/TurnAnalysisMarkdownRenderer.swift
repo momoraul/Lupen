@@ -66,6 +66,7 @@ enum TurnAnalysisMarkdownRenderer {
         out.append(contentsOf: skillSection(bundle))
         out.append(contentsOf: subAgentSection(bundle))
         out.append(contentsOf: toolSection(bundle))
+        out.append(contentsOf: fileAccessSection(bundle))
         out.append(contentsOf: traceSection(bundle))
         out.append(contentsOf: omissionSection(bundle))
         out.append(contentsOf: questions())
@@ -454,11 +455,87 @@ enum TurnAnalysisMarkdownRenderer {
         return idle ? "\(formatted) ⚠ idle?" : formatted
     }
 
-    // MARK: - 9. Trace
+    // MARK: - 9. Files
+
+    /// Mirrors the file-access card. The op-order column is what makes this
+    /// more than a file list: it lets an analyst see that a file was re-read
+    /// after being edited, or that exploration and editing were interleaved
+    /// rather than separated.
+    ///
+    /// States facts only. Re-reading a file happens in a third of *successful*
+    /// work, so the section deliberately offers no verdict on it — a prompt
+    /// rewritten to "stop re-reading files" would trade correctness for a
+    /// metric.
+    private static func fileAccessSection(_ bundle: TurnAnalysisBundle) -> [String] {
+        guard let access = bundle.fileAccess else { return [] }
+
+        var lines = ["## 9. Files touched", ""]
+        lines.append(access.summary)
+        lines.append("")
+        lines.append("Op order: `\(access.sequence)`")
+        lines.append("")
+        lines.append(
+            "_`r` read · `e` edit · `w` write · `s` search · `!` failed. "
+                + "Positions are operation order, not elapsed time._"
+        )
+        lines.append("")
+
+        lines.append("| file | touched | reads | changes | ±lines | at ops | notes |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for file in access.files {
+            var notes: [String] = []
+            if file.isNewFile { notes.append("new file") }
+            if file.readAfterChange { notes.append("read after change") }
+            if file.errorCount > 0 { notes.append("\(file.errorCount) failed") }
+            lines.append(row(
+                file.path,
+                file.deepest,
+                integer(file.readCount),
+                file.changeCount > 0 ? integer(file.changeCount) : "—",
+                deltaCell(added: file.linesAdded, removed: file.linesRemoved),
+                file.ordinals.map(String.init).joined(separator: ", "),
+                notes.isEmpty ? "—" : notes.joined(separator: ", ")
+            ))
+        }
+        lines.append("")
+
+        var footnotes: [String] = []
+        if access.foldedFileCount > 0 {
+            footnotes.append("\(access.foldedFileCount) further files omitted from the table")
+        }
+        if access.searchOpCount > 0 {
+            footnotes.append(
+                "\(access.searchOpCount) search operations, which carry no file path"
+            )
+        }
+        if access.shellOpCount > 0 {
+            // Named as approximate on purpose: scraping a path out of a shell
+            // command lands 14.9% of the time, measured, so these must not be
+            // read as facts alongside the structured rows.
+            footnotes.append(
+                "\(access.shellOpCount) shell commands, "
+                    + "\(access.shellPathCount) paths guessed from them (approximate)"
+            )
+        }
+        if !footnotes.isEmpty {
+            lines.append("Also: " + footnotes.joined(separator: "; ") + ".")
+            lines.append("")
+        }
+        return lines
+    }
+
+    /// `nil` means the raw line was unreadable, which is not the same as zero.
+    private static func deltaCell(added: Int?, removed: Int?) -> String {
+        guard let added, let removed else { return "not measured" }
+        if added == 0 && removed == 0 { return "—" }
+        return "+\(added) −\(removed)"
+    }
+
+    // MARK: - 10. Trace
 
     private static func traceSection(_ bundle: TurnAnalysisBundle) -> [String] {
         guard !bundle.trace.isEmpty else { return [] }
-        var lines = ["## 9. Step trace", ""]
+        var lines = ["## 10. Step trace", ""]
         for entry in bundle.trace {
             var headerParts = ["**\(entry.ordinal). \(entry.kind.shortLabel)**"]
             if let model = entry.model, model != "<synthetic>" { headerParts.append("`\(model)`") }
@@ -526,7 +603,7 @@ enum TurnAnalysisMarkdownRenderer {
 
     private static func questions() -> [String] {
         [
-            "## 10. Questions to answer",
+            "## 11. Questions to answer",
             "",
             "1. Which single change would cut the most cost or time here without losing the result?",
             "2. Did any subagent cost more than the value of what it returned?",

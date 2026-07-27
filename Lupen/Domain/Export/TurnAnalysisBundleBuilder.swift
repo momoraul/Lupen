@@ -58,6 +58,10 @@ enum TurnAnalysisBundleBuilder {
         let composition: ContextComposition.Result?
         let rawFacts: TurnRawFacts
         let budget: TurnExportBudget
+        /// Per-file line deltas, parsed from the same raw lines the enricher
+        /// already loaded — passed in rather than re-read so the export opens
+        /// each JSONL once.
+        let fileDiffStats: TurnFileDiffStats
 
         init(
             turn: Turn,
@@ -73,7 +77,8 @@ enum TurnAnalysisBundleBuilder {
             subAgentCostByAgentId: [String: CostBreakdown] = [:],
             composition: ContextComposition.Result? = nil,
             rawFacts: TurnRawFacts = TurnRawFacts(),
-            budget: TurnExportBudget = .default
+            budget: TurnExportBudget = .default,
+            fileDiffStats: TurnFileDiffStats = TurnFileDiffStats()
         ) {
             self.turn = turn
             self.provider = provider
@@ -89,6 +94,7 @@ enum TurnAnalysisBundleBuilder {
             self.composition = composition
             self.rawFacts = rawFacts
             self.budget = budget
+            self.fileDiffStats = fileDiffStats
         }
     }
 
@@ -119,6 +125,7 @@ enum TurnAnalysisBundleBuilder {
             subAgents: makeSubAgents(inputs),
             toolCalls: toolCalls,
             toolTotals: makeToolTotals(toolCalls),
+            fileAccess: makeFileAccess(inputs),
             trace: makeTrace(steps: steps, budget: inputs.budget, ledger: &ledger),
             omissions: ledger.omissions,
             caveats: makeCaveats(inputs)
@@ -669,5 +676,78 @@ enum TurnAnalysisBundleBuilder {
     private static func distinct(_ values: [String]) -> [String] {
         var seen: Set<String> = []
         return values.filter { seen.insert($0).inserted }
+    }
+
+    // MARK: - File access
+
+    /// Mirrors the file-access card so the export and the card cannot drift
+    /// into telling different stories about the same turn.
+    private static func makeFileAccess(_ inputs: Inputs) -> TurnAnalysisBundle.FileAccess? {
+        guard let model = TurnFileAccess.build(steps: inputs.turn.steps) else { return nil }
+        let deltas = inputs.fileDiffStats
+
+        let files = model.rows.map { row -> TurnAnalysisBundle.FileTouch in
+            let delta = deltas.byPath[row.path]
+            // A read-only row has nothing to measure, so it reports zero rather
+            // than "not measured" — otherwise every row of an exploration-only
+            // turn reads as unmeasured, and those are 70% of the turns that
+            // touch a file.
+            //
+            // For a row that changed something and has no entry, the question is
+            // whether the parser looked and found nothing or never got to look.
+            // `deltas.isEmpty` answered it turn-wide, which is wrong per file: a
+            // turn editing A and B, where A's raw line reads and B's does not,
+            // is not empty — so B fell through to zero and the document claimed
+            // B changed no lines. The two facts that actually answer it are
+            // whether a parse ran at all and whether any line failed to read.
+            let deltaPair: (added: Int, removed: Int)?
+            if row.deepest == .read {
+                deltaPair = (0, 0)
+            } else if let delta {
+                deltaPair = (delta.added, delta.removed)
+            } else if !deltas.didLoad || deltas.missingLineCount > 0 {
+                deltaPair = nil
+            } else {
+                deltaPair = (0, 0)
+            }
+            return TurnAnalysisBundle.FileTouch(
+                path: row.path,
+                deepest: row.deepest.rawValue,
+                readCount: row.ops.filter { $0.operation == .read }.count,
+                changeCount: row.ops.filter { $0.operation != .read }.count,
+                errorCount: row.errorCount,
+                linesAdded: deltaPair?.added,
+                linesRemoved: deltaPair?.removed,
+                isNewFile: delta?.isNewFile ?? false,
+                ordinals: row.ops.map(\.ordinal),
+                readAfterChange: row.hasReadAfterChange
+            )
+        }
+
+        return TurnAnalysisBundle.FileAccess(
+            files: files,
+            foldedFileCount: model.foldedFileCount,
+            searchOpCount: model.searchOpCount,
+            shellPathCount: model.heuristicPaths.count,
+            shellOpCount: model.heuristicOpCount,
+            sequence: sequenceString(model),
+            summary: model.summaryText
+        )
+    }
+
+    /// One-line op order: `s` search, `r` read, `e` edit, `w` write, `!` a
+    /// failure. Compact enough that an analyst sees the shape before reading
+    /// the table.
+    static func sequenceString(_ model: TurnFileAccess.Model) -> String {
+        model.sequence.map { mark in
+            let letter: String
+            switch mark.operation {
+            case .read:  letter = "r"
+            case .edit:  letter = "e"
+            case .write: letter = "w"
+            case .none:  letter = "s"
+            }
+            return mark.isError ? letter + "!" : letter
+        }.joined(separator: " ")
     }
 }
