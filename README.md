@@ -183,6 +183,26 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.10.0 — _2026-07-28_
+
+A detachable detail pane, a per-turn file ledger, and Opus 5 pricing.
+
+- **Detachable detail pane** — the detail pane can move into a window of its
+  own (View ▸ Open Detail in New Window, ⌃⌘Y, or the button in the pane
+  header), so a long transcript or a raw payload gets real screen space next
+  to the turn outline instead of a strip at the bottom. Closing that window
+  puts the pane back where it was.
+- **Files a turn touched** — each turn now shows which files it read and which
+  it changed.
+- **Turn analysis export** — export an expensive turn as a document built for
+  AI analysis, straight from the detail pane header.
+- **Session sources: manual type + rename** — a source whose type was guessed
+  wrong can be switched by hand, and any source can be renamed in place.
+  Switching a type rebuilds that source's index so rows from the previous
+  parser never linger.
+- **Claude Opus 5 pricing** — Opus 5 is priced, and the fast-mode rates are
+  corrected.
+
 ### v0.9.0 — _2026-07-13_
 
 Cost forensics, source-scoped audits, and Codex GPT-5.6 pricing.
