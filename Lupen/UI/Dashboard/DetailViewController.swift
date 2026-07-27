@@ -54,6 +54,11 @@ final class DetailViewController: NSViewController {
     /// floats alone in the corner; with it the trailing two controls
     /// read as a single "actions" cluster.
     private let togglePaneSeparator = NSBox()
+    /// Moves the whole pane into its own window, and back. Sits at the
+    /// trailing edge of the cluster: the closer a control is to the window
+    /// edge, the more it acts on the container rather than the content,
+    /// and this one acts on the container itself.
+    private let detachButton = NSButton()
 
     /// Transparent strip in the header row's empty background area
     /// between the segmented control and the trailing control cluster
@@ -91,6 +96,33 @@ final class DetailViewController: NSViewController {
     /// detail pane when the user clicks the toggle button. Keeps
     /// `DetailViewController` agnostic of its parent hierarchy.
     var onTogglePaneRequested: (() -> Void)?
+
+    /// Split view owner sets this to move the pane into its own window
+    /// (or bring it back). Same reasoning as `onTogglePaneRequested` —
+    /// the pane doesn't know where it is mounted.
+    var onDetachRequested: (() -> Void)?
+
+    /// True while the pane is living in its own window. Feeds
+    /// `updateVisibility()` so the controls that only make sense inside
+    /// the dashboard disappear rather than misbehave.
+    private var isDetachedState = false
+
+    /// Short description of what the pane is showing, for the detached
+    /// window's subtitle. Kept here because this is where the selection
+    /// actually changes; the window observes it.
+    private(set) var contextSubtitle: String = DetailPaneDetachStrings.noSelectionSubtitle {
+        didSet {
+            guard contextSubtitle != oldValue else { return }
+            onContextSubtitleChanged?(contextSubtitle)
+        }
+    }
+
+    var onContextSubtitleChanged: ((String) -> Void)?
+
+    /// Tab bar, exposed so the detached window can make it the initial
+    /// first responder.
+    var tabBarControl: NSView { segmentedControl }
+
 
     /// Drag-to-resize callbacks — fired as the user drags on the
     /// header background. Owner (`DashboardSplitViewController`)
@@ -169,7 +201,15 @@ final class DetailViewController: NSViewController {
         finderButton.bezelStyle = .accessoryBarAction
         finderButton.controlSize = .small
         finderButton.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Reveal in Finder")
-        finderButton.imagePosition = .imageLeading
+        // Icon-only: the label cost ~86pt of a header that already runs out
+        // of room. The 6-tab segmented control alone measures 454pt, and
+        // the full header wants 655pt against the ~599pt the right pane
+        // gets at the window's minimum size — dropping the label buys back
+        // most of what the detach button costs, and it matches
+        // `exportAnalysisButton` right beside it.
+        finderButton.imagePosition = .imageOnly
+        finderButton.toolTip = "Reveal in Finder"
+        finderButton.setAccessibilityLabel("Reveal in Finder")
         finderButton.target = self
         finderButton.action = #selector(revealInFinder)
 
@@ -209,6 +249,18 @@ final class DetailViewController: NSViewController {
         togglePaneButton.target = self
         togglePaneButton.action = #selector(togglePaneClicked)
         applyTogglePaneSymbol()
+
+        // Same bezel/size as the toggle so the two layout controls read as
+        // one group. No extra separator between them — the existing
+        // hairline's documented job is to divide content actions from
+        // layout actions, and this is a layout action.
+        detachButton.bezelStyle = .accessoryBarAction
+        detachButton.controlSize = .regular
+        detachButton.isBordered = true
+        detachButton.imagePosition = .imageOnly
+        detachButton.target = self
+        detachButton.action = #selector(detachClicked)
+        applyDetachSymbol()
 
         // Vertical hairline between the reveal-in-Finder button and
         // the toggle pane button — visually clusters the two trailing
@@ -299,6 +351,53 @@ final class DetailViewController: NSViewController {
         togglePaneButton.contentTintColor = tint
     }
 
+    /// Glyph + tint for the detach button, following the same tint policy
+    /// as the toggle: accent when the control's state is "on" (the pane is
+    /// out in its own window), secondary grey when it is off.
+    private func applyDetachSymbol() {
+        let tint: NSColor = isDetachedState ? .controlAccentColor : .secondaryLabelColor
+        detachButton.image = isDetachedState
+            ? DetailPaneDetachStrings.reattachSymbol(tint: tint)
+            : DetailPaneDetachStrings.detachSymbol(tint: tint)
+        detachButton.contentTintColor = tint
+        detachButton.toolTip = isDetachedState
+            ? DetailPaneDetachStrings.putBackTooltip
+            : DetailPaneDetachStrings.detachTooltip
+        detachButton.setAccessibilityLabel(
+            isDetachedState
+                ? DetailPaneDetachStrings.putBackAccessibilityLabel
+                : DetailPaneDetachStrings.detachAccessibilityLabel
+        )
+    }
+
+    /// Told by the coordinator when the pane moves between the dashboard
+    /// and its own window.
+    func setDetached(_ detached: Bool) {
+        isDetachedState = detached
+        if detached {
+            // A window is never "minimized to a header strip".
+            isMinimizedState = false
+        }
+        applyEmptyStateSubtitle()
+        updateVisibility()
+    }
+
+    /// The empty state tells the user where to click. In the dashboard the
+    /// turn outline really is directly above; in the detached window there
+    /// is nothing above at all, so pointing "above" would send them looking
+    /// inside the wrong window.
+    private func applyEmptyStateSubtitle() {
+        emptySubtitleLabel.stringValue = isDetachedState
+            ? "Select a Turn or Step in the Lupen window\nto view its details."
+            : "Select a Turn or Step from the list above\nto view its details."
+    }
+
+    /// Move keyboard focus to the tab bar. Used on both legs of the move
+    /// so focus lands somewhere predictable instead of being dropped.
+    func focusTabBar() {
+        view.window?.makeFirstResponder(segmentedControl)
+    }
+
     /// Minimize/expand the detail pane content while keeping the
     /// header (tab segmented control + toggle button) always visible.
     /// Xcode's "debug area" toggle behaves the same way — the console
@@ -312,6 +411,7 @@ final class DetailViewController: NSViewController {
         isMinimizedState = minimized
         updateVisibility()
     }
+
 
     /// Single source of truth for every child view's `isHidden`.
     ///
@@ -338,7 +438,16 @@ final class DetailViewController: NSViewController {
         // minimize state. These are the only affordances the user
         // can reach to *change* the other state dimensions.
         segmentedControl.isHidden = false
-        togglePaneButton.isHidden = false
+        // Minimize collapses the pane to a header strip inside the
+        // dashboard — there is no such thing to collapse in a window, and
+        // the height constraint it drives is deactivated while detached,
+        // so the control is removed rather than left to do nothing.
+        togglePaneButton.isHidden = isDetachedState
+        detachButton.isHidden = false
+        // Dragging the header resizes the dashboard's detail pane. In a
+        // window that constraint is inactive, so the drag would either do
+        // nothing or poke at geometry that is no longer installed.
+        headerResizeHandle.isHidden = isDetachedState
 
         // Reveal in Finder needs something selected to reveal. The
         // grouping separator follows the same visibility rule — when
@@ -367,6 +476,7 @@ final class DetailViewController: NSViewController {
         // strong enough state cue.
         applyTogglePaneSymbol()
         togglePaneButton.toolTip = isMinimizedState ? "Show Detail Pane (⇧⌘Y)" : "Hide Detail Pane (⇧⌘Y)"
+        applyDetachSymbol()
     }
 
     private func setupContainer() {
@@ -396,7 +506,7 @@ final class DetailViewController: NSViewController {
         emptyTitleLabel.textColor = .secondaryLabelColor
         emptyTitleLabel.alignment = .center
 
-        emptySubtitleLabel.stringValue = "Select a Turn or Step from the list above\nto view its details."
+        applyEmptyStateSubtitle()
         emptySubtitleLabel.font = .systemFont(ofSize: 11)
         emptySubtitleLabel.textColor = .tertiaryLabelColor
         emptySubtitleLabel.alignment = .center
@@ -428,6 +538,7 @@ final class DetailViewController: NSViewController {
         finderButton.translatesAutoresizingMaskIntoConstraints = false
         togglePaneButton.translatesAutoresizingMaskIntoConstraints = false
         togglePaneSeparator.translatesAutoresizingMaskIntoConstraints = false
+        detachButton.translatesAutoresizingMaskIntoConstraints = false
         headerSeparator.translatesAutoresizingMaskIntoConstraints = false
         headerResizeHandle.translatesAutoresizingMaskIntoConstraints = false
         trailingClusterStack.translatesAutoresizingMaskIntoConstraints = false
@@ -446,6 +557,7 @@ final class DetailViewController: NSViewController {
         trailingClusterStack.addArrangedSubview(finderButton)
         trailingClusterStack.addArrangedSubview(togglePaneSeparator)
         trailingClusterStack.addArrangedSubview(togglePaneButton)
+        trailingClusterStack.addArrangedSubview(detachButton)
 
         view.addSubview(headerResizeHandle)
         view.addSubview(segmentedControl)
@@ -473,6 +585,10 @@ final class DetailViewController: NSViewController {
             // non-touch control minimum.
             togglePaneButton.widthAnchor.constraint(equalToConstant: 28),
             togglePaneButton.heightAnchor.constraint(equalToConstant: 28),
+
+            // Detach button — same 28×28 as the toggle it sits beside.
+            detachButton.widthAnchor.constraint(equalToConstant: 28),
+            detachButton.heightAnchor.constraint(equalToConstant: 28),
 
             // Vertical separator — 1×14pt hairline clustering Reveal
             // and toggle (Xcode status-bar `|` pattern).
@@ -574,6 +690,9 @@ final class DetailViewController: NSViewController {
         currentSelection = identity
         currentRequest = nil
         currentSessionId = step.sessionId
+        contextSubtitle = TurnPreview.make(
+            for: turn, maxLength: DetailPaneDetachStrings.subtitleMaxLength
+        )
         updateVisibility()
 
         let tokens = step.tokens ?? TokenBreakdown(
@@ -729,6 +848,9 @@ final class DetailViewController: NSViewController {
         currentSelection = .turn(sessionId: turn.sessionId, turnId: turn.id)
         currentRequest = nil
         currentSessionId = turn.sessionId
+        contextSubtitle = TurnPreview.make(
+            for: turn, maxLength: DetailPaneDetachStrings.subtitleMaxLength
+        )
         updateVisibility()
 
         // Model can vary across Steps within a Turn, so fall back to
@@ -797,6 +919,7 @@ final class DetailViewController: NSViewController {
         currentSelection = .skillGroup(sessionId: sessionId ?? "unknown", groupId: group.id)
         currentRequest = nil
         currentSessionId = sessionId
+        contextSubtitle = group.label
         updateVisibility()
 
         let firstStep = group.steps.first
@@ -890,8 +1013,9 @@ final class DetailViewController: NSViewController {
         pendingCompositionLoad = nil
         pendingCompositionSelection = nil
         compositionView.configure(result: nil, scopeLabel: "this session")
+        contextSubtitle = DetailPaneDetachStrings.noSelectionSubtitle
         emptyTitleLabel.stringValue = "No Selection"
-        emptySubtitleLabel.stringValue = "Select a Turn or Step from the list above\nto view its details."
+        applyEmptyStateSubtitle()
         updateVisibility()
     }
 
@@ -974,6 +1098,10 @@ final class DetailViewController: NSViewController {
 
     @objc private func togglePaneClicked() {
         onTogglePaneRequested?()
+    }
+
+    @objc private func detachClicked() {
+        onDetachRequested?()
     }
 
     // MARK: - Finder

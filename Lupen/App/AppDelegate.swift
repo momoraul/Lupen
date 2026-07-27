@@ -803,7 +803,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
+        // Ask about the dashboard specifically rather than trusting `flag`.
+        // `flag` is true whenever *any* window is on screen, and with the
+        // detail pane detached that includes a window the user may have
+        // left up after closing the dashboard — in which case a Dock click
+        // would do nothing at all.
+        if dashboardController.window?.isVisible != true {
             dashboardController.showDashboard()
         }
         return false
@@ -1064,6 +1069,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggleDetailItem.keyEquivalentModifierMask = [.command, .shift]
         toggleDetailItem.target = nil
         viewMenu.addItem(toggleDetailItem)
+
+        // Move the detail pane into its own window. Sits next to the
+        // toggle and shares its Y key — both commands are about where the
+        // detail pane lives. ⌃⌘ is otherwise unused across this menu bar,
+        // so the chord is free. Title flips to "Put Detail Back…" while
+        // detached (see `DashboardSplitViewController.validateMenuItem`),
+        // the same way Finder pairs "Open in New Window" with "Put Back".
+        let detachDetailItem = NSMenuItem(
+            title: DetailPaneDetachStrings.detachMenuTitle,
+            action: #selector(DashboardSplitViewController.toggleDetailPaneDetachment(_:)),
+            keyEquivalent: "y"
+        )
+        detachDetailItem.keyEquivalentModifierMask = [.command, .control]
+        detachDetailItem.target = nil
+        viewMenu.addItem(detachDetailItem)
 
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)

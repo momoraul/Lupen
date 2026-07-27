@@ -2122,6 +2122,21 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// the selector match.
     @objc func focusSearchField(_ sender: Any?) {
         guard let window = view.window else { return }
+        // ⌘F can arrive from the detached detail window, whose responder
+        // chain reaches back here. Focusing a field in a window that is
+        // behind another one — or behind another app — looks like the
+        // shortcut did nothing, and the keystrokes that follow go to the
+        // wrong window. Bring this window forward first.
+        //
+        // `isVisible` matters as much as `isKeyWindow`: closing a window
+        // leaves its view hierarchy intact, so this still resolves to a
+        // dashboard the user closed. Reopening it from a keystroke aimed
+        // at another window would be a surprise — and it would bypass
+        // `showDashboard()`, skipping restore and auto-selection.
+        guard window.isVisible else { return }
+        if !window.isKeyWindow {
+            window.makeKeyAndOrderFront(nil)
+        }
         window.makeFirstResponder(searchField)
         // `selectText(_:)` on NSSearchField selects the entire current
         // contents, matching the Mail/Finder convention where ⌘F on a

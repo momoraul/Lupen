@@ -7,9 +7,53 @@ final class DashboardSplitViewController: NSSplitViewController {
 
     private let store: AppStateStore
     private let settings: AppSettings
+    private let defaults: UserDefaults
     private let sessionListVC: SessionListViewController
     private let turnOutlineVC: TurnOutlineViewController
     private let detailVC: DetailViewController
+
+    /// Right-pane container and its view controller. Stored rather than
+    /// `viewDidLoad` locals because reattaching the detail pane after it
+    /// has lived in its own window needs an `addChild` target and a
+    /// superview to put the view back into.
+    private let rightContainerVC = NSViewController()
+    private let rightContainer = NSView()
+
+    /// 1pt hairline between the turn outline and whatever sits below it —
+    /// the detail pane while attached, the "in a separate window" strip
+    /// while detached. Keeping the separator anchored in BOTH states is
+    /// what stops the turn outline from silently collapsing to zero
+    /// height when the detail view leaves the hierarchy.
+    private let innerSeparator = NSBox()
+
+    /// Shown in the detail pane's place while it lives in its own window.
+    /// Sized to `detailMinimizedHeight` so the geometry matches the
+    /// already-tuned minimized state, and carries a Put Back button so
+    /// there is always a visible way home even when the detached window
+    /// is behind another app (HIG: provide a clear path back).
+    private lazy var detachedStrip = DetachedDetailPlaceholderView { [weak self] in
+        self?.detachCoordinator.reattach()
+    }
+
+    /// Detach/reattach state machine. Owns the separate window; calls
+    /// back into this controller for the actual view surgery.
+    private(set) lazy var detachCoordinator = DetailPaneDetachCoordinator(
+        host: self,
+        defaults: defaults,
+        frameAutosaveName: detailWindowFrameAutosaveName
+    )
+
+    /// nil disables the detached window's frame autosave (tests only —
+    /// autosave writes to `UserDefaults.standard` regardless of `defaults`).
+    private let detailWindowFrameAutosaveName: String?
+
+    /// Constraints binding the detail pane into the right container, and
+    /// the strip that replaces it. Held as objects and flipped via
+    /// `isActive` rather than rebuilt — AppKit does not revive the
+    /// cross-view constraints it drops on `removeFromSuperview()`, and
+    /// rebuilding them on every round trip accumulates duplicates.
+    private var attachedDetailConstraints: [NSLayoutConstraint] = []
+    private var detachedStripConstraints: [NSLayoutConstraint] = []
 
     /// Auto-Layout height constraint on the detail pane. Toggle
     /// minimize/expand is implemented as
@@ -69,10 +113,14 @@ final class DashboardSplitViewController: NSSplitViewController {
     init(
         store: AppStateStore,
         settings: AppSettings,
-        automaticSessionSelectionEnabled: Bool = true
+        automaticSessionSelectionEnabled: Bool = true,
+        defaults: UserDefaults = .standard,
+        detailWindowFrameAutosaveName: String? = DetailPaneWindowController.defaultFrameAutosaveName
     ) {
         self.store = store
         self.settings = settings
+        self.defaults = defaults
+        self.detailWindowFrameAutosaveName = detailWindowFrameAutosaveName
         self.sessionListVC = SessionListViewController(
             store: store,
             settings: settings,
@@ -97,21 +145,19 @@ final class DashboardSplitViewController: NSSplitViewController {
         // toggle animation is driven by a single height-constraint
         // change — no `setPosition` two-pass layout, no transient
         // turn-outline frame jumps.
-        let rightContainer = NSView()
-        let rightVC = NSViewController()
-        rightVC.view = rightContainer
+        rightContainerVC.view = rightContainer
 
-        rightVC.addChild(turnOutlineVC)
-        rightVC.addChild(detailVC)
+        rightContainerVC.addChild(turnOutlineVC)
+        rightContainerVC.addChild(detailVC)
 
         let turnView = turnOutlineVC.view
         let detailView = detailVC.view
-        let innerSeparator = NSBox()
         innerSeparator.boxType = .separator
 
         turnView.translatesAutoresizingMaskIntoConstraints = false
         detailView.translatesAutoresizingMaskIntoConstraints = false
         innerSeparator.translatesAutoresizingMaskIntoConstraints = false
+        detachedStrip.translatesAutoresizingMaskIntoConstraints = false
 
         rightContainer.addSubview(turnView)
         rightContainer.addSubview(innerSeparator)
@@ -120,10 +166,20 @@ final class DashboardSplitViewController: NSSplitViewController {
         // Detail pane's variable height — the only thing that animates
         // on toggle. Initial value mirrors the previous default
         // expanded height (≥ `detailExpandedMinHeight`).
+        //
+        // This one is self-referencing (a constant on `detailView`
+        // itself), so unlike the sibling constraints below AppKit does
+        // NOT drop it when the view leaves the container — detaching
+        // must deactivate it explicitly or the pane stays pinned to this
+        // height inside its own window.
         let detailHeight = detailView.heightAnchor.constraint(equalToConstant: savedDetailExpandedHeight)
         detailHeight.isActive = true
         self.detailHeightConstraint = detailHeight
 
+        // Always-on geometry: the turn outline and the hairline. The
+        // outline's bottom stops at the separator in BOTH attach states,
+        // so its anchor chain never breaks — only what sits *below* the
+        // separator is swapped.
         NSLayoutConstraint.activate([
             // Turn outline — top pinned to container top (this is the
             // edge that must stay stable during the toggle animation).
@@ -137,14 +193,30 @@ final class DashboardSplitViewController: NSSplitViewController {
             // Inner separator — 1pt hairline between the two panes.
             innerSeparator.leadingAnchor.constraint(equalTo: rightContainer.leadingAnchor),
             innerSeparator.trailingAnchor.constraint(equalTo: rightContainer.trailingAnchor),
-            innerSeparator.bottomAnchor.constraint(equalTo: detailView.topAnchor),
             innerSeparator.heightAnchor.constraint(equalToConstant: 1),
+        ])
 
-            // Detail pane — bottom pinned, height variable.
+        // Attached-state geometry — everything that mentions `detailView`.
+        // Built once and toggled, never rebuilt (see the property docs).
+        attachedDetailConstraints = [
+            innerSeparator.bottomAnchor.constraint(equalTo: detailView.topAnchor),
             detailView.leadingAnchor.constraint(equalTo: rightContainer.leadingAnchor),
             detailView.trailingAnchor.constraint(equalTo: rightContainer.trailingAnchor),
             detailView.bottomAnchor.constraint(equalTo: rightContainer.bottomAnchor),
-        ])
+        ]
+        NSLayoutConstraint.activate(attachedDetailConstraints)
+
+        // Detached-state geometry — the strip takes the detail pane's
+        // place under the separator. Created eagerly so detaching is a
+        // pure activation flip; the strip is only added as a subview
+        // while detached.
+        detachedStripConstraints = [
+            innerSeparator.bottomAnchor.constraint(equalTo: detachedStrip.topAnchor),
+            detachedStrip.leadingAnchor.constraint(equalTo: rightContainer.leadingAnchor),
+            detachedStrip.trailingAnchor.constraint(equalTo: rightContainer.trailingAnchor),
+            detachedStrip.bottomAnchor.constraint(equalTo: rightContainer.bottomAnchor),
+            detachedStrip.heightAnchor.constraint(equalToConstant: Self.detailMinimizedHeight),
+        ]
 
         // Outer split: sidebar | right container.
         splitView.isVertical = true
@@ -157,7 +229,7 @@ final class DashboardSplitViewController: NSSplitViewController {
         sidebarItem.maximumThickness = 400
         sidebarItem.canCollapse = false
 
-        let rightItem = NSSplitViewItem(viewController: rightVC)
+        let rightItem = NSSplitViewItem(viewController: rightContainerVC)
         rightItem.minimumThickness = 400
 
         // Wire selection: session list -> turn outline -> detail
@@ -210,6 +282,10 @@ final class DashboardSplitViewController: NSSplitViewController {
         }
         detailVC.onHeaderResizeEnded = { [weak self] in
             self?.handleResizeEnded()
+        }
+
+        detailVC.onDetachRequested = { [weak self] in
+            self?.detachCoordinator.toggle()
         }
 
         // Add split items LAST. `addSplitViewItem(sidebarItem)` loads
@@ -327,6 +403,11 @@ final class DashboardSplitViewController: NSSplitViewController {
     /// change as a smooth animation; without it the constant change
     /// would apply on the next layout pass, snapping instantly.
     @objc func toggleDetailPane(_ sender: Any?) {
+        // Minimize/expand is meaningless while the pane lives in its own
+        // window — and the height constraint it drives is deactivated,
+        // so without this guard the call would silently do nothing while
+        // still flipping `isDetailMinimized` out of sync.
+        guard detachCoordinator.state == .attached else { return }
         guard let constraint = detailHeightConstraint else { return }
 
         let willMinimize = !isDetailMinimized
@@ -357,6 +438,13 @@ final class DashboardSplitViewController: NSSplitViewController {
             view.layoutSubtreeIfNeeded()
         }
     }
+
+    // MARK: - Detach / reattach view surgery
+
+    /// Minimized flag captured at detach time. A window has no
+    /// "collapsed to a header strip" state, so the pane is normalized to
+    /// expanded while detached and this restores what the user had.
+    private var wasMinimizedBeforeDetach = false
 
     /// Select the first session if nothing is selected yet.
     func selectFirstSessionIfNeeded() {
@@ -439,6 +527,12 @@ final class DashboardSplitViewController: NSSplitViewController {
         settings.sessionListLayout = .flat
     }
 
+    /// Wired from View → "Open Detail in New Window" (⌃⌘Y), and from the
+    /// detach button in the pane header.
+    @objc func toggleDetailPaneDetachment(_ sender: Any?) {
+        detachCoordinator.toggle()
+    }
+
     /// NSMenuItem validation — check the active layout's menu item and
     /// leave the other one unchecked. Returning `true` keeps both items
     /// enabled so the user can always flip back. NSResponder already
@@ -452,6 +546,16 @@ final class DashboardSplitViewController: NSSplitViewController {
         case #selector(setSessionListLayoutFlat(_:)):
             menuItem.state = (settings.sessionListLayout == .flat) ? .on : .off
             return true
+        case #selector(toggleDetailPaneDetachment(_:)):
+            // One item, two directions — Finder pairs "Open in New
+            // Window" with "Put Back" the same way.
+            menuItem.title = detachCoordinator.state == .detached
+                ? DetailPaneDetachStrings.reattachMenuTitle
+                : DetailPaneDetachStrings.detachMenuTitle
+            return true
+        case #selector(toggleDetailPane(_:)):
+            // Minimize/expand has no meaning while the pane is a window.
+            return detachCoordinator.state == .attached
         case #selector(resumeSelectedSession(_:)),
              #selector(copyResumeCommandForSelectedSession(_:)):
             // Mirror the sidebar's enablement so the main-menu item
@@ -469,6 +573,13 @@ final class DashboardSplitViewController: NSSplitViewController {
         }
     }
 
+    // MARK: - Test seams (detach/reattach layout regressions)
+
+    var rightPaneContainerForTesting: NSView { rightContainer }
+    var rightPaneViewControllerForTesting: NSViewController { rightContainerVC }
+    var turnOutlineViewForTesting: NSView { turnOutlineVC.view }
+    var detailHeightConstraintForTesting: NSLayoutConstraint? { detailHeightConstraint }
+
     // MARK: - Sidebar width persistence
 
     override func viewDidAppear() {
@@ -478,7 +589,7 @@ final class DashboardSplitViewController: NSSplitViewController {
         // dragged the divider and we'd snap back on every reopen.
         guard !didRestoreSidebarWidth else { return }
         defer { didRestoreSidebarWidth = true }
-        guard let saved = UserDefaults.standard.object(forKey: Self.sidebarWidthDefaultsKey) as? Double,
+        guard let saved = defaults.object(forKey: Self.sidebarWidthDefaultsKey) as? Double,
               saved.isFinite, saved > 0
         else { return }
         // setPosition is clamped against splitViewItem min/max thickness, so
@@ -496,6 +607,77 @@ final class DashboardSplitViewController: NSSplitViewController {
         guard splitView.subviews.indices.contains(0) else { return }
         let width = splitView.subviews[0].bounds.width
         guard width > 0 else { return }
-        UserDefaults.standard.set(Double(width), forKey: Self.sidebarWidthDefaultsKey)
+        defaults.set(Double(width), forKey: Self.sidebarWidthDefaultsKey)
+    }
+}
+
+// MARK: - DetailPaneDetachHost
+
+extension DashboardSplitViewController: DetailPaneDetachHost {
+
+    var detachableDetailViewController: DetailViewController { detailVC }
+
+    /// The detached window splices this back into its responder chain so
+    /// Export Turn Analysis, Find, and the layout menu items keep
+    /// resolving to their real target instead of dying at the window edge.
+    var detachActionResponder: NSResponder? { self }
+
+    /// Take the detail pane out of the dashboard so it can be installed
+    /// in its own window.
+    ///
+    /// Order matters. The height constraint goes first because it is
+    /// self-referencing and would otherwise survive the move and pin the
+    /// pane to its dashboard height inside the window. The strip is
+    /// installed *before* the view leaves, so the inner separator never
+    /// spends a layout pass without a bottom anchor — losing it collapses
+    /// the turn outline to zero height, and AppKit reports no ambiguity
+    /// for it, so the failure is completely silent.
+    func detachDetailFromDashboard() {
+        if let constraint = detailHeightConstraint, !isDetailMinimized {
+            savedDetailExpandedHeight = max(Self.detailExpandedMinHeight, constraint.constant)
+        }
+        wasMinimizedBeforeDetach = isDetailMinimized
+        if isDetailMinimized {
+            isDetailMinimized = false
+            detailVC.setMinimized(false)
+        }
+
+        detailHeightConstraint?.isActive = false
+        NSLayoutConstraint.deactivate(attachedDetailConstraints)
+
+        if detachedStrip.superview == nil {
+            rightContainer.addSubview(detachedStrip)
+        }
+        NSLayoutConstraint.activate(detachedStripConstraints)
+
+        detailVC.removeFromParent()
+        detailVC.view.removeFromSuperview()
+    }
+
+    /// Put the detail pane back under the turn outline, restoring the
+    /// height and minimized state it had when it left.
+    ///
+    /// Reactivates the *same* constraint objects rather than building new
+    /// ones — AppKit does not revive the ones it dropped, and rebuilding
+    /// per round trip accumulates duplicates.
+    func reattachDetailToDashboard() {
+        NSLayoutConstraint.deactivate(detachedStripConstraints)
+        detachedStrip.removeFromSuperview()
+
+        rightContainerVC.addChild(detailVC)
+        let detailView = detailVC.view
+        // Insurance: any window hosting path can flip this back on.
+        detailView.translatesAutoresizingMaskIntoConstraints = false
+        rightContainer.addSubview(detailView)
+
+        NSLayoutConstraint.activate(attachedDetailConstraints)
+        detailHeightConstraint?.constant = wasMinimizedBeforeDetach
+            ? Self.detailMinimizedHeight
+            : max(Self.detailExpandedMinHeight, savedDetailExpandedHeight)
+        detailHeightConstraint?.isActive = true
+
+        isDetailMinimized = wasMinimizedBeforeDetach
+        detailVC.setMinimized(wasMinimizedBeforeDetach)
+        rightContainer.layoutSubtreeIfNeeded()
     }
 }
