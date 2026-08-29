@@ -1798,7 +1798,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             isActive: isActive,
             subAgentCount: aggregate?.subagentLinkCount ?? 0,
             projectLabel: projectLabel,
-            isPinned: settings.isPinned(session.id)
+            isPinned: settings.isPinned(session.id),
+            searchHitCount: store.searchHitCounts[session.id] ?? 0
         )
         return cell
     }
@@ -2594,7 +2595,8 @@ final class SessionCellView: NSTableCellView {
         isActive: Bool,
         subAgentCount: Int = 0,
         projectLabel: String? = nil,
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        searchHitCount: Int = 0
     ) {
         // Promote any `🖼` marker embedded by `TurnPreview.make` into an
         // inline SF Symbol `photo` attachment so the glyph's weight /
@@ -2662,6 +2664,11 @@ final class SessionCellView: NSTableCellView {
             projectLabel,
             startTime,
             "\(requests) req",
+            // How strongly this session matched the active content search.
+            // Sits on the meta line rather than in its own badge: the row
+            // is already dense, and the count only exists while a search is
+            // running, so a permanent slot would be empty most of the time.
+            searchHitCount > 0 ? "\(searchHitCount) match\(searchHitCount == 1 ? "" : "es")" : nil,
         ].compactMap { $0 }.filter { !$0.isEmpty }
         metaLabel.stringValue = metaParts.joined(separator: " · ")
         metaLabel.toolTip = Self.metadataTooltip(

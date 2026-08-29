@@ -459,6 +459,13 @@ final class AppStateStore: @unchecked Sendable {
     /// per-cell sums over `session.requests` + `costsByRequestId`.
     var sessionListAggregates: [String: StoreSessionListAggregate] = [:]
 
+    /// Matching rows per session for the active content search, keyed by
+    /// session id. Written by `filteredSessions` from the same FTS probe
+    /// that decides which sessions pass, so the sidebar can show how
+    /// strongly each one matched without a second query. Empty whenever
+    /// the search is not looking at conversation content.
+    var searchHitCounts: [String: Int] = [:]
+
     /// SQLite-first conversation reads (plan 4.1), installed by the
     /// ACTIVE provider's `SQLiteFirstStartup` on the main actor.
     /// Non-nil routes `TurnOutlineViewController` to turn-header stubs
@@ -596,11 +603,15 @@ final class AppStateStore: @unchecked Sendable {
             // (`.sessions`): with `contentMatchIds == nil`,
             // `sessionMatchesQuery` matches project / slug / title and
             // never dives into conversation content.
-            let contentMatchIds = (filter.query.isEmpty || !filter.searchScope.searchesContent)
+            let hitCounts = (filter.query.isEmpty || !filter.searchScope.searchesContent)
                 ? nil
-                : sqliteConversationSource?.sessionIdsMatchingPrompts(
+                : sqliteConversationSource?.sessionHitCounts(
                     filter.query, scope: filter.searchScope.textScope ?? .everything
                 )
+            // Published so the sidebar can show how strongly each session
+            // matched without paying for a second FTS probe.
+            searchHitCounts = hitCounts ?? [:]
+            let contentMatchIds = hitCounts.map { Set($0.keys) }
 
             base = source.filter { session in
                 // Stage 1: project equality.

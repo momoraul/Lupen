@@ -1085,6 +1085,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         detachDetailItem.target = nil
         viewMenu.addItem(detachDetailItem)
 
+        // Narrow the turn outline to what the search matched. A checkmark
+        // rather than a title flip: this is a view state that stays on
+        // across searches, not a one-shot action.
+        let matchesOnlyItem = NSMenuItem(
+            title: "Show Only Matching Turns",
+            action: #selector(DashboardSplitViewController.toggleMatchingTurnsOnly(_:)),
+            keyEquivalent: "f"
+        )
+        matchesOnlyItem.keyEquivalentModifierMask = [.command, .option]
+        matchesOnlyItem.target = nil
+        viewMenu.addItem(matchesOnlyItem)
+
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 

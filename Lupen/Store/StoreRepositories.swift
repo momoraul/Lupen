@@ -64,13 +64,29 @@ protocol SearchRepository: Sendable {
     /// honest the result is (plan §4).
     func search(matching query: String, limit: Int) throws -> [StoreSearchHit]
 
-    /// Distinct sessions whose indexed content matches the user's free
-    /// text (4.3 sidebar content search). `scope` narrows to one side of
-    /// the conversation. The query goes through `SearchQueryBuilder`, so
-    /// quotes / `-` / `OR` are honoured and everything else stays literal.
-    func searchSessionIds(
+    /// How many indexed rows match, per session (4.3 sidebar content
+    /// search). `scope` narrows to one side of the conversation. The query
+    /// goes through `SearchQueryBuilder`, so quotes / `-` / `OR` are
+    /// honoured and everything else stays literal.
+    ///
+    /// Counts rather than a bare id list: the sidebar shows how strongly
+    /// each session matched, and the keys are the filter set, so one probe
+    /// serves both.
+    func searchSessionHitCounts(
         matching query: String, scope: SearchTextScope, limit: Int
-    ) throws -> [String]
+    ) throws -> [String: Int]
+
+    /// Turn ids within one session whose indexed content matches.
+    ///
+    /// The turn outline needs this rather than re-scanning the turns it
+    /// holds: in SQLite-first mode those are stubs carrying a synthetic
+    /// prompt step built from a truncated preview, with no reply text at
+    /// all. Matching against them disagrees with the sidebar — silently,
+    /// and worst exactly where the user searched replies.
+    func searchTurnIds(
+        inSession sessionId: String, matching query: String,
+        scope: SearchTextScope, limit: Int
+    ) throws -> Set<String>
     func coverage() throws -> StoreCoverage
 }
 

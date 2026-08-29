@@ -171,6 +171,56 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// rows the sidebar matched on.
     private var highlightScope: SearchTextScope = .everything
 
+    /// Show only the turns that matched, rather than every turn with the
+    /// matches tinted. Off by default: the surrounding turns are usually
+    /// how someone recognises the one they wanted.
+    private(set) var showsMatchesOnly = false
+
+    /// Turn ids the search index says matched, for the session on screen.
+    ///
+    /// Comes from FTS rather than from scanning `turns`, because in
+    /// SQLite-first mode those are stubs: one synthetic prompt step built
+    /// from a truncated preview, and no reply text at all. Scanning them
+    /// silently disagrees with the sidebar — a session found by its
+    /// replies would show no matching turn whatsoever.
+    private var matchedTurnIds: Set<String> = []
+
+    /// The turns the outline actually renders at its root. Filtering here
+    /// rather than at `turns` keeps the stub-replacement path (which looks
+    /// turns up by id) and the SQLite materialisation caches untouched.
+    private var visibleTurns: [Turn] {
+        guard showsMatchesOnly, !highlightQuery.isEmpty else { return turns }
+        let matched = turns.filter { matchesSearch($0) }
+        // Never strand the user on an empty outline. The index can be
+        // mid-import, and content the sidebar matched may not be attributed
+        // to a turn id yet.
+        return matched.isEmpty ? turns : matched
+    }
+
+    /// Does this turn match the active search? Prefers the index's verdict
+    /// and falls back to the in-memory matcher — which is all there is for
+    /// the legacy non-SQLite path, and for turns the index has not reached.
+    private func matchesSearch(_ turn: Turn) -> Bool {
+        if !matchedTurnIds.isEmpty { return matchedTurnIds.contains(turn.id) }
+        return TurnQueryMatcher.turnMatches(
+            turn, query: highlightQuery, scope: highlightScope
+        )
+    }
+
+    /// Refresh `matchedTurnIds` from the index for the session on screen.
+    private func refreshMatchedTurnIds() {
+        guard !highlightQuery.isEmpty,
+              let sessionId = turns.first?.sessionId,
+              let source = store.sqliteConversationSource
+        else {
+            matchedTurnIds = []
+            return
+        }
+        matchedTurnIds = source.matchingTurnIds(
+            inSession: sessionId, query: highlightQuery, scope: highlightScope
+        )
+    }
+
     // MARK: - Launch watchdog
     //
     // `LaunchProgress` is normally bounded — the orchestrator advances
@@ -1345,6 +1395,9 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
 
         lastTurnsSnapshot = newTurns
         turns = newTurns
+        // The id set is per session; a new turn list means a new session
+        // (or a re-import), so re-ask the index.
+        refreshMatchedTurnIds()
         // Aggregates were assigned above, so displayCost reads the
         // sidecar — recompute the session-relative outlier bar (6.9).
         recomputeCostOutlierThreshold()
@@ -1803,7 +1856,7 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     // MARK: - NSOutlineViewDataSource
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        if item == nil { return turns.count }
+        if item == nil { return visibleTurns.count }
         guard let node = item as? TurnOutlineNode else { return 0 }
         switch node.kind {
         case .turn(let turn):
@@ -1828,11 +1881,11 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         if item == nil {
-            let turn = turns[index]
+            let turn = visibleTurns[index]
             return turnNodes["\(turn.sessionId):\(turn.id)"] ?? TurnOutlineNode(turn: turn)
         }
         guard let node = item as? TurnOutlineNode else {
-            return TurnOutlineNode(turn: turns[index])  // should not happen
+            return TurnOutlineNode(turn: visibleTurns[index])  // should not happen
         }
         switch node.kind {
         case .turn(let turn):
@@ -4242,11 +4295,25 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// Apply a new highlight query. Called by the split VC's bridge
     /// closure whenever the sidebar's search field commits a debounced
     /// value. Empty string = clear all highlights.
+    /// Toggle "matches only". Reloads the root list; the expansion and
+    /// materialisation caches are keyed by turn id, so nothing below the
+    /// root has to be rebuilt.
+    func setShowsMatchesOnly(_ enabled: Bool) {
+        guard showsMatchesOnly != enabled else { return }
+        showsMatchesOnly = enabled
+        refreshMatchedTurnIds()
+        outlineView.reloadData()
+        rebuildMatchIndices()
+        refreshHighlightedCells()
+    }
+
     func setHighlightQuery(_ query: String, scope: SearchTextScope = .everything) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != highlightQuery || scope != highlightScope else { return }
         highlightQuery = trimmed
         highlightScope = scope
+        refreshMatchedTurnIds()
+        if showsMatchesOnly { outlineView.reloadData() }
         rebuildMatchIndices()
         refreshHighlightedCells()
     }
@@ -4260,11 +4327,10 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
             matchedTurnIndices = []
             return
         }
-        matchedTurnIndices = turns.indices.filter {
-            TurnQueryMatcher.turnMatches(
-                turns[$0], query: highlightQuery, scope: highlightScope
-            )
-        }
+        // Indices into `visibleTurns`, not `turns` — ⌘G walks the rows the
+        // user can actually see, which is the same list in either mode.
+        let displayed = visibleTurns
+        matchedTurnIndices = displayed.indices.filter { matchesSearch(displayed[$0]) }
     }
 
     // MARK: - ⌘G / ⇧⌘G match navigation
@@ -4297,8 +4363,9 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
         guard let idx = currentMatchIndex,
               idx < matchedTurnIndices.count else { return }
         let turnIndex = matchedTurnIndices[idx]
-        guard turnIndex < turns.count else { return }
-        let turn = turns[turnIndex]
+        let displayed = visibleTurns
+        guard turnIndex < displayed.count else { return }
+        let turn = displayed[turnIndex]
         let key = "\(turn.sessionId):\(turn.id)"
         guard let node = turnNodes[key] else { return }
         let row = outlineView.row(forItem: node)

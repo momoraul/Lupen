@@ -477,19 +477,45 @@ extension ProviderStore: SearchRepository {
         }
     }
 
-    func searchSessionIds(
-        matching query: String, scope: SearchTextScope, limit: Int
-    ) throws -> [String] {
+    func searchTurnIds(
+        inSession sessionId: String, matching query: String,
+        scope: SearchTextScope, limit: Int
+    ) throws -> Set<String> {
         guard let match = SearchQueryBuilder.ftsQuery(from: query, scope: scope) else { return [] }
         return try database.pool.read { db in
-            try String.fetchAll(
+            // `session_id` is UNINDEXED so it cannot go in the MATCH
+            // expression; SQLite applies it as an ordinary predicate over
+            // the matched rows, which is what we want.
+            let ids = try String.fetchAll(
                 db,
                 sql: """
-                    SELECT DISTINCT session_id FROM search_fts
+                    SELECT DISTINCT turn_id FROM search_fts
+                    WHERE search_fts MATCH ? AND session_id = ? AND turn_id IS NOT NULL
+                    LIMIT ?
+                    """,
+                arguments: [match, sessionId, limit]
+            )
+            return Set(ids)
+        }
+    }
+
+    func searchSessionHitCounts(
+        matching query: String, scope: SearchTextScope, limit: Int
+    ) throws -> [String: Int] {
+        guard let match = SearchQueryBuilder.ftsQuery(from: query, scope: scope) else { return [:] }
+        return try database.pool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT session_id, COUNT(*) AS hits FROM search_fts
                     WHERE search_fts MATCH ?
+                    GROUP BY session_id
                     LIMIT ?
                     """,
                 arguments: [match, limit]
+            )
+            return Dictionary(
+                uniqueKeysWithValues: rows.map { ($0["session_id"] as String, $0["hits"] as Int) }
             )
         }
     }
