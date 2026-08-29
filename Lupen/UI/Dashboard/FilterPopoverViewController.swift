@@ -217,8 +217,9 @@ fileprivate struct FilterPopoverForm: View {
         Form {
             Section("Search in") {
                 Picker("Search in", selection: $working.searchScope) {
-                    Text("Sessions").tag(SessionFilter.SearchScope.sessions)
-                    Text("Everything").tag(SessionFilter.SearchScope.everything)
+                    ForEach(SessionFilter.SearchScope.allCases) { scope in
+                        Text(scope.displayName).tag(scope)
+                    }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()

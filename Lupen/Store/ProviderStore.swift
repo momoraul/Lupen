@@ -477,8 +477,10 @@ extension ProviderStore: SearchRepository {
         }
     }
 
-    func searchSessionIds(matching query: String, limit: Int) throws -> [String] {
-        guard let match = Self.ftsPrefixQuery(from: query) else { return [] }
+    func searchSessionIds(
+        matching query: String, scope: SearchTextScope, limit: Int
+    ) throws -> [String] {
+        guard let match = SearchQueryBuilder.ftsQuery(from: query, scope: scope) else { return [] }
         return try database.pool.read { db in
             try String.fetchAll(
                 db,
@@ -492,17 +494,6 @@ extension ProviderStore: SearchRepository {
         }
     }
 
-    /// Free text → FTS5 term query: every whitespace token becomes a
-    /// quoted prefix term (`"foo"* "bar"*`), so user input can never be
-    /// misread as FTS syntax (quotes, NEAR, column filters…).
-    static func ftsPrefixQuery(from raw: String) -> String? {
-        let tokens = raw
-            .split(whereSeparator: \.isWhitespace)
-            .map { $0.replacingOccurrences(of: "\"", with: "\"\"") }
-            .filter { !$0.isEmpty }
-        guard !tokens.isEmpty else { return nil }
-        return tokens.map { "\"\($0)\"*" }.joined(separator: " ")
-    }
 
     func coverage() throws -> StoreCoverage {
         try database.pool.read { db in

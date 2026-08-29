@@ -351,7 +351,11 @@ enum ProviderDatabaseSchema {
             t.column("session_id").notIndexed()
             t.column("turn_id").notIndexed()
             t.column("step_uuid").notIndexed()
-            t.column("kind").notIndexed()              // prompt | reply | thinking | title
+            // Indexed, unlike its siblings: `kind:reply` column filters are
+            // how a search narrows to one side of the conversation. FTS5
+            // silently matches nothing against an unindexed column, so this
+            // attribute is load-bearing rather than incidental.
+            t.column("kind")                           // prompt | reply | thinking | title
             t.column("content")
             // Provenance (v9). Appended LAST so `content` keeps column
             // index 4 — the `snippet(search_fts, 4, …)` call depends on it.

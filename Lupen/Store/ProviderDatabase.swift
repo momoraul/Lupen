@@ -92,7 +92,11 @@ final class ProviderDatabase: @unchecked Sendable {
     /// v19: new `codex_source_labels` table — per-subagent "<nickname> · <role>"
     ///     display labels so the turn outline names merged Codex subagents
     ///     instead of the colliding "subagent <shortId>" fallback.
-    static let schemaVersion: Int32 = 19
+    /// v20: `search_fts.kind` is indexed rather than UNINDEXED, so a search
+    ///     can be narrowed to one side of the conversation (`kind:reply`).
+    ///     FTS5 matches nothing against an unindexed column — silently — so
+    ///     the existing rows have to be rebuilt for scoped search to work.
+    static let schemaVersion: Int32 = 20
 
     enum BootstrapOutcome: Equatable, Sendable {
         /// No database file existed; schema created from scratch.

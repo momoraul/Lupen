@@ -64,10 +64,13 @@ protocol SearchRepository: Sendable {
     /// honest the result is (plan §4).
     func search(matching query: String, limit: Int) throws -> [StoreSearchHit]
 
-    /// Distinct sessions whose indexed prompts match the user's free
-    /// text (4.3 sidebar content search). The query is sanitized into
-    /// prefix-quoted FTS terms — raw FTS5 syntax is not interpreted.
-    func searchSessionIds(matching query: String, limit: Int) throws -> [String]
+    /// Distinct sessions whose indexed content matches the user's free
+    /// text (4.3 sidebar content search). `scope` narrows to one side of
+    /// the conversation. The query goes through `SearchQueryBuilder`, so
+    /// quotes / `-` / `OR` are honoured and everything else stays literal.
+    func searchSessionIds(
+        matching query: String, scope: SearchTextScope, limit: Int
+    ) throws -> [String]
     func coverage() throws -> StoreCoverage
 }
 

@@ -435,8 +435,10 @@ struct SQLiteConversationSource: Sendable {
     /// probe per sidebar filter pass. Metadata-only sessions are not in
     /// the FTS yet; they stay findable through the shell fields
     /// (title / slug / project) the filter checks first.
-    func sessionIdsMatchingPrompts(_ query: String, limit: Int = 2_000) -> Set<String> {
-        Set((try? store.searchSessionIds(matching: query, limit: limit)) ?? [])
+    func sessionIdsMatchingPrompts(
+        _ query: String, scope: SearchTextScope = .everything, limit: Int = 2_000
+    ) -> Set<String> {
+        Set((try? store.searchSessionIds(matching: query, scope: scope, limit: limit)) ?? [])
     }
 
     // MARK: - Raw-line locators (4.2)

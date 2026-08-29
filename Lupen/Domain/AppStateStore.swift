@@ -596,9 +596,11 @@ final class AppStateStore: @unchecked Sendable {
             // (`.sessions`): with `contentMatchIds == nil`,
             // `sessionMatchesQuery` matches project / slug / title and
             // never dives into conversation content.
-            let contentMatchIds = (filter.query.isEmpty || filter.searchScope == .sessions)
+            let contentMatchIds = (filter.query.isEmpty || !filter.searchScope.searchesContent)
                 ? nil
-                : sqliteConversationSource?.sessionIdsMatchingPrompts(filter.query)
+                : sqliteConversationSource?.sessionIdsMatchingPrompts(
+                    filter.query, scope: filter.searchScope.textScope ?? .everything
+                )
 
             base = source.filter { session in
                 // Stage 1: project equality.

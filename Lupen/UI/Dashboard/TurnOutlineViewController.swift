@@ -166,6 +166,11 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// through `DashboardSplitViewController`'s bridge closure.
     private var highlightQuery: String = ""
 
+    /// Which side of the conversation the sidebar's query is pointed at.
+    /// Pushed in alongside the query so the outline highlights the same
+    /// rows the sidebar matched on.
+    private var highlightScope: SearchTextScope = .everything
+
     // MARK: - Launch watchdog
     //
     // `LaunchProgress` is normally bounded — the orchestrator advances
@@ -4237,10 +4242,11 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
     /// Apply a new highlight query. Called by the split VC's bridge
     /// closure whenever the sidebar's search field commits a debounced
     /// value. Empty string = clear all highlights.
-    func setHighlightQuery(_ query: String) {
+    func setHighlightQuery(_ query: String, scope: SearchTextScope = .everything) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != highlightQuery else { return }
+        guard trimmed != highlightQuery || scope != highlightScope else { return }
         highlightQuery = trimmed
+        highlightScope = scope
         rebuildMatchIndices()
         refreshHighlightedCells()
     }
@@ -4255,7 +4261,9 @@ final class TurnOutlineViewController: NSViewController, NSOutlineViewDataSource
             return
         }
         matchedTurnIndices = turns.indices.filter {
-            TurnQueryMatcher.turnMatches(turns[$0], query: highlightQuery)
+            TurnQueryMatcher.turnMatches(
+                turns[$0], query: highlightQuery, scope: highlightScope
+            )
         }
     }
 

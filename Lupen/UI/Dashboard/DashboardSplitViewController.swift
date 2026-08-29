@@ -239,11 +239,14 @@ final class DashboardSplitViewController: NSSplitViewController {
             // priority ②) — no-op once its unit is imported.
             self.store.prioritizeSessionImport?(session.rawSessionId)
             self.turnOutlineVC.showSession(sessionId: session.id)
-            self.turnOutlineVC.setHighlightQuery(self.sessionListVC.currentQuery)
+            self.turnOutlineVC.setHighlightQuery(
+                self.sessionListVC.currentQuery,
+                scope: self.sessionListVC.currentSearchTextScope
+            )
         }
 
-        sessionListVC.onHighlightQueryChanged = { [weak self] query in
-            self?.turnOutlineVC.setHighlightQuery(query)
+        sessionListVC.onHighlightQueryChanged = { [weak self] query, scope in
+            self?.turnOutlineVC.setHighlightQuery(query, scope: scope)
         }
 
         sessionListVC.onSelectionCleared = { [weak self] in
