@@ -477,32 +477,49 @@ extension ProviderStore: SearchRepository {
         }
     }
 
-    func searchSessionIds(matching query: String, limit: Int) throws -> [String] {
-        guard let match = Self.ftsPrefixQuery(from: query) else { return [] }
+    func searchTurnIds(
+        inSession sessionId: String, matching query: String,
+        scope: SearchTextScope, limit: Int
+    ) throws -> Set<String> {
+        guard let match = SearchQueryBuilder.ftsQuery(from: query, scope: scope) else { return [] }
         return try database.pool.read { db in
-            try String.fetchAll(
+            // `session_id` is UNINDEXED so it cannot go in the MATCH
+            // expression; SQLite applies it as an ordinary predicate over
+            // the matched rows, which is what we want.
+            let ids = try String.fetchAll(
                 db,
                 sql: """
-                    SELECT DISTINCT session_id FROM search_fts
+                    SELECT DISTINCT turn_id FROM search_fts
+                    WHERE search_fts MATCH ? AND session_id = ? AND turn_id IS NOT NULL
+                    LIMIT ?
+                    """,
+                arguments: [match, sessionId, limit]
+            )
+            return Set(ids)
+        }
+    }
+
+    func searchSessionHitCounts(
+        matching query: String, scope: SearchTextScope, limit: Int
+    ) throws -> [String: Int] {
+        guard let match = SearchQueryBuilder.ftsQuery(from: query, scope: scope) else { return [:] }
+        return try database.pool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT session_id, COUNT(*) AS hits FROM search_fts
                     WHERE search_fts MATCH ?
+                    GROUP BY session_id
                     LIMIT ?
                     """,
                 arguments: [match, limit]
             )
+            return Dictionary(
+                uniqueKeysWithValues: rows.map { ($0["session_id"] as String, $0["hits"] as Int) }
+            )
         }
     }
 
-    /// Free text → FTS5 term query: every whitespace token becomes a
-    /// quoted prefix term (`"foo"* "bar"*`), so user input can never be
-    /// misread as FTS syntax (quotes, NEAR, column filters…).
-    static func ftsPrefixQuery(from raw: String) -> String? {
-        let tokens = raw
-            .split(whereSeparator: \.isWhitespace)
-            .map { $0.replacingOccurrences(of: "\"", with: "\"\"") }
-            .filter { !$0.isEmpty }
-        guard !tokens.isEmpty else { return nil }
-        return tokens.map { "\"\($0)\"*" }.joined(separator: " ")
-    }
 
     func coverage() throws -> StoreCoverage {
         try database.pool.read { db in

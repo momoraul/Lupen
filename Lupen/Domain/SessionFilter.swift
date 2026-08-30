@@ -108,13 +108,44 @@ struct SessionFilter: Sendable, Equatable {
     // MARK: - SearchScope
 
     /// What a free-text `query` is matched against.
+    ///
+    /// One axis, four choices, rather than a "look at content?" toggle
+    /// beside a "which content?" picker — the user is answering a single
+    /// question: where should this text be looked for.
     enum SearchScope: String, Sendable, Equatable, CaseIterable, Identifiable {
         /// Session identity only: project label, slug, and title.
         case sessions
         /// Also conversation content (prompt / reply / thinking) via FTS.
         case everything
+        /// Only what the user typed.
+        case prompts
+        /// Only what the model replied.
+        case replies
 
         var id: Self { self }
+
+        var displayName: String {
+            switch self {
+            case .sessions: "Session Names"
+            case .everything: "Everything"
+            case .prompts: "My Prompts"
+            case .replies: "Claude's Replies"
+            }
+        }
+
+        /// Whether this scope consults the conversation index at all.
+        var searchesContent: Bool { self != .sessions }
+
+        /// The FTS-level scope this maps to. `.sessions` never reaches the
+        /// index, so it has no counterpart.
+        var textScope: SearchTextScope? {
+            switch self {
+            case .sessions: nil
+            case .everything: .everything
+            case .prompts: .prompts
+            case .replies: .replies
+            }
+        }
     }
 
     // MARK: - DateRange

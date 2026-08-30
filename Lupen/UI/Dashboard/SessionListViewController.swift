@@ -60,7 +60,7 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// value. `DashboardSplitViewController` forwards this to
     /// `TurnOutlineViewController.setHighlightQuery` so matching
     /// Turn rows in the conversation pane get a background tint.
-    var onHighlightQueryChanged: ((String) -> Void)?
+    var onHighlightQueryChanged: ((String, SearchTextScope) -> Void)?
 
     /// Grouped nodes currently displayed. Top-level items are project headers
     /// (`.projectGroup`); their children are `.session` leaves.
@@ -957,15 +957,21 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
         switch currentFilter.searchScope {
         case .sessions:
             searchField.toolTip = "Matching session names — title, slug, and project."
-        case .everything:
+        case .everything, .prompts, .replies:
+            let what: String
+            switch currentFilter.searchScope {
+            case .prompts: what = "what you asked"
+            case .replies: what = "what Claude replied"
+            default: what = "conversation content (prompts, replies)"
+            }
             let progress = store.launchProgress
             if progress.phase == .indexing, progress.pendingUnits > 0 {
                 searchField.toolTip =
-                    "Also searches conversation content. Sessions are still importing — "
+                    "Searching \(what). Sessions are still importing — "
                     + "title/slug/project matches are complete; content matches cover "
                     + "imported sessions only."
             } else {
-                searchField.toolTip = "Also searches conversation content (prompts, replies)."
+                searchField.toolTip = "Searching \(what)."
             }
         }
     }
@@ -1609,7 +1615,9 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             guard newQuery != self.currentFilter.query else { return }
             self.currentFilter.query = newQuery
             self.reloadData()
-            self.onHighlightQueryChanged?(newQuery)
+            self.onHighlightQueryChanged?(
+                newQuery, self.currentFilter.searchScope.textScope ?? .everything
+            )
         }
         pendingFilterUpdate = work
         DispatchQueue.main.asyncAfter(
@@ -1623,6 +1631,14 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
     /// when a new session is selected (the new session's Turn rows
     /// need to inherit the current highlighting).
     var currentQuery: String { currentFilter.query }
+
+    /// The FTS-level scope the current search is pointed at. `.sessions`
+    /// never reaches conversation content, so the outline treats it as
+    /// "look everywhere" for its own substring highlight — there is no
+    /// content scope to honour.
+    var currentSearchTextScope: SearchTextScope {
+        currentFilter.searchScope.textScope ?? .everything
+    }
 
     // MARK: - Filter popover
 
@@ -1782,7 +1798,8 @@ final class SessionListViewController: NSViewController, NSOutlineViewDataSource
             isActive: isActive,
             subAgentCount: aggregate?.subagentLinkCount ?? 0,
             projectLabel: projectLabel,
-            isPinned: settings.isPinned(session.id)
+            isPinned: settings.isPinned(session.id),
+            searchHitCount: store.searchHitCounts[session.id] ?? 0
         )
         return cell
     }
@@ -2578,7 +2595,8 @@ final class SessionCellView: NSTableCellView {
         isActive: Bool,
         subAgentCount: Int = 0,
         projectLabel: String? = nil,
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        searchHitCount: Int = 0
     ) {
         // Promote any `🖼` marker embedded by `TurnPreview.make` into an
         // inline SF Symbol `photo` attachment so the glyph's weight /
@@ -2646,6 +2664,11 @@ final class SessionCellView: NSTableCellView {
             projectLabel,
             startTime,
             "\(requests) req",
+            // How strongly this session matched the active content search.
+            // Sits on the meta line rather than in its own badge: the row
+            // is already dense, and the count only exists while a search is
+            // running, so a permanent slot would be empty most of the time.
+            searchHitCount > 0 ? "\(searchHitCount) match\(searchHitCount == 1 ? "" : "es")" : nil,
         ].compactMap { $0 }.filter { !$0.isEmpty }
         metaLabel.stringValue = metaParts.joined(separator: " · ")
         metaLabel.toolTip = Self.metadataTooltip(

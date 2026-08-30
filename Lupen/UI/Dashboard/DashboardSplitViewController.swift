@@ -239,11 +239,14 @@ final class DashboardSplitViewController: NSSplitViewController {
             // priority ②) — no-op once its unit is imported.
             self.store.prioritizeSessionImport?(session.rawSessionId)
             self.turnOutlineVC.showSession(sessionId: session.id)
-            self.turnOutlineVC.setHighlightQuery(self.sessionListVC.currentQuery)
+            self.turnOutlineVC.setHighlightQuery(
+                self.sessionListVC.currentQuery,
+                scope: self.sessionListVC.currentSearchTextScope
+            )
         }
 
-        sessionListVC.onHighlightQueryChanged = { [weak self] query in
-            self?.turnOutlineVC.setHighlightQuery(query)
+        sessionListVC.onHighlightQueryChanged = { [weak self] query, scope in
+            self?.turnOutlineVC.setHighlightQuery(query, scope: scope)
         }
 
         sessionListVC.onSelectionCleared = { [weak self] in
@@ -533,6 +536,12 @@ final class DashboardSplitViewController: NSSplitViewController {
         detachCoordinator.toggle()
     }
 
+    /// View → "Show Only Matching Turns" (⌥⌘F). Narrows the turn outline
+    /// to the turns the current search matched.
+    @objc func toggleMatchingTurnsOnly(_ sender: Any?) {
+        turnOutlineVC.setShowsMatchesOnly(!turnOutlineVC.showsMatchesOnly)
+    }
+
     /// NSMenuItem validation — check the active layout's menu item and
     /// leave the other one unchecked. Returning `true` keeps both items
     /// enabled so the user can always flip back. NSResponder already
@@ -556,6 +565,10 @@ final class DashboardSplitViewController: NSSplitViewController {
         case #selector(toggleDetailPane(_:)):
             // Minimize/expand has no meaning while the pane is a window.
             return detachCoordinator.state == .attached
+        case #selector(toggleMatchingTurnsOnly(_:)):
+            menuItem.state = turnOutlineVC.showsMatchesOnly ? .on : .off
+            // Nothing to narrow to without a query.
+            return !sessionListVC.currentQuery.isEmpty
         case #selector(resumeSelectedSession(_:)),
              #selector(copyResumeCommandForSelectedSession(_:)):
             // Mirror the sidebar's enablement so the main-menu item

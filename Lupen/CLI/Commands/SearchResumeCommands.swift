@@ -23,11 +23,11 @@ struct SearchCommand: ParsableCommand {
         let engine = try CLIEngine.open(source: options.resolvedSource, refresh: options.refresh)
         if let note = engine.freshnessNote() { CLIOutput.note(note) }
 
-        // Sanitize the query into an FTS5 prefix expression (as the GUI's
-        // search does) so metacharacters in user input can't make MATCH
-        // throw; an all-whitespace query simply matches nothing.
+        // Same builder the GUI search uses, so quotes / `-` / `OR` behave
+        // identically here and metacharacters can't make MATCH throw; an
+        // all-whitespace query simply matches nothing.
         let hits: [StoreSearchHit]
-        if let match = ProviderStore.ftsPrefixQuery(from: query) {
+        if let match = SearchQueryBuilder.ftsQuery(from: query) {
             hits = try engine.store.search(matching: match, limit: 500)
         } else {
             hits = []
