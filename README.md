@@ -183,6 +183,21 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.11.0 — _2026-07-28_
+
+Search that knows who said it, and shows which turns matched.
+
+- **Search one side of the conversation** — point the search field at your
+  own prompts, at Claude's replies, or at both. "Where did I ask about
+  caching" and "where did Claude explain caching" are different questions
+  and now have different answers.
+- **Phrases, exclusions, and OR** — `"exact phrase"` finds those words in
+  order, `-word` leaves results out, and `a OR b` widens instead of
+  narrowing. Everything else you type is still matched literally.
+- **Which turns matched, not just which sessions** — sessions show how many
+  matches they hold, and View ▸ Show Only Matching Turns (⌥⌘F) narrows the
+  turn outline to the turns the search actually hit. ⌘G walks them.
+
 ### v0.10.0 — _2026-07-28_
 
 A detachable detail pane, a per-turn file ledger, and Opus 5 pricing.
