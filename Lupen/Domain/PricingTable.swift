@@ -141,7 +141,13 @@ enum PricingTable {
     ///     Opus 4.8, and the opus tier fallback now points at Opus 5.
     ///     Standard-mode Opus 5 cost was already correct via the 4.8
     ///     fallback (identical rates); fast-mode requests had been unpriced.
-    static let version = 4
+    /// v5: claude-fable-5-1, claude-sonnet-5 and gpt-6-astra entries.
+    ///     Fable 5.1 had been falling back to Fable 5, which prices cache
+    ///     reads at 0.1x base input — 5.1 charges 0.025x, so every cache
+    ///     read was billed at 4x. Sonnet 5 had been falling back to
+    ///     Sonnet 4.6 and is 50% cheaper than it, so every Sonnet 5
+    ///     request was overstated. Astra was unpriced (cost shown as "—").
+    static let version = 5
 
     // Logging routed through `LoggerService.shared.logFromAnyThread`
     // so the in-app Diagnostics window picks it up alongside the
@@ -150,6 +156,18 @@ enum PricingTable {
     private static let table: [String: ModelRates] = [
         // Cache rates follow Anthropic's standard multipliers on input:
         // write 5m = 1.25x, write 1h = 2x, read = 0.1x.
+        // Fable 5.1 breaks the cache-read multiplier that every other entry
+        // here follows: reads are 0.025x base input, not 0.1x. Anthropic
+        // carves this out for Fable 5.1 and Mythos 5.1 alone
+        // (platform.claude.com/docs/en/about-claude/pricing, verified
+        // 2026-09-09). Without its own entry it falls back to Fable 5 and
+        // every cache read bills at 4x what it cost — and Claude Code is
+        // cache-read dominated, so that is most of the bill.
+        "claude-fable-5-1": ModelRates(
+            inputPerMTok: 10.00, outputPerMTok: 50.00,
+            cacheWrite5mPerMTok: 12.50, cacheWrite1hPerMTok: 20.00, cacheReadPerMTok: 0.25,
+            fastInputPerMTok: nil, fastOutputPerMTok: nil
+        ),
         "claude-fable-5": ModelRates(
             inputPerMTok: 10.00, outputPerMTok: 50.00,
             cacheWrite5mPerMTok: 12.50, cacheWrite1hPerMTok: 20.00, cacheReadPerMTok: 1.00,
@@ -210,6 +228,17 @@ enum PricingTable {
         "claude-opus-4-20250514": ModelRates(
             inputPerMTok: 15.00, outputPerMTok: 75.00,
             cacheWrite5mPerMTok: 18.75, cacheWrite1hPerMTok: 30.00, cacheReadPerMTok: 1.50,
+            fastInputPerMTok: nil, fastOutputPerMTok: nil
+        ),
+        // Sonnet 5 is CHEAPER than the 4.6 it succeeds — $2/$10 against
+        // $3/$15 — so the tier fallback overstated every Sonnet 5 request
+        // by 50%. The $2/$10 launch price was billed as introductory
+        // through 2026-08-31; Anthropic then cancelled the scheduled rise
+        // to $3/$15 and made it standard, so one rate covers all history
+        // and no date split is needed (verified 2026-09-09).
+        "claude-sonnet-5": ModelRates(
+            inputPerMTok: 2.00, outputPerMTok: 10.00,
+            cacheWrite5mPerMTok: 2.50, cacheWrite1hPerMTok: 4.00, cacheReadPerMTok: 0.20,
             fastInputPerMTok: nil, fastOutputPerMTok: nil
         ),
         "claude-sonnet-4-6": ModelRates(
@@ -294,6 +323,20 @@ enum PricingTable {
         "gpt-5-codex": openAIRates(input: 1.25, cachedInput: 0.125, output: 10.00),
         "gpt-5.1-codex-mini": openAIRates(input: 0.25, cachedInput: 0.025, output: 2.00),
         "codex-mini-latest": openAIRates(input: 1.50, cachedInput: 0.375, output: 6.00),
+        // GPT-6 Astra (released 2026-09-04, rates verified 2026-09-09).
+        // The >272k surcharge the 5.6 line dropped is back here, and it
+        // lifts the cache rate along with base input — "2x input and cache
+        // rates and 1.5x output for the full request" — which is exactly
+        // what `longContextInputMultiplier` already applies.
+        // developers.openai.com/api/docs/models/gpt-6-astra
+        "gpt-6-astra": openAIRates(
+            input: 10.00,
+            cachedInput: 1.00,
+            output: 50.00,
+            longContextInputThreshold: 272_000,
+            longContextInputMultiplier: 2,
+            longContextOutputMultiplier: 1.5
+        ),
         // GPT-5.6 family (GA 2026-07-09, rates verified 2026-07-12).
         // Unlike gpt-5.5, the 5.6 line DROPS the >272k long-context
         // surcharge entirely — a single flat rate at any prompt length
@@ -351,9 +394,9 @@ enum PricingTable {
     /// visible drift: that the newest entry for each tier is *in* the
     /// table.
     private static let newestByTier: [String: String] = [
-        "claude-fable-": "claude-fable-5",
+        "claude-fable-": "claude-fable-5-1",
         "claude-opus-": "claude-opus-5",
-        "claude-sonnet-": "claude-sonnet-4-6",
+        "claude-sonnet-": "claude-sonnet-5",
         "claude-haiku-": "claude-haiku-4-5"
     ]
 
