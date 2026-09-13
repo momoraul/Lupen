@@ -183,6 +183,22 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.12.0 — _2026-09-13_
+
+Correct costs for Claude Fable 5.1 and Sonnet 5, and GPT-6 Astra pricing.
+
+- **Claude Fable 5.1 cache reads** — Fable 5.1 charges a quarter of what
+  Fable 5 does for cache reads, but Lupen was still applying the Fable 5
+  rate, so Fable 5.1 cache reads were counted at 4x their real price.
+  Cache reads are most of a Claude Code bill, so the difference is large.
+- **Claude Sonnet 5 pricing** — Sonnet 5 costs less than Sonnet 4.6, but it
+  was being priced as 4.6, so every Sonnet 5 session read 50% high.
+- **GPT-6 Astra pricing** — Codex sessions on GPT-6 Astra are priced,
+  including the higher rate for prompts over 272k tokens.
+- **Past sessions are repriced automatically** — sessions indexed before
+  this update are recalculated in the background once indexing settles.
+  There is nothing to rebuild by hand.
+
 ### v0.11.0 — _2026-07-28_
 
 Search that knows who said it, and shows which turns matched.
