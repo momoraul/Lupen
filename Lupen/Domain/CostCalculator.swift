@@ -59,6 +59,7 @@ enum CostCalculator {
         for request in requests {
             guard let model = request.model,
                   let rates = PricingTable.rates(for: model),
+                  rates.longContextAppliesSessionWide,
                   rates.shouldUseLongContext(forPromptInputTokens: promptInputTokenCount(request.tokens)) else {
                 continue
             }
@@ -78,10 +79,17 @@ enum CostCalculator {
         return costs
     }
 
+    /// Mirrors `GroundTruthCalculator.computeCost`: the split ephemeral
+    /// counts win when present, the legacy lump field is the fallback.
+    /// 42 rows in local logs report a 0 lump beside non-zero split counts
+    /// (one pair off by 937,480 tokens), so reading the lump alone
+    /// understates the prompt. Harmless until Haiku 5.5 — the first Claude
+    /// model priced by prompt length — made this value decide a rate.
     private static func promptInputTokenCount(_ tokens: TokenBreakdown) -> Int {
-        tokens.inputTokens
-            + tokens.cacheCreationInputTokens
-            + tokens.cacheReadInputTokens
+        let cacheCreation = (tokens.cacheCreationEphemeral1h > 0 || tokens.cacheCreationEphemeral5m > 0)
+            ? tokens.cacheCreationEphemeral1h + tokens.cacheCreationEphemeral5m
+            : tokens.cacheCreationInputTokens
+        return tokens.inputTokens + cacheCreation + tokens.cacheReadInputTokens
     }
 
     private static func logUnknownModelIfNew(_ model: String) {

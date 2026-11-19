@@ -59,7 +59,9 @@ enum ModelDisplay {
     /// resolve to `.opus`.
     static func tier(for model: String?) -> Tier {
         guard let m = model?.lowercased(), !m.isEmpty else { return .unknown }
-        if m.contains("fable")  { return .fable }
+        // Mythos has matched Fable's rates in every generation, so it
+        // belongs in the same pricing bucket rather than in unknown gray.
+        if m.contains("fable") || m.contains("mythos") { return .fable }
         if m.contains("opus")   { return .opus }
         if m.contains("sonnet") { return .sonnet }
         if m.contains("haiku")  { return .haiku }

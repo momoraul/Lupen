@@ -604,7 +604,8 @@ struct CodexUsageVerifier: ProviderUsageVerifier {
         var longContextModels: Set<String> = []
         for line in lines {
             guard let model = line.model,
-                  let rates = PricingTable.rates(for: model) else {
+                  let rates = PricingTable.rates(for: model),
+                  rates.longContextAppliesSessionWide else {
                 continue
             }
             let promptInputTokens = line.inputTokens
