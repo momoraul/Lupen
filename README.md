@@ -183,6 +183,32 @@ OpenAI**; it only reads local log files written to your machine.
 
 ## Changelog
 
+### v0.13.0 — _2026-11-19_
+
+Correct costs for the Claude 5.5 generation and the Codex GPT-6 line.
+
+- **Claude Opus 5.5, Sonnet 5.5, Fable 5.2 and Haiku 5.5** — all four were
+  priced as the model they succeed, so every session on them read high.
+  Opus 5.5 was 25% high overall and 2.5x high on cache reads, which are
+  most of a Claude Code bill. Haiku 5.5 was 10x high. Fable 5.2 was 20–25%
+  high, and its fast mode showed no cost at all.
+- **Haiku 5.5 long prompts** — Haiku 5.5 is the first Claude model whose
+  price depends on prompt length. Requests over 100,000 tokens are now
+  charged at the higher rate, and each request is priced on its own, the
+  way Anthropic bills it.
+- **Codex GPT-6 models** — GPT-6.1 Sol, GPT-6.2 Sol and the rest of the
+  GPT-6 line are priced, including the higher rate for prompts over 272k
+  tokens. GPT-6.1 Sol is the current Codex model and its sessions had been
+  showing no cost at all.
+- **GPT-5.6 price cuts** — OpenAI cut GPT-5.6 Sol, Terra and Luna prices
+  in July and August. Lupen still held the launch prices, so GPT-5.6 Sol
+  sessions read up to 50% high.
+- **Claude Mythos** — Mythos sessions are priced instead of showing no
+  cost, and appear in the same colour as Fable rather than grey.
+- **Past sessions are repriced automatically** — sessions indexed before
+  this update are recalculated in the background once indexing settles.
+  There is nothing to rebuild by hand.
+
 ### v0.12.0 — _2026-09-13_
 
 Correct costs for Claude Fable 5.1 and Sonnet 5, and GPT-6 Astra pricing.
